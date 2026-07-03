@@ -31,12 +31,12 @@ export function renderNavbar({ user, pageTitle, unreadCount, notifications }) {
     </div>
 
     <div class="topbar-actions">
-        <button class="btn btn-icon" id="themeToggle" type="button" title="Toggle dark mode">
+        <button class="btn btn-icon" id="themeToggle" type="button" title="Toggle dark mode" aria-label="Toggle dark mode">
             <i class="bi bi-moon-stars" id="themeIcon"></i>
         </button>
 
         <div class="dropdown">
-            <button class="btn btn-icon position-relative" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+            <button class="btn btn-icon position-relative" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Notifications">
                 <i class="bi bi-bell"></i>
                 ${unreadCount > 0 ? raw(`<span class="badge rounded-pill bg-danger notif-badge">${unreadCount}</span>`) : ''}
             </button>
@@ -49,9 +49,12 @@ export function renderNavbar({ user, pageTitle, unreadCount, notifications }) {
         </div>
 
         <div class="dropdown">
-            <button class="btn btn-icon d-flex align-items-center gap-2" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+            <button class="btn btn-icon d-flex align-items-center gap-2" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="User menu for ${user.full_name}">
                 <span class="avatar-circle">${user.full_name.charAt(0).toUpperCase()}</span>
-                <span class="d-none d-md-inline">${user.full_name}</span>
+                <span class="topbar-user-info d-none d-md-flex">
+                    <span class="user-name">${user.full_name}</span>
+                    <span class="user-role">${user.role_name}</span>
+                </span>
             </button>
             <ul class="dropdown-menu dropdown-menu-end">
                 <li><span class="dropdown-item-text text-muted small">${user.role_name}</span></li>

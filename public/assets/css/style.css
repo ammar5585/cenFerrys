@@ -4,14 +4,22 @@
    ===================================================================== */
 
 :root {
-    --sidebar-width: 250px;
+    --sidebar-width: 220px;
     --topbar-height: 60px;
-    --brand-color: #0d6efd;
+    /* Theme colors: overridable per-request via an injected <style> block
+       in layout.js, driven by admin-configured settings. These defaults
+       match the original hardcoded look. */
+    --theme-primary-color: #0d6efd;
+    --theme-secondary-color: #6c757d;
+    --theme-sidebar-color: #1b2434;
+    --theme-header-color: #ffffff;
+    --theme-font-size: 16px;
 }
 
 body {
     background-color: #f4f6f9;
     font-family: 'Segoe UI', Roboto, system-ui, sans-serif;
+    font-size: var(--theme-font-size);
 }
 
 [data-bs-theme="dark"] body {
@@ -27,7 +35,7 @@ body {
 .sidebar {
     width: var(--sidebar-width);
     flex-shrink: 0;
-    background-color: #1b2434;
+    background-color: var(--theme-sidebar-color);
     color: #cfd6e4;
     position: fixed;
     top: 0;
@@ -42,10 +50,10 @@ body {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    font-size: 1.15rem;
+    font-size: 1.1rem;
     font-weight: 600;
     color: #fff;
-    padding: 1.1rem 1.25rem;
+    padding: 1.1rem 1rem;
     border-bottom: 1px solid rgba(255,255,255,0.08);
 }
 .sidebar-brand-logo {
@@ -65,15 +73,15 @@ body {
     font-size: 0.7rem;
     letter-spacing: 0.06em;
     color: #7c8aa5;
-    padding: 0.9rem 1.25rem 0.35rem;
+    padding: 0.9rem 1rem 0.35rem;
 }
 
 .sidebar .nav-link {
     color: #cfd6e4;
-    padding: 0.55rem 1.25rem;
+    padding: 0.55rem 1rem;
     display: flex;
     align-items: center;
-    gap: 0.65rem;
+    gap: 0.6rem;
     border-left: 3px solid transparent;
 }
 
@@ -85,9 +93,9 @@ body {
 }
 
 .sidebar .nav-link.active {
-    background-color: rgba(13,110,253,0.15);
+    background-color: color-mix(in srgb, var(--theme-primary-color) 15%, transparent);
     color: #fff;
-    border-left-color: var(--brand-color);
+    border-left-color: var(--theme-primary-color);
 }
 
 .main-content {
@@ -102,7 +110,8 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    background: #fff;
+    gap: 1rem;
+    background: var(--theme-header-color);
     border-bottom: 1px solid #e5e9f0;
     padding: 0 1.25rem;
     margin-left: var(--sidebar-width);
@@ -110,6 +119,20 @@ body {
     top: 0;
     z-index: 1030;
 }
+
+.topbar-title {
+    font-weight: 600;
+    font-size: 1.05rem;
+}
+
+.topbar-user-info {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    line-height: 1.15;
+}
+.topbar-user-info .user-name { font-weight: 600; font-size: 0.9rem; }
+.topbar-user-info .user-role { font-size: 0.72rem; color: #7c8aa5; }
 
 .portal-banner {
     margin-left: var(--sidebar-width);
@@ -150,7 +173,7 @@ body {
     width: 32px;
     height: 32px;
     border-radius: 50%;
-    background: var(--brand-color);
+    background: var(--theme-primary-color);
     color: #fff;
     display: flex;
     align-items: center;
@@ -229,4 +252,59 @@ body {
     align-items: center;
     justify-content: center;
     z-index: 2000;
+}
+
+/* ---------------- General polish ---------------- */
+.card {
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.card:hover {
+    box-shadow: 0 6px 16px rgba(0,0,0,0.1);
+    transform: translateY(-2px);
+}
+
+a, .btn, .nav-link, .btn-icon {
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+:focus-visible {
+    outline: 2px solid var(--theme-primary-color);
+    outline-offset: 2px;
+}
+
+/* ---------------- Footer ---------------- */
+.portal-footer {
+    margin-left: var(--sidebar-width);
+    padding: 1rem 1.25rem;
+    text-align: center;
+    color: #7c8aa5;
+    font-size: 0.85rem;
+    border-top: 1px solid #e5e9f0;
+}
+.portal-footer p { margin-bottom: 0.15rem; }
+
+@media (max-width: 991.98px) {
+    .portal-footer { margin-left: 0; }
+}
+
+/* ---------------- Sticky save bar (admin/branding) ---------------- */
+.sticky-save-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 1050;
+    background: #fff;
+    border-top: 1px solid #e5e9f0;
+    box-shadow: 0 -4px 12px rgba(0,0,0,0.06);
+    padding: 0.85rem 1.25rem;
+    margin: 1.5rem -1.5rem -1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+[data-bs-theme="dark"] .sticky-save-bar {
+    background-color: #1e2530;
+    border-color: #2c3543;
 }

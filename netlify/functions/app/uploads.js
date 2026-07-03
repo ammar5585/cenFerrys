@@ -54,7 +54,10 @@ export async function handleUpload(file, { bucket, allowedExt, prefix }) {
     const filename = `${prefix}_${crypto.randomBytes(8).toString('hex')}.${ext}`;
     const { error } = await db()
         .storage.from(bucket)
-        .upload(filename, buffer, { contentType: file.type || undefined, upsert: false });
+        // cacheControl is safe at a long duration (1 year): filenames are
+        // randomized and never overwritten (upsert: false), so a given
+        // URL's content can never change under a cached response.
+        .upload(filename, buffer, { contentType: file.type || undefined, upsert: false, cacheControl: '31536000' });
     if (error) throw new Error(`Upload failed: ${error.message}`);
 
     const { data } = db().storage.from(bucket).getPublicUrl(filename);

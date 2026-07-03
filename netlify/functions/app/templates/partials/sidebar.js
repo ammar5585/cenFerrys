@@ -9,7 +9,7 @@ import { ROLE_ADMIN, ROLE_STAFF, ROLE_GM, ROLE_RM, ROLE_HR, ROLE_DEPT_MGR, ROLE_
 function navLink(path, icon, label, currentPath) {
     const active = currentPath === path ? 'active' : '';
     return html`<a class="nav-link ${active}" href="${path}">
-            <i class="bi ${icon}"></i> <span>${label}</span>
+            <i class="bi ${icon}" aria-hidden="true"></i> <span>${label}</span>
           </a>`;
 }
 
@@ -99,7 +99,7 @@ export function renderSidebar(roleName, currentPath, isDeptApprover = false, com
     return html`
 <aside class="sidebar" id="sidebar">
     <div class="sidebar-brand">
-        ${siteLogo ? html`<img src="${siteLogo}" alt="" class="sidebar-brand-logo">` : html`<i class="bi bi-water"></i>`}
+        ${siteLogo ? html`<img src="${siteLogo}" alt="${companyName} logo" class="sidebar-brand-logo">` : html`<i class="bi bi-water" aria-hidden="true"></i>`}
         <span>${companyName}</span>
     </div>
     <nav class="sidebar-nav">

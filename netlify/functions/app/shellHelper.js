@@ -15,12 +15,24 @@ import { htmlResponse } from './response.js';
  */
 export async function renderShellForRequest({ request, auth, pageTitle, bodyHtml, path, extraScripts, extraCookies = [] }) {
     const { user, setCookie } = auth;
-    const [companyName, portalTitle, siteLogo, favicon, bannerImage, unreadCount, notifications, flashMessages] = await Promise.all([
+    const [
+        companyName, portalTitle, siteLogo, favicon, bannerImage,
+        sidebarColor, headerColor, primaryColor, secondaryColor, fontFamily, fontSize, footerText, copyrightText,
+        unreadCount, notifications, flashMessages,
+    ] = await Promise.all([
         getSetting('company_name', 'Staff Ferry Transfer Portal'),
         getSetting('portal_title', ''),
         getSetting('site_logo', ''),
         getSetting('favicon', ''),
         getSetting('banner_image', ''),
+        getSetting('theme_sidebar_color', ''),
+        getSetting('theme_header_color', ''),
+        getSetting('theme_primary_color', ''),
+        getSetting('theme_secondary_color', ''),
+        getSetting('font_family', ''),
+        getSetting('font_size', ''),
+        getSetting('footer_text', ''),
+        getSetting('copyright_text', ''),
         getUnreadNotificationCount(user.user_id),
         getRecentNotifications(user.user_id, 8),
         Promise.resolve(flashGet(request)),
@@ -34,6 +46,14 @@ export async function renderShellForRequest({ request, auth, pageTitle, bodyHtml
         siteLogo,
         favicon,
         bannerImage,
+        sidebarColor,
+        headerColor,
+        primaryColor,
+        secondaryColor,
+        fontFamily,
+        fontSize,
+        footerText,
+        copyrightText,
         flashMessages,
         csrfToken: user.csrf,
         unreadCount,

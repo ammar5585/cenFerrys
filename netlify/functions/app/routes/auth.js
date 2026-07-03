@@ -24,26 +24,46 @@ async function readFormBody(request) {
 
 /** Branding settings shared by every pre-login page (login, forgot-password). */
 async function getPublicBranding() {
-    const [companyName, portalTitle, favicon, loginLogo, loginBackground] = await Promise.all([
+    const [
+        companyName, portalTitle, favicon, loginLogo, loginBackground, loginWelcomeMessage, loginDescription,
+        sidebarColor, headerColor, primaryColor, secondaryColor, fontFamily, fontSize, footerText, copyrightText,
+    ] = await Promise.all([
         getSetting('company_name', 'Staff Ferry Transfer Portal'),
         getSetting('portal_title', ''),
         getSetting('favicon', ''),
         getSetting('login_logo', ''),
         getSetting('login_background', ''),
+        getSetting('login_welcome_message', ''),
+        getSetting('login_description', ''),
+        getSetting('theme_sidebar_color', ''),
+        getSetting('theme_header_color', ''),
+        getSetting('theme_primary_color', ''),
+        getSetting('theme_secondary_color', ''),
+        getSetting('font_family', ''),
+        getSetting('font_size', ''),
+        getSetting('footer_text', ''),
+        getSetting('copyright_text', ''),
     ]);
-    return { companyName, portalTitle, favicon, loginLogo, loginBackground };
+    return {
+        companyName, portalTitle, favicon, loginLogo, loginBackground, loginWelcomeMessage, loginDescription,
+        sidebarColor, headerColor, primaryColor, secondaryColor, fontFamily, fontSize, footerText, copyrightText,
+    };
 }
 
-function loginPage({ error, timeout, csrfToken, companyName, portalTitle, favicon, loginLogo, loginBackground, username = '' }) {
+function loginPage({
+    error, timeout, csrfToken, companyName, portalTitle, favicon, loginLogo, loginBackground,
+    loginWelcomeMessage, loginDescription, sidebarColor, headerColor, primaryColor, secondaryColor,
+    fontFamily, fontSize, footerText, copyrightText, username = '',
+}) {
     const wrapperStyle = loginBackground ? `background-image:url('${loginBackground}');background-size:cover;background-position:center;` : '';
     const body = html`
 <div class="login-wrapper" style="${wrapperStyle}">
     <div class="card login-card">
         <div class="card-body p-4">
             <div class="text-center mb-4">
-                ${loginLogo ? html`<img src="${loginLogo}" alt="" class="login-logo">` : html`<i class="bi bi-water" style="font-size:2.5rem;color:#0d6efd;"></i>`}
-                <h4 class="mt-2 mb-0">${companyName}</h4>
-                <p class="text-muted small">Staff Ferry Transfer Portal</p>
+                ${loginLogo ? html`<img src="${loginLogo}" alt="${companyName} logo" class="login-logo">` : html`<i class="bi bi-water" style="font-size:2.5rem;color:#0d6efd;"></i>`}
+                <h4 class="mt-2 mb-0">${loginWelcomeMessage || companyName}</h4>
+                <p class="text-muted small">${loginDescription || 'Staff Ferry Transfer Portal'}</p>
             </div>
 
             ${timeout ? html`<div class="alert alert-warning py-2">Your session expired. Please log in again.</div>` : ''}
@@ -69,7 +89,11 @@ function loginPage({ error, timeout, csrfToken, companyName, portalTitle, favico
         </div>
     </div>
 </div>`;
-    return publicShell({ pageTitle: 'Login', companyName, portalTitle, favicon, bodyHtml: body });
+    return publicShell({
+        pageTitle: 'Login', companyName, portalTitle, favicon,
+        sidebarColor, headerColor, primaryColor, secondaryColor, fontFamily, fontSize, footerText, copyrightText,
+        bodyHtml: body,
+    });
 }
 
 export function registerAuthRoutes(router) {
@@ -322,7 +346,10 @@ function changePasswordBody({ errors, minLength, csrfToken }) {
 </div>`;
 }
 
-function forgotPasswordPage({ submitted, error, csrfToken, companyName, portalTitle, favicon }) {
+function forgotPasswordPage({
+    submitted, error, csrfToken, companyName, portalTitle, favicon,
+    sidebarColor, headerColor, primaryColor, secondaryColor, fontFamily, fontSize, footerText, copyrightText,
+}) {
     const body = html`
 <div class="login-wrapper">
     <div class="card login-card">
@@ -349,5 +376,9 @@ function forgotPasswordPage({ submitted, error, csrfToken, companyName, portalTi
         </div>
     </div>
 </div>`;
-    return publicShell({ pageTitle: 'Forgot Password', companyName, portalTitle, favicon, bodyHtml: body });
+    return publicShell({
+        pageTitle: 'Forgot Password', companyName, portalTitle, favicon,
+        sidebarColor, headerColor, primaryColor, secondaryColor, fontFamily, fontSize, footerText, copyrightText,
+        bodyHtml: body,
+    });
 }
