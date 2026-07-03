@@ -25,7 +25,7 @@ export function shell({
     extraScripts = '',
 }) {
     const navbarHtml = renderNavbar({ user, pageTitle, unreadCount, notifications });
-    const sidebarHtml = renderSidebar(user.role_name, currentPath);
+    const sidebarHtml = renderSidebar(user.role_name, currentPath, user.is_dept_approver);
 
     const flashScript = flashMessages
         .map((m) => `showToast(${JSON.stringify(m.type)}, ${JSON.stringify(m.message)});`)

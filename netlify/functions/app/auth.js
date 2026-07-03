@@ -39,6 +39,10 @@ export function signSessionToken(user, csrfToken, timeoutMinutes) {
         role_id: user.role_id,
         role_name: user.role_name,
         department: user.department_name ?? null,
+        // Whether this user is assigned as ANY department's approval-tier
+        // approver, regardless of their RBAC role - drives sidebar
+        // visibility for the Pending Approvals link (see session.js).
+        is_dept_approver: !!user.is_dept_approver,
         csrf: csrfToken,
     };
     return jwt.sign(payload, jwtSecret(), { expiresIn: `${timeoutMinutes}m` });

@@ -7,7 +7,7 @@ import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
 import { getSetting } from '../settings.js';
-import { getStatusId, routeBookingApproval } from '../approval.js';
+import { getStatusId, routeDepartmentApproval } from '../approval.js';
 import { bookFerrySeat } from '../seats.js';
 import { createNotification } from '../notifications.js';
 import { logActivity, clientIp } from '../activity.js';
@@ -453,7 +453,12 @@ export function registerStaffRoutes(router) {
                     remarks,
                     seats,
                 });
-                await routeBookingApproval(booking.booking_id);
+                // Department-hierarchy routing if the booker's department has opted
+                // in; routeDepartmentApproval delegates to the untouched legacy
+                // GM->RM->HR chain otherwise (departmentId null also falls through
+                // to legacy - nothing to look up).
+                const bookerRows = unwrap(await db().from('users').select('department_id').eq('user_id', user.user_id).limit(1));
+                await routeDepartmentApproval(booking.booking_id, bookerRows[0]?.department_id ?? null);
                 await createNotification(user.user_id, 'Your ferry booking request has been submitted and is awaiting approval.', 'booking', booking.booking_id);
                 await logActivity(user.user_id, 'Submitted ferry booking', `booking_id=${booking.booking_id}`, clientIp(request));
 

@@ -13,7 +13,7 @@ import { flashSetCookie } from '../flash.js';
 import { publicShell } from '../templates/layout.js';
 import { html, raw } from '../templates/html.js';
 import { renderShellForRequest } from '../shellHelper.js';
-import { ROLE_ADMIN, getSession } from '../session.js';
+import { ROLE_ADMIN, getSession, checkIsDepartmentApprover } from '../session.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -128,6 +128,7 @@ export function registerAuthRoutes(router) {
 
         const timeoutMinutes = Number(await getSetting('session_timeout_minutes', 30));
         const csrfToken = newCsrfToken();
+        const isDeptApprover = await checkIsDepartmentApprover(user.user_id);
         const sessionToken = signSessionToken(
             {
                 user_id: user.user_id,
@@ -137,6 +138,7 @@ export function registerAuthRoutes(router) {
                 role_id: user.role_id,
                 role_name: roleName,
                 department_name: user.departments?.department_name ?? null,
+                is_dept_approver: isDeptApprover,
             },
             csrfToken,
             timeoutMinutes

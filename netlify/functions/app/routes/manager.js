@@ -2,7 +2,7 @@
 // department_requests.js, reports.js land in Phase 3).
 
 import { db, unwrap } from '../db.js';
-import { requireRole } from '../guards.js';
+import { requireRole, requireLogin } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
@@ -14,6 +14,17 @@ import { formatDate, formatTime } from '../format.js';
 import { ROLE_GM, ROLE_RM, ROLE_HR, ROLE_DEPT_MGR } from '../session.js';
 
 const APPROVER_ROLES = [ROLE_GM, ROLE_RM, ROLE_HR];
+
+/** Maps a booking's "waiting/pending" status_name to a human hierarchy-level label for the audit trail. */
+const LEVEL_BY_STATUS_NAME = {
+    'Waiting GM Approval': 'General Manager',
+    'Waiting RM Approval': 'Resident Manager',
+    'Waiting HR Approval': 'HR Manager',
+    'Pending Department Manager Approval': 'Department Manager',
+    'Pending Assistant Manager Approval': 'Assistant Manager',
+    'Pending Supervisor Approval': 'Supervisor',
+    'Pending HR Approval': 'HR',
+};
 
 // ---------------------------------------------------------------------
 // Dashboard - shared by GM/RM/HR (approvers) and Department Manager
@@ -108,7 +119,10 @@ async function pendingApprovalsBody(userId, csrfToken) {
                 'booking_id, travel_date, direction, purpose, remarks, seats, users!bookings_user_id_fkey(full_name, employee_id, departments(department_name)), ferry_schedule(departure_time), booking_status!inner(status_name)'
             )
             .eq('current_approver_id', userId)
-            .like('booking_status.status_name', 'Waiting%')
+            // Matches both the legacy 'Waiting %' statuses and the new
+            // department-hierarchy 'Pending %' statuses - a hardcoded
+            // literal filter, not user input, so .or() is safe here.
+            .or('status_name.like.Waiting%,status_name.like.Pending%', { foreignTable: 'booking_status' })
             .order('travel_date', { ascending: true })
     );
 
@@ -159,14 +173,18 @@ export function registerManagerRoutes(router) {
     });
 
     router.get('/manager/approvals', async (request) => {
-        const auth = await requireRole(request, APPROVER_ROLES);
+        // Any authenticated user, not just GM/RM/HR - department approvers
+        // can hold any RBAC role. The current_approver_id = session.user.id
+        // filter in pendingApprovalsBody already scopes results correctly;
+        // a user with nothing assigned to them just sees the empty state.
+        const auth = await requireLogin(request);
         if (auth.response) return auth.response;
         const body = await pendingApprovalsBody(auth.user.user_id, auth.user.csrf);
         return renderShellForRequest({ request, auth, pageTitle: 'Pending Approvals', path: '/manager/approvals', bodyHtml: body });
     });
 
     router.post('/manager/approvals', async (request) => {
-        const auth = await requireRole(request, APPROVER_ROLES);
+        const auth = await requireLogin(request);
         if (auth.response) return auth.response;
         const { user } = auth;
 
@@ -182,7 +200,11 @@ export function registerManagerRoutes(router) {
         }
 
         const bookingRows = unwrap(
-            await db().from('bookings').select('user_id, current_approver_id, status_id').eq('booking_id', bookingId).limit(1)
+            await db()
+                .from('bookings')
+                .select('user_id, current_approver_id, status_id, booking_status(status_name), users!bookings_user_id_fkey(department_id)')
+                .eq('booking_id', bookingId)
+                .limit(1)
         );
         const booking = bookingRows[0];
         if (!booking || booking.current_approver_id !== user.user_id) {
@@ -207,10 +229,17 @@ export function registerManagerRoutes(router) {
         if (updateError) throw new Error(updateError.message);
 
         if (updatedRows.length) {
+            const approvalLevel = LEVEL_BY_STATUS_NAME[booking.booking_status?.status_name] ?? null;
             unwrap(
-                await db()
-                    .from('booking_approvals')
-                    .insert({ booking_id: bookingId, approver_id: user.user_id, role_at_approval: user.role_name, action: decision, comments: comments || null })
+                await db().from('booking_approvals').insert({
+                    booking_id: bookingId,
+                    approver_id: user.user_id,
+                    role_at_approval: user.role_name,
+                    action: decision,
+                    comments: comments || null,
+                    approval_level: approvalLevel,
+                    department_id: booking.users?.department_id ?? null,
+                })
             );
 
             const message =

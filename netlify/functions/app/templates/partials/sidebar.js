@@ -13,7 +13,7 @@ function navLink(path, icon, label, currentPath) {
           </a>`;
 }
 
-export function renderSidebar(roleName, currentPath) {
+export function renderSidebar(roleName, currentPath, isDeptApprover = false) {
     const links = [navLink('/dashboard', 'bi-speedometer2', 'Dashboard', currentPath)];
 
     if (roleName === ROLE_ADMIN) {
@@ -24,6 +24,7 @@ export function renderSidebar(roleName, currentPath) {
             navLink('/admin/routes', 'bi-signpost-split', 'Routes', currentPath),
             navLink('/admin/holidays', 'bi-calendar-x', 'Holidays', currentPath),
             navLink('/admin/manager_availability', 'bi-person-check', 'Manager Availability', currentPath),
+            navLink('/admin/department_approval', 'bi-diagram-3', 'Department Approval Config', currentPath),
             navLink('/admin/bookings', 'bi-journal-check', 'All Bookings', currentPath),
             navLink('/admin/reports', 'bi-graph-up', 'Reports', currentPath),
             navLink('/admin/activity_logs', 'bi-clock-history', 'Activity Logs', currentPath),
@@ -40,13 +41,24 @@ export function renderSidebar(roleName, currentPath) {
         );
     }
 
-    if ([ROLE_GM, ROLE_RM, ROLE_HR].includes(roleName)) {
+    const isLegacyApproverRole = [ROLE_GM, ROLE_RM, ROLE_HR].includes(roleName);
+    if (isLegacyApproverRole) {
         links.push(
             html`<div class="nav-heading">Approvals</div>`,
             navLink('/manager/approvals', 'bi-check2-square', 'Pending Approvals', currentPath),
             navLink('/manager/history', 'bi-clock-history', 'Approval History', currentPath),
             navLink('/manager/availability', 'bi-person-check', 'My Availability', currentPath),
             navLink('/manager/reports', 'bi-graph-up', 'Reports', currentPath)
+        );
+    } else if (isDeptApprover) {
+        // A user assigned as a department's Manager/Assistant
+        // Manager/Supervisor tier, but holding some other RBAC role
+        // (e.g. Staff) - only /manager/approvals is role-open to them
+        // today, so only link that (History/Availability/Reports stay
+        // GM/RM/HR-gated and would 403 otherwise).
+        links.push(
+            html`<div class="nav-heading">Approvals</div>`,
+            navLink('/manager/approvals', 'bi-check2-square', 'Pending Approvals', currentPath)
         );
     }
 

@@ -34,6 +34,7 @@ export async function getSession(request) {
     }
 
     const timeoutMinutes = Number(await getSetting('session_timeout_minutes', 30));
+    const isDeptApprover = await checkIsDepartmentApprover(payload.user_id);
     const freshToken = signSessionToken(
         {
             user_id: payload.user_id,
@@ -43,6 +44,7 @@ export async function getSession(request) {
             role_id: payload.role_id,
             role_name: payload.role_name,
             department_name: payload.department,
+            is_dept_approver: isDeptApprover,
         },
         payload.csrf,
         timeoutMinutes
@@ -53,6 +55,29 @@ export async function getSession(request) {
         setCookie: buildSessionCookie(freshToken),
         expired: false,
     };
+}
+
+/**
+ * Whether this user is assigned to any tier of any department's
+ * approval hierarchy while that department is actually in
+ * 'department_hierarchy' mode. Drives sidebar visibility for users who
+ * hold no GM/RM/HR role but were still assigned as a department
+ * approver (any active user can be, per the plan doc's decision #2).
+ * `userId` here always comes from an already-verified JWT payload
+ * (ultimately sourced from our own DB, never raw request input), so
+ * interpolating it into this .or() filter is safe - it's a trusted
+ * number, not free-text that could break out of the filter grammar.
+ */
+export async function checkIsDepartmentApprover(userId) {
+    const rows = unwrap(
+        await db()
+            .from('department_approval_config')
+            .select('department_id')
+            .eq('approval_mode', 'department_hierarchy')
+            .or(`manager_user_id.eq.${userId},assistant_manager_user_id.eq.${userId},supervisor_user_id.eq.${userId}`)
+            .limit(1)
+    );
+    return rows.length > 0;
 }
 
 /** Role name constants - identical strings to includes/functions.php. */

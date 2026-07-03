@@ -8,6 +8,22 @@ import { db, unwrap } from './db.js';
 import { createNotification } from './notifications.js';
 import { ROLE_GM, ROLE_RM, ROLE_HR, APPROVAL_CHAIN } from './session.js';
 
+// ---------------------------------------------------------------------
+// Department-based approval hierarchy (coexists with the legacy chain
+// above - a department only uses this once explicitly opted in via
+// department_approval_config.approval_mode). See supabase/migrations/
+// 0004_department_approval.sql and the project's plan doc for the full
+// design rationale.
+// ---------------------------------------------------------------------
+
+/** Ordered department hierarchy: level label, its config-table column, and its booking_status name. */
+const DEPARTMENT_LEVELS = [
+    { level: 'Department Manager', configColumn: 'manager_user_id', statusName: 'Pending Department Manager Approval' },
+    { level: 'Assistant Manager', configColumn: 'assistant_manager_user_id', statusName: 'Pending Assistant Manager Approval' },
+    { level: 'Supervisor', configColumn: 'supervisor_user_id', statusName: 'Pending Supervisor Approval' },
+];
+const HR_LEVEL = { level: 'HR', statusName: 'Pending HR Approval' };
+
 const statusIdCache = new Map();
 const roleIdCache = new Map();
 
@@ -107,7 +123,7 @@ export async function routeBookingApproval(bookingId) {
     unwrap(
         await db()
             .from('bookings')
-            .update({ status_id: statusId, current_approver_id: approverId })
+            .update({ status_id: statusId, current_approver_id: approverId, current_approval_assigned_at: new Date().toISOString() })
             .eq('booking_id', bookingId)
     );
 
@@ -121,4 +137,188 @@ export async function routeBookingApproval(bookingId) {
     }
 
     return { status_id: statusId, approver_id: approverId, role: chosenRole };
+}
+
+/** Fetches a department's approval config row, or null if none exists (or departmentId is null/undefined). */
+export async function getDepartmentApprovalConfig(departmentId) {
+    if (!departmentId) return null;
+    const rows = unwrap(
+        await db().from('department_approval_config').select('*').eq('department_id', departmentId).limit(1)
+    );
+    return rows[0] ?? null;
+}
+
+/**
+ * A candidate approver is viable only if their account is active AND
+ * they're not marked unavailable/on-leave/out-of-office. This is
+ * stricter than the legacy isManagerAvailable() alone, which never
+ * checked account status - the spec explicitly lists "inactive
+ * account" and "disabled by administrator" as their own escalation
+ * triggers, distinct from availability.
+ */
+async function isApproverViable(userId) {
+    const rows = unwrap(await db().from('users').select('status').eq('user_id', userId).limit(1));
+    if (!rows.length || rows[0].status !== 'active') return false;
+    return isManagerAvailable(userId);
+}
+
+/**
+ * Routes a booking through its department's 3-tier hierarchy (Department
+ * Manager -> Assistant Manager -> Supervisor -> HR fallback), OR
+ * delegates unchanged to the legacy routeBookingApproval() whenever
+ * department-hierarchy mode isn't active for this booking - a null
+ * config row (department has no config, or departmentId itself is
+ * null) is treated identically to an explicit 'legacy' mode, so this
+ * is safe even if a department is ever added without a matching
+ * department_approval_config row (the pre-seed in the migration is a
+ * convenience for the admin UI, not something this function trusts).
+ */
+export async function routeDepartmentApproval(bookingId, departmentId) {
+    const config = await getDepartmentApprovalConfig(departmentId);
+    if (!config || config.approval_mode !== 'department_hierarchy') {
+        return routeBookingApproval(bookingId);
+    }
+
+    let chosenLevel = null;
+    let approverId = null;
+
+    for (const { level, configColumn } of DEPARTMENT_LEVELS) {
+        const candidateId = config[configColumn];
+        if (candidateId && (await isApproverViable(candidateId))) {
+            chosenLevel = level;
+            approverId = candidateId;
+            break;
+        }
+    }
+
+    let statusName;
+    let noDepartmentApproverAvailable = false;
+    if (approverId) {
+        statusName = DEPARTMENT_LEVELS.find((l) => l.level === chosenLevel).statusName;
+    } else {
+        chosenLevel = HR_LEVEL.level;
+        statusName = HR_LEVEL.statusName;
+        const hrManager = await findManagerForRole(ROLE_HR);
+        approverId = hrManager?.user_id ?? null;
+        noDepartmentApproverAvailable = true;
+    }
+
+    const statusId = await getStatusId(statusName);
+
+    unwrap(
+        await db()
+            .from('bookings')
+            .update({ status_id: statusId, current_approver_id: approverId, current_approval_assigned_at: new Date().toISOString() })
+            .eq('booking_id', bookingId)
+    );
+
+    if (approverId) {
+        const message = noDepartmentApproverAvailable
+            ? 'No department approver was available for a ferry booking request - it has been escalated to HR for approval.'
+            : `A new ferry booking request is waiting for your approval as ${chosenLevel}.`;
+        await createNotification(approverId, message, 'booking', bookingId);
+    }
+
+    return { status_id: statusId, approver_id: approverId, level: chosenLevel };
+}
+
+/**
+ * Advances a booking to the next level in [Department Manager,
+ * Assistant Manager, Supervisor, HR] after its current level, or does
+ * nothing if already at HR (the terminal level). Used by the SLA
+ * escalation Scheduled Function and by manual verification.
+ *
+ * Uses the same compare-and-swap pattern as the human approve/reject
+ * handler in routes/manager.js: the UPDATE is conditioned on the exact
+ * status_id/current_approver_id the caller read when it selected this
+ * booking as an escalation candidate. If a human (or another escalation
+ * pass) already changed the booking in the meantime, the CAS affects 0
+ * rows and this returns { escalated: false, reason: 'conflict' } rather
+ * than blindly overwriting a decision that already happened - this is
+ * not optional hardening, it closes a real silent-data-corruption path
+ * (see the project's plan doc, "Corrections from validation" #2).
+ *
+ * `booking` must have: booking_id, status_id, current_approver_id,
+ * department_id (the department that is actually routing this booking).
+ */
+export async function escalateApproval(booking, reason) {
+    const config = await getDepartmentApprovalConfig(booking.department_id);
+    if (!config) return { escalated: false, reason: 'no_config' };
+
+    const statusRows = unwrap(
+        await db().from('booking_status').select('status_name').eq('status_id', booking.status_id).limit(1)
+    );
+    const currentStatusName = statusRows[0]?.status_name;
+
+    const currentLevelIndex = DEPARTMENT_LEVELS.findIndex((l) => l.statusName === currentStatusName);
+    if (currentLevelIndex === -1) {
+        // Already at HR (terminal) or not a department-hierarchy status at all - nothing further to escalate to.
+        return { escalated: false, reason: 'terminal_level' };
+    }
+    const departingLevel = DEPARTMENT_LEVELS[currentLevelIndex].level;
+
+    let nextLevel = null;
+    let nextApproverId = null;
+    for (const { level, configColumn } of DEPARTMENT_LEVELS.slice(currentLevelIndex + 1)) {
+        const candidateId = config[configColumn];
+        if (candidateId && (await isApproverViable(candidateId))) {
+            nextLevel = level;
+            nextApproverId = candidateId;
+            break;
+        }
+    }
+
+    let nextStatusName;
+    if (nextApproverId) {
+        nextStatusName = DEPARTMENT_LEVELS.find((l) => l.level === nextLevel).statusName;
+    } else {
+        nextLevel = HR_LEVEL.level;
+        nextStatusName = HR_LEVEL.statusName;
+        const hrManager = await findManagerForRole(ROLE_HR);
+        nextApproverId = hrManager?.user_id ?? null;
+    }
+    const nextStatusId = await getStatusId(nextStatusName);
+
+    const { data: updatedRows, error } = await db()
+        .from('bookings')
+        .update({
+            status_id: nextStatusId,
+            current_approver_id: nextApproverId,
+            current_approval_assigned_at: new Date().toISOString(),
+        })
+        .eq('booking_id', booking.booking_id)
+        .eq('status_id', booking.status_id)
+        .eq('current_approver_id', booking.current_approver_id)
+        .select('booking_id');
+    if (error) throw new Error(error.message);
+
+    if (!updatedRows.length) {
+        // Someone already acted on this booking since it was selected as an escalation candidate - skip, don't overwrite.
+        return { escalated: false, reason: 'conflict' };
+    }
+
+    unwrap(
+        await db().from('booking_approvals').insert({
+            booking_id: booking.booking_id,
+            approver_id: booking.current_approver_id, // the departing approver - see file header comment on this convention
+            role_at_approval: 'System (Auto-Escalation)',
+            action: 'escalated',
+            approval_level: departingLevel,
+            department_id: booking.department_id,
+            original_approver_id: booking.current_approver_id,
+            escalated_to_approver_id: nextApproverId,
+            escalation_reason: reason,
+        })
+    );
+
+    if (nextApproverId) {
+        await createNotification(
+            nextApproverId,
+            `A ferry booking request has been escalated to you (${nextLevel} level) for approval.`,
+            'booking',
+            booking.booking_id
+        );
+    }
+
+    return { escalated: true, level: nextLevel, approver_id: nextApproverId };
 }
