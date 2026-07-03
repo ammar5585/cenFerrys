@@ -1,12 +1,15 @@
-// HR global override page: view every pending request org-wide
+// Executive Overview page: view every pending request org-wide
 // (regardless of who it's currently assigned to or which department
-// it's from), and approve/reject/reassign/return any of them. Per the
-// spec, HR's authority is not restricted by department and is not
-// limited to department-hierarchy-mode departments - a legacy
+// it's from), and approve/reject/reassign/return any of them. Available
+// to every executive role (General Manager, Resident Manager, HR
+// Manager, Admin) - authority is not restricted by department and is
+// not limited to department-hierarchy-mode departments: a legacy
 // Waiting-GM-Approval booking is just as actionable here as a
-// department-hierarchy Pending-Supervisor-Approval one.
+// department-hierarchy Pending-Supervisor-Approval one, or a booking
+// left unassigned because no department approver was available. URL
+// stays /hr/overview for backward compatibility with existing links.
 
-import { db, unwrap } from '../db.js';
+import { db, unwrap, eqOrNull } from '../db.js';
 import { requireRole } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
@@ -16,8 +19,10 @@ import { createNotification } from '../notifications.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
-import { formatDate, formatTime, statusBadgeClass } from '../format.js';
-import { ROLE_HR, ROLE_ADMIN } from '../session.js';
+import { formatDate, formatDateTime, formatTime, statusBadgeClass } from '../format.js';
+import { ROLE_GM, ROLE_RM, ROLE_HR, ROLE_ADMIN } from '../session.js';
+
+const PAGE_ACCESS_ROLES = [ROLE_GM, ROLE_RM, ROLE_HR, ROLE_ADMIN];
 
 /** Same level-label mapping used in manager.js's audit trail - duplicated here
  *  deliberately (small, static lookup) rather than importing across route
@@ -74,7 +79,7 @@ async function overviewPageBody(csrfToken) {
             <form method="post" class="mt-2 border-top pt-2">
                 ${raw(csrfField(csrfToken))}
                 <input type="hidden" name="booking_id" value="${r.booking_id}">
-                <textarea name="comments" class="form-control form-control-sm mb-2" rows="2" placeholder="Comments (optional)"></textarea>
+                <textarea name="comments" class="form-control form-control-sm mb-2" rows="2" placeholder="Override reason - required if this request is not currently assigned to you"></textarea>
                 <div class="d-flex gap-2 mb-2">
                     <button type="submit" name="action" value="approve" class="btn btn-sm btn-success flex-fill"><i class="bi bi-check-lg"></i> Approve</button>
                     <button type="submit" name="action" value="reject" class="btn btn-sm btn-danger flex-fill"><i class="bi bi-x-lg"></i> Reject</button>
@@ -99,23 +104,84 @@ async function overviewPageBody(csrfToken) {
         .join('');
 
     return html`
-<h5 class="mb-3"><i class="bi bi-globe"></i> HR Overview</h5>
-<p class="text-muted">Every pending request, every department - HR can approve, reject, reassign, or return any request regardless of who it's currently assigned to.</p>
+<h5 class="mb-3"><i class="bi bi-globe"></i> Executive Overview</h5>
+<p class="text-muted">Every pending request, every department - General Manager, Resident Manager, and HR Manager users can approve, reject, reassign, or return any request regardless of who it is currently assigned to.</p>
 <div class="row g-3">
     ${raw(cards || '<p class="text-muted text-center py-4">No requests are currently pending anywhere in the organization.</p>')}
-</div>`;
+</div>
+${await recentOverridesHtml()}`;
+}
+
+/**
+ * Full override audit trail: every booking_approvals row where an
+ * executive acted on a request not assigned to them, with every field
+ * the audit spec requires. Avoids a single embed query across multiple
+ * FKs to the same users table (booking_approvals has three: approver_id,
+ * original_approver_id, escalated_to_approver_id - PostgREST cannot
+ * disambiguate an embed without a constraint-name hint, and this
+ * project has hit that exact ambiguity before), so this batches simple
+ * lookups instead.
+ */
+async function recentOverridesHtml() {
+    const overrides = unwrap(
+        await db()
+            .from('booking_approvals')
+            .select('approval_id, booking_id, approver_id, role_at_approval, action, comments, action_at, original_approver_id, departments(department_name), resorts(resort_name)')
+            .eq('is_hr_override', true)
+            .order('action_at', { ascending: false })
+            .limit(50)
+    );
+    if (!overrides.length) return '';
+
+    const bookingIds = [...new Set(overrides.map((o) => o.booking_id))];
+    const bookingRows = unwrap(
+        await db().from('bookings').select('booking_id, users!bookings_user_id_fkey(full_name, employee_id)').in('booking_id', bookingIds)
+    );
+    const bookingById = new Map(bookingRows.map((b) => [b.booking_id, b.users]));
+
+    const userIds = [...new Set(overrides.flatMap((o) => [o.approver_id, o.original_approver_id]).filter(Boolean))];
+    const userRows = userIds.length ? unwrap(await db().from('users').select('user_id, full_name').in('user_id', userIds)) : [];
+    const userById = new Map(userRows.map((u) => [u.user_id, u.full_name]));
+
+    const rowsHtml = overrides
+        .map((o) => {
+            const employee = bookingById.get(o.booking_id);
+            const decisionBadge = { approved: 'bg-success', rejected: 'bg-danger' }[o.action] ?? 'bg-secondary';
+            return html`<tr>
+            <td>#${o.booking_id}</td>
+            <td>${employee?.full_name ?? '-'} <small class="text-muted">${employee?.employee_id ?? ''}</small></td>
+            <td>${o.resorts?.resort_name ?? '-'}</td>
+            <td>${o.departments?.department_name ?? '-'}</td>
+            <td>${o.original_approver_id ? (userById.get(o.original_approver_id) ?? '-') : 'Unassigned'}</td>
+            <td>${userById.get(o.approver_id) ?? '-'} <small class="text-muted">(ID ${o.approver_id})</small></td>
+            <td>${o.role_at_approval}</td>
+            <td>${o.comments ?? '-'}</td>
+            <td><span class="badge ${decisionBadge}">${o.action}</span></td>
+            <td>${formatDateTime(o.action_at)}</td>
+        </tr>`;
+        })
+        .map((r) => r.toString())
+        .join('');
+
+    return html`
+<h5 class="mt-4 mb-3"><i class="bi bi-shield-exclamation"></i> Recent Executive Overrides</h5>
+<p class="text-muted small">Every request an executive acted on outside the normal departmental chain, most recent first.</p>
+<div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover mb-0 align-middle small">
+    <thead><tr><th>Request ID</th><th>Employee</th><th>Resort</th><th>Department</th><th>Original Approver</th><th>Executive Approver</th><th>Executive Role</th><th>Override Reason</th><th>Decision</th><th>Date/Time</th></tr></thead>
+    <tbody>${raw(rowsHtml)}</tbody>
+</table></div></div>`;
 }
 
 export function registerHrOverviewRoutes(router) {
     router.get('/hr/overview', async (request) => {
-        const auth = await requireRole(request, [ROLE_HR, ROLE_ADMIN]);
+        const auth = await requireRole(request, PAGE_ACCESS_ROLES);
         if (auth.response) return auth.response;
         const body = await overviewPageBody(auth.user.csrf);
-        return renderShellForRequest({ request, auth, pageTitle: 'HR Overview', path: '/hr/overview', bodyHtml: body });
+        return renderShellForRequest({ request, auth, pageTitle: 'Executive Overview', path: '/hr/overview', bodyHtml: body });
     });
 
     router.post('/hr/overview', async (request) => {
-        const auth = await requireRole(request, [ROLE_HR, ROLE_ADMIN]);
+        const auth = await requireRole(request, PAGE_ACCESS_ROLES);
         if (auth.response) return auth.response;
         const { user } = auth;
         const form = await readFormBody(request);
@@ -141,17 +207,23 @@ export function registerHrOverviewRoutes(router) {
         const currentLevel = LEVEL_BY_STATUS_NAME[booking.booking_status?.status_name] ?? null;
         const isOverride = booking.current_approver_id !== user.user_id;
 
+        // Override Reason is mandatory whenever an executive acts on a
+        // request not currently assigned to them - applies to every action.
+        if (isOverride && !comments) {
+            return redirectTo('/hr/overview', {
+                cookies: [auth.setCookie, flashSetCookie('error', 'An override reason is required when acting on a request not assigned to you.')].filter(Boolean),
+            });
+        }
+
         if (action === 'approve' || action === 'reject') {
             const newStatusName = action === 'approve' ? 'Approved' : 'Rejected';
             const newStatusId = await getStatusId(newStatusName);
 
-            const { data: updatedRows, error } = await db()
-                .from('bookings')
-                .update({ status_id: newStatusId })
-                .eq('booking_id', bookingId)
-                .eq('status_id', booking.status_id)
-                .eq('current_approver_id', booking.current_approver_id)
-                .select('booking_id');
+            const { data: updatedRows, error } = await eqOrNull(
+                db().from('bookings').update({ status_id: newStatusId }).eq('booking_id', bookingId).eq('status_id', booking.status_id),
+                'current_approver_id',
+                booking.current_approver_id
+            ).select('booking_id');
             if (error) throw new Error(error.message);
 
             if (updatedRows.length) {
@@ -165,6 +237,7 @@ export function registerHrOverviewRoutes(router) {
                         approval_level: currentLevel,
                         department_id: departmentId,
                         resort_id: resortId,
+                        original_approver_id: booking.current_approver_id,
                         is_hr_override: isOverride,
                     })
                 );
@@ -198,13 +271,15 @@ export function registerHrOverviewRoutes(router) {
                 return redirectTo('/hr/overview', { cookies: [auth.setCookie, flashSetCookie('error', 'That user is no longer active.')].filter(Boolean) });
             }
 
-            const { data: updatedRows, error } = await db()
-                .from('bookings')
-                .update({ current_approver_id: newApproverId, current_approval_assigned_at: new Date().toISOString() })
-                .eq('booking_id', bookingId)
-                .eq('status_id', booking.status_id)
-                .eq('current_approver_id', booking.current_approver_id)
-                .select('booking_id');
+            const { data: updatedRows, error } = await eqOrNull(
+                db()
+                    .from('bookings')
+                    .update({ current_approver_id: newApproverId, current_approval_assigned_at: new Date().toISOString() })
+                    .eq('booking_id', bookingId)
+                    .eq('status_id', booking.status_id),
+                'current_approver_id',
+                booking.current_approver_id
+            ).select('booking_id');
             if (error) throw new Error(error.message);
 
             if (updatedRows.length) {
@@ -220,7 +295,7 @@ export function registerHrOverviewRoutes(router) {
                         resort_id: resortId,
                         original_approver_id: booking.current_approver_id,
                         escalated_to_approver_id: newApproverId,
-                        is_hr_override: true,
+                        is_hr_override: isOverride,
                     })
                 );
                 await createNotification(newApproverId, 'A ferry booking request has been reassigned to you by HR for approval.', 'booking', bookingId);
@@ -240,13 +315,15 @@ export function registerHrOverviewRoutes(router) {
             }
 
             const returnStatusId = await getStatusId('Pending Department Manager Approval');
-            const { data: updatedRows, error } = await db()
-                .from('bookings')
-                .update({ status_id: returnStatusId, current_approver_id: config.manager_user_id, current_approval_assigned_at: new Date().toISOString() })
-                .eq('booking_id', bookingId)
-                .eq('status_id', booking.status_id)
-                .eq('current_approver_id', booking.current_approver_id)
-                .select('booking_id');
+            const { data: updatedRows, error } = await eqOrNull(
+                db()
+                    .from('bookings')
+                    .update({ status_id: returnStatusId, current_approver_id: config.manager_user_id, current_approval_assigned_at: new Date().toISOString() })
+                    .eq('booking_id', bookingId)
+                    .eq('status_id', booking.status_id),
+                'current_approver_id',
+                booking.current_approver_id
+            ).select('booking_id');
             if (error) throw new Error(error.message);
 
             if (updatedRows.length) {
@@ -262,7 +339,7 @@ export function registerHrOverviewRoutes(router) {
                         resort_id: resortId,
                         original_approver_id: booking.current_approver_id,
                         escalated_to_approver_id: config.manager_user_id,
-                        is_hr_override: true,
+                        is_hr_override: isOverride,
                     })
                 );
                 await createNotification(config.manager_user_id, 'A ferry booking request has been returned by HR for further departmental review.', 'booking', bookingId);

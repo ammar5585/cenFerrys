@@ -4,9 +4,11 @@
 // capacity-style race here (each booking only assigns its own approver),
 // so this stays easy to diff against the original PHP.
 
-import { db, unwrap } from './db.js';
+import { db, unwrap, eqOrNull } from './db.js';
 import { createNotification } from './notifications.js';
 import { ROLE_GM, ROLE_RM, ROLE_HR, APPROVAL_CHAIN } from './session.js';
+
+const EXECUTIVE_ROLES = [ROLE_GM, ROLE_RM, ROLE_HR];
 
 // ---------------------------------------------------------------------
 // Department-based approval hierarchy (coexists with the legacy chain
@@ -22,8 +24,6 @@ const DEPARTMENT_LEVELS = [
     { level: 'Assistant Manager', configColumn: 'assistant_manager_user_id', statusName: 'Pending Assistant Manager Approval' },
     { level: 'Supervisor', configColumn: 'supervisor_user_id', statusName: 'Pending Supervisor Approval' },
 ];
-const HR_LEVEL = { level: 'HR', statusName: 'Pending HR Approval' };
-
 const statusIdCache = new Map();
 const roleIdCache = new Map();
 
@@ -168,15 +168,68 @@ async function isApproverViable(userId) {
 }
 
 /**
+ * Notifies every active user holding an executive role (GM, RM, or HR)
+ * that a booking needs their attention - used when a department-
+ * hierarchy booking has no viable departmental approver at any tier and
+ * lands in an unassigned "awaiting executive override" state, so
+ * executives learn about it proactively rather than only via polling
+ * the Executive Overview page. Mirrors the "notify all Transport
+ * Coordinators on approval" pattern in routes/manager.js.
+ */
+async function notifyExecutives(bookingId, message) {
+    const executives = unwrap(
+        await db()
+            .from('users')
+            .select('user_id, roles!inner(role_name)')
+            .eq('status', 'active')
+            .in('roles.role_name', EXECUTIVE_ROLES)
+    );
+    for (const exec of executives) {
+        await createNotification(exec.user_id, message, 'booking', bookingId);
+    }
+}
+
+/**
+ * Returns the data needed to describe a booker's approval workflow to
+ * them, dynamically - never hardcoded text. `mode` is 'department_hierarchy'
+ * or 'legacy'; `executives` is every currently active GM/RM/HR user,
+ * ordered to reflect the legacy chain's priority (GM, then RM, then HR),
+ * for display in either mode.
+ */
+export async function getApprovalWorkflowInfo(resortId, departmentId) {
+    const config = await getDepartmentApprovalConfig(resortId, departmentId);
+    const rolePriority = EXECUTIVE_ROLES;
+
+    const rows = unwrap(
+        await db()
+            .from('users')
+            .select('full_name, roles!inner(role_name)')
+            .eq('status', 'active')
+            .in('roles.role_name', rolePriority)
+    );
+    const executives = rows
+        .map((u) => ({ fullName: u.full_name, roleName: u.roles.role_name }))
+        .sort((a, b) => rolePriority.indexOf(a.roleName) - rolePriority.indexOf(b.roleName));
+
+    const mode = config && config.approval_mode === 'department_hierarchy' ? 'department_hierarchy' : 'legacy';
+    return { mode, executives };
+}
+
+/**
  * Routes a booking through its department's 3-tier hierarchy (Department
- * Manager -> Assistant Manager -> Supervisor -> HR fallback), OR
- * delegates unchanged to the legacy routeBookingApproval() whenever
- * department-hierarchy mode isn't active for this booking - a null
- * config row (department has no config, or departmentId itself is
- * null) is treated identically to an explicit 'legacy' mode, so this
- * is safe even if a department is ever added without a matching
- * department_approval_config row (the pre-seed in the migration is a
- * convenience for the admin UI, not something this function trusts).
+ * Manager -> Assistant Manager -> Supervisor), OR delegates unchanged to
+ * the legacy routeBookingApproval() whenever department-hierarchy mode
+ * isn't active for this booking - a null config row (department has no
+ * config, or departmentId itself is null) is treated identically to an
+ * explicit 'legacy' mode, so this is safe even if a department is ever
+ * added without a matching department_approval_config row (the pre-seed
+ * in the migration is a convenience for the admin UI, not something
+ * this function trusts).
+ *
+ * If no departmental tier has a viable approver, the booking is left
+ * pending/unassigned (current_approver_id = null) rather than
+ * auto-escalating to HR - only an executive override (GM/RM/HR acting
+ * via the Executive Overview page) can act on it from there.
  */
 export async function routeDepartmentApproval(bookingId, resortId, departmentId) {
     const config = await getDepartmentApprovalConfig(resortId, departmentId);
@@ -201,10 +254,12 @@ export async function routeDepartmentApproval(bookingId, resortId, departmentId)
     if (approverId) {
         statusName = DEPARTMENT_LEVELS.find((l) => l.level === chosenLevel).statusName;
     } else {
-        chosenLevel = HR_LEVEL.level;
-        statusName = HR_LEVEL.statusName;
-        const hrManager = await findManagerForRole(ROLE_HR);
-        approverId = hrManager?.user_id ?? null;
+        // No viable tier at all - stays pending/unassigned rather than
+        // auto-escalating to HR. The first tier's status is the natural
+        // entry point since nothing was ever actually assigned.
+        chosenLevel = null;
+        statusName = DEPARTMENT_LEVELS[0].statusName;
+        approverId = null;
         noDepartmentApproverAvailable = true;
     }
 
@@ -218,10 +273,12 @@ export async function routeDepartmentApproval(bookingId, resortId, departmentId)
     );
 
     if (approverId) {
-        const message = noDepartmentApproverAvailable
-            ? 'No department approver was available for a ferry booking request - it has been escalated to HR for approval.'
-            : `A new ferry booking request is waiting for your approval as ${chosenLevel}.`;
-        await createNotification(approverId, message, 'booking', bookingId);
+        await createNotification(approverId, `A new ferry booking request is waiting for your approval as ${chosenLevel}.`, 'booking', bookingId);
+    } else if (noDepartmentApproverAvailable) {
+        await notifyExecutives(
+            bookingId,
+            'A new ferry booking request has no available department approver and needs an executive override.'
+        );
     }
 
     return { status_id: statusId, approver_id: approverId, level: chosenLevel };
@@ -276,28 +333,36 @@ export async function escalateApproval(booking, reason) {
         }
     }
 
-    let nextStatusName;
-    if (nextApproverId) {
-        nextStatusName = DEPARTMENT_LEVELS.find((l) => l.level === nextLevel).statusName;
-    } else {
-        nextLevel = HR_LEVEL.level;
-        nextStatusName = HR_LEVEL.statusName;
-        const hrManager = await findManagerForRole(ROLE_HR);
-        nextApproverId = hrManager?.user_id ?? null;
-    }
+    // No further viable tier - stays pending/unassigned rather than
+    // auto-escalating to HR. Keep the CURRENT status name unchanged: the
+    // booking doesn't "become" a level it never reached, it just loses
+    // its assignee.
+    const noFurtherTierAvailable = !nextApproverId;
+    const nextStatusName = noFurtherTierAvailable ? currentStatusName : DEPARTMENT_LEVELS.find((l) => l.level === nextLevel).statusName;
     const nextStatusId = await getStatusId(nextStatusName);
+    if (noFurtherTierAvailable) {
+        nextLevel = null;
+        nextApproverId = null;
+    }
 
-    const { data: updatedRows, error } = await db()
-        .from('bookings')
-        .update({
-            status_id: nextStatusId,
-            current_approver_id: nextApproverId,
-            current_approval_assigned_at: new Date().toISOString(),
-        })
-        .eq('booking_id', booking.booking_id)
-        .eq('status_id', booking.status_id)
-        .eq('current_approver_id', booking.current_approver_id)
-        .select('booking_id');
+    // A booking already sitting unassigned (current_approver_id null,
+    // possible if find_sla_overdue_bookings() re-selects it on a later
+    // run) needs an IS NULL check, not .eq(col, null) - see eqOrNull().
+    const query = eqOrNull(
+        db()
+            .from('bookings')
+            .update({
+                status_id: nextStatusId,
+                current_approver_id: nextApproverId,
+                current_approval_assigned_at: new Date().toISOString(),
+            })
+            .eq('booking_id', booking.booking_id)
+            .eq('status_id', booking.status_id),
+        'current_approver_id',
+        booking.current_approver_id
+    );
+
+    const { data: updatedRows, error } = await query.select('booking_id');
     if (error) throw new Error(error.message);
 
     if (!updatedRows.length) {
@@ -316,7 +381,7 @@ export async function escalateApproval(booking, reason) {
             resort_id: booking.resort_id,
             original_approver_id: booking.current_approver_id,
             escalated_to_approver_id: nextApproverId,
-            escalation_reason: reason,
+            escalation_reason: noFurtherTierAvailable ? `${reason} (no further department approver available)` : reason,
         })
     );
 
@@ -326,6 +391,11 @@ export async function escalateApproval(booking, reason) {
             `A ferry booking request has been escalated to you (${nextLevel} level) for approval.`,
             'booking',
             booking.booking_id
+        );
+    } else if (noFurtherTierAvailable) {
+        await notifyExecutives(
+            booking.booking_id,
+            'A ferry booking request has no available department approver and needs an executive override.'
         );
     }
 

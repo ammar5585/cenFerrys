@@ -7,7 +7,7 @@ import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
 import { getSetting } from '../settings.js';
-import { getStatusId, routeDepartmentApproval } from '../approval.js';
+import { getStatusId, routeDepartmentApproval, getApprovalWorkflowInfo } from '../approval.js';
 import { bookFerrySeat } from '../seats.js';
 import { createNotification } from '../notifications.js';
 import { logActivity, clientIp } from '../activity.js';
@@ -128,7 +128,29 @@ async function staffDashboardBody(userId, csrfToken) {
 // ---------------------------------------------------------------------
 // Booking form
 // ---------------------------------------------------------------------
-function bookingFormBody({ errors, maxSeats, cutoffHours, routes, csrfToken }) {
+function approvalWorkflowInfoHtml(workflowInfo) {
+    const execListHtml = workflowInfo.executives.map((e) => `<li>${h(e.fullName)} (${h(e.roleName)})</li>`).join('');
+
+    if (workflowInfo.mode === 'department_hierarchy') {
+        return html`
+<p class="mb-2"><i class="bi bi-info-circle"></i> Your request will follow your department's approval workflow.</p>
+<p class="mb-1 fw-semibold">Approval Hierarchy</p>
+<ul class="ps-3 mb-2">
+    <li>Department Manager</li>
+    <li>Assistant Manager (if Department Manager is unavailable)</li>
+    <li>Supervisor (if both Department Manager and Assistant Manager are unavailable)</li>
+</ul>
+<p class="mb-1 fw-semibold">Executive Override</p>
+<p class="mb-1">At any stage of the approval process, the following executives may review and approve or reject your request when necessary:</p>
+<ul class="ps-3">${raw(execListHtml || '<li class="text-muted">No executive users are currently active.</li>')}</ul>`;
+    }
+
+    return html`
+<p class="mb-2"><i class="bi bi-info-circle"></i> Your request will be routed automatically to the first available approver, in this order:</p>
+<ul class="ps-3">${raw(execListHtml || '<li class="text-muted">No General Manager, Resident Manager, or HR Manager is currently active.</li>')}</ul>`;
+}
+
+function bookingFormBody({ errors, maxSeats, cutoffHours, routes, workflowInfo, csrfToken }) {
     return html`
 <h5 class="mb-3"><i class="bi bi-plus-circle"></i> New Ferry Booking</h5>
 
@@ -182,13 +204,8 @@ ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `
     <div class="col-lg-4">
         <div class="card shadow-sm">
             <div class="card-body small text-muted">
-                <p><i class="bi bi-info-circle"></i> Your request will be routed automatically:</p>
-                <ol class="ps-3">
-                    <li>General Manager (if available)</li>
-                    <li>Resident Manager (if GM unavailable)</li>
-                    <li>HR Manager (if both unavailable)</li>
-                </ol>
-                <p>Bookings must be made at least ${cutoffHours} hour(s) before departure. Maximum ${maxSeats} seat(s) per booking.</p>
+                ${approvalWorkflowInfoHtml(workflowInfo)}
+                <p class="mb-0">Bookings must be made at least ${cutoffHours} hour(s) before departure. Maximum ${maxSeats} seat(s) per booking.</p>
             </div>
         </div>
     </div>
@@ -216,7 +233,11 @@ const BOOKING_PAGE_SCRIPT = `
         fetch(window.BASE_URL + 'ajax/get_schedule_seats?date=' + encodeURIComponent(date) + '&direction=' + encodeURIComponent(direction))
             .then(function (r) { return r.json(); })
             .then(function (res) {
-                if (!res.success || res.schedules.length === 0) {
+                if (!res.success && res.message === 'Not authenticated') {
+                    container.innerHTML = '<div class="col-12 text-danger small">Your session has expired. Please <a href="' + window.BASE_URL + 'auth/login">log in again</a>.</div>';
+                    return;
+                }
+                if (!res.success || !res.schedules || res.schedules.length === 0) {
                     container.innerHTML = '<div class="col-12 text-muted small">No ferries operate on the selected date/direction.</div>';
                     return;
                 }
@@ -241,6 +262,9 @@ const BOOKING_PAGE_SCRIPT = `
                         submitBtn.disabled = false;
                     });
                 });
+            })
+            .catch(function () {
+                container.innerHTML = '<div class="col-12 text-danger small">Unable to load ferry schedules. Please refresh and try again.</div>';
             });
     }
 
@@ -382,8 +406,10 @@ export function registerStaffRoutes(router) {
         const maxSeats = Number(await getSetting('max_seats_per_booking', 4));
         const cutoffHours = Number(await getSetting('booking_cutoff_hours', 2));
         const routes = unwrap(await db().from('ferry_routes').select('direction').eq('status', 'active').order('direction'));
+        const bookerRows = unwrap(await db().from('users').select('department_id, resort_id').eq('user_id', auth.user.user_id).limit(1));
+        const workflowInfo = await getApprovalWorkflowInfo(bookerRows[0]?.resort_id ?? null, bookerRows[0]?.department_id ?? null);
 
-        const body = bookingFormBody({ errors: [], maxSeats, cutoffHours, routes, csrfToken: auth.user.csrf });
+        const body = bookingFormBody({ errors: [], maxSeats, cutoffHours, routes, workflowInfo, csrfToken: auth.user.csrf });
         return renderShellForRequest({
             request,
             auth,
@@ -475,7 +501,9 @@ export function registerStaffRoutes(router) {
         }
 
         const routes = unwrap(await db().from('ferry_routes').select('direction').eq('status', 'active').order('direction'));
-        const body = bookingFormBody({ errors, maxSeats, cutoffHours, routes, csrfToken: user.csrf });
+        const errorPathBookerRows = unwrap(await db().from('users').select('department_id, resort_id').eq('user_id', user.user_id).limit(1));
+        const workflowInfo = await getApprovalWorkflowInfo(errorPathBookerRows[0]?.resort_id ?? null, errorPathBookerRows[0]?.department_id ?? null);
+        const body = bookingFormBody({ errors, maxSeats, cutoffHours, routes, workflowInfo, csrfToken: user.csrf });
         return renderShellForRequest({
             request,
             auth,

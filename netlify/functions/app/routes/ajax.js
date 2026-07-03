@@ -14,7 +14,7 @@ export function registerAjaxRoutes(router) {
     // GET - read-only, no CSRF check needed (mirrors the PHP version).
     router.get('/ajax/get_schedule_seats', async (request) => {
         const { user } = await getSession(request);
-        if (!user) return jsonResponse({ success: false, message: 'Not authenticated' }, { status: 401 });
+        if (!user) return jsonResponse({ success: false, message: 'Not authenticated', schedules: [] }, { status: 401 });
 
         const url = new URL(request.url);
         const date = url.searchParams.get('date') || '';

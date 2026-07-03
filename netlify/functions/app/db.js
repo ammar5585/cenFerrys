@@ -32,3 +32,15 @@ export function unwrap({ data, error }) {
     }
     return data;
 }
+
+/**
+ * PostgREST's .eq(column, value) has no null special-casing - passing a
+ * JS `null` emits the literal filter `column=eq.null`, which is NOT a
+ * safe stand-in for "IS NULL" and is not guaranteed to match. Use this
+ * wherever a compare-and-swap condition might legitimately compare
+ * against a null column value (e.g. an unassigned booking's
+ * current_approver_id).
+ */
+export function eqOrNull(query, column, value) {
+    return value == null ? query.is(column, null) : query.eq(column, value);
+}
