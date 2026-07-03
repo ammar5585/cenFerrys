@@ -25,6 +25,7 @@ export function renderSidebar(roleName, currentPath, isDeptApprover = false) {
             navLink('/admin/holidays', 'bi-calendar-x', 'Holidays', currentPath),
             navLink('/admin/manager_availability', 'bi-person-check', 'Manager Availability', currentPath),
             navLink('/admin/department_approval', 'bi-diagram-3', 'Department Approval Config', currentPath),
+            navLink('/hr/overview', 'bi-globe', 'HR Overview', currentPath),
             navLink('/admin/bookings', 'bi-journal-check', 'All Bookings', currentPath),
             navLink('/admin/reports', 'bi-graph-up', 'Reports', currentPath),
             navLink('/admin/activity_logs', 'bi-clock-history', 'Activity Logs', currentPath),
@@ -50,6 +51,9 @@ export function renderSidebar(roleName, currentPath, isDeptApprover = false) {
             navLink('/manager/availability', 'bi-person-check', 'My Availability', currentPath),
             navLink('/manager/reports', 'bi-graph-up', 'Reports', currentPath)
         );
+        if (roleName === ROLE_HR) {
+            links.push(navLink('/hr/overview', 'bi-globe', 'HR Overview', currentPath));
+        }
     } else if (isDeptApprover) {
         // A user assigned as a department's Manager/Assistant
         // Manager/Supervisor tier, but holding some other RBAC role
