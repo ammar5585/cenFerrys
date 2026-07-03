@@ -55,6 +55,9 @@ export default async (request: Request) => {
     }
 };
 
-export const config = {
-    path: '/*',
-};
+// No `config.path` here deliberately: Netlify Functions v2's own
+// path-based routing appears to take precedence over static asset
+// serving (unlike a netlify.toml [[redirects]] rule, which is
+// documented to let existing static files win). The redirect rule in
+// netlify.toml already routes everything else to this function at its
+// default /.netlify/functions/app path, so no config.path is needed.
