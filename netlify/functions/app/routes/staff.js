@@ -457,8 +457,8 @@ export function registerStaffRoutes(router) {
                 // in; routeDepartmentApproval delegates to the untouched legacy
                 // GM->RM->HR chain otherwise (departmentId null also falls through
                 // to legacy - nothing to look up).
-                const bookerRows = unwrap(await db().from('users').select('department_id').eq('user_id', user.user_id).limit(1));
-                await routeDepartmentApproval(booking.booking_id, bookerRows[0]?.department_id ?? null);
+                const bookerRows = unwrap(await db().from('users').select('department_id, resort_id').eq('user_id', user.user_id).limit(1));
+                await routeDepartmentApproval(booking.booking_id, bookerRows[0]?.resort_id ?? null, bookerRows[0]?.department_id ?? null);
                 await createNotification(user.user_id, 'Your ferry booking request has been submitted and is awaiting approval.', 'booking', booking.booking_id);
                 await logActivity(user.user_id, 'Submitted ferry booking', `booking_id=${booking.booking_id}`, clientIp(request));
 

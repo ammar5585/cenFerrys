@@ -44,7 +44,7 @@ async function overviewPageBody(csrfToken) {
         await db()
             .from('bookings')
             .select(
-                'booking_id, travel_date, direction, purpose, remarks, seats, current_approver_id, users!bookings_user_id_fkey(full_name, employee_id, department_id, departments(department_name)), ferry_schedule(departure_time), booking_status!inner(status_name, badge_color), approver:current_approver_id(full_name)'
+                'booking_id, travel_date, direction, purpose, remarks, seats, current_approver_id, users!bookings_user_id_fkey(full_name, employee_id, department_id, resort_id, departments(department_name), resorts(resort_name)), ferry_schedule(departure_time), booking_status!inner(status_name, badge_color), approver:current_approver_id(full_name)'
             )
             .or('status_name.like.Waiting%,status_name.like.Pending%', { foreignTable: 'booking_status' })
             .order('travel_date', { ascending: true })
@@ -65,7 +65,7 @@ async function overviewPageBody(csrfToken) {
                 <h6>${r.users.full_name} <small class="text-muted">${r.users.employee_id}</small></h6>
                 <span class="badge ${statusBadgeClass(r.booking_status.badge_color)}">${r.booking_status.status_name}</span>
             </div>
-            <p class="small text-muted mb-1">${r.users.departments?.department_name ?? '-'} &middot; Currently with: <strong>${r.approver?.full_name ?? 'Unassigned'}</strong> (${level})</p>
+            <p class="small text-muted mb-1">${r.users.departments?.department_name ?? '-'} (${r.users.resorts?.resort_name ?? '-'}) &middot; Currently with: <strong>${r.approver?.full_name ?? 'Unassigned'}</strong> (${level})</p>
             <p class="mb-1"><i class="bi bi-calendar3"></i> ${formatDate(r.travel_date)} at ${formatTime(r.ferry_schedule.departure_time)}</p>
             <p class="mb-1"><i class="bi bi-signpost-split"></i> ${r.direction} &middot; ${r.seats} seat(s)</p>
             <p class="mb-1"><strong>Purpose:</strong> ${r.purpose}</p>
@@ -128,7 +128,7 @@ export function registerHrOverviewRoutes(router) {
         const bookingRows = unwrap(
             await db()
                 .from('bookings')
-                .select('user_id, current_approver_id, status_id, booking_status(status_name), users!bookings_user_id_fkey(department_id)')
+                .select('user_id, current_approver_id, status_id, booking_status(status_name), users!bookings_user_id_fkey(department_id, resort_id)')
                 .eq('booking_id', bookingId)
                 .limit(1)
         );
@@ -137,6 +137,7 @@ export function registerHrOverviewRoutes(router) {
             return redirectTo('/hr/overview', { cookies: [auth.setCookie, flashSetCookie('error', 'Booking not found.')].filter(Boolean) });
         }
         const departmentId = booking.users?.department_id ?? null;
+        const resortId = booking.users?.resort_id ?? null;
         const currentLevel = LEVEL_BY_STATUS_NAME[booking.booking_status?.status_name] ?? null;
         const isOverride = booking.current_approver_id !== user.user_id;
 
@@ -163,6 +164,7 @@ export function registerHrOverviewRoutes(router) {
                         comments: comments || null,
                         approval_level: currentLevel,
                         department_id: departmentId,
+                        resort_id: resortId,
                         is_hr_override: isOverride,
                     })
                 );
@@ -215,6 +217,7 @@ export function registerHrOverviewRoutes(router) {
                         comments: comments || null,
                         approval_level: currentLevel,
                         department_id: departmentId,
+                        resort_id: resortId,
                         original_approver_id: booking.current_approver_id,
                         escalated_to_approver_id: newApproverId,
                         is_hr_override: true,
@@ -228,10 +231,10 @@ export function registerHrOverviewRoutes(router) {
         }
 
         if (action === 'return') {
-            if (!departmentId) {
+            if (!departmentId || !resortId) {
                 return redirectTo('/hr/overview', { cookies: [auth.setCookie, flashSetCookie('error', 'This booking has no department to return to.')].filter(Boolean) });
             }
-            const config = await getDepartmentApprovalConfig(departmentId);
+            const config = await getDepartmentApprovalConfig(resortId, departmentId);
             if (!config || config.approval_mode !== 'department_hierarchy' || !config.manager_user_id) {
                 return redirectTo('/hr/overview', { cookies: [auth.setCookie, flashSetCookie('error', 'This department has no configured Department Manager to return the request to.')].filter(Boolean) });
             }
@@ -256,6 +259,7 @@ export function registerHrOverviewRoutes(router) {
                         comments: comments || null,
                         approval_level: currentLevel,
                         department_id: departmentId,
+                        resort_id: resortId,
                         original_approver_id: booking.current_approver_id,
                         escalated_to_approver_id: config.manager_user_id,
                         is_hr_override: true,

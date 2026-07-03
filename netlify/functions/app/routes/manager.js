@@ -71,10 +71,13 @@ async function managerDashboardBody(user) {
 
     let deptSummaryHtml = '';
     if (user.role_name === ROLE_DEPT_MGR) {
-        const selfRows = unwrap(await db().from('users').select('department_id').eq('user_id', user.user_id).limit(1));
+        const selfRows = unwrap(await db().from('users').select('department_id, resort_id').eq('user_id', user.user_id).limit(1));
         const departmentId = selfRows[0]?.department_id;
-        if (departmentId) {
-            const deptUserIds = unwrap(await db().from('users').select('user_id').eq('department_id', departmentId)).map((u) => u.user_id);
+        const resortId = selfRows[0]?.resort_id;
+        if (departmentId && resortId) {
+            const deptUserIds = unwrap(
+                await db().from('users').select('user_id').eq('department_id', departmentId).eq('resort_id', resortId)
+            ).map((u) => u.user_id);
             const bookings = deptUserIds.length
                 ? unwrap(await db().from('bookings').select('booking_status(status_name)').in('user_id', deptUserIds))
                 : [];
@@ -202,7 +205,7 @@ export function registerManagerRoutes(router) {
         const bookingRows = unwrap(
             await db()
                 .from('bookings')
-                .select('user_id, current_approver_id, status_id, booking_status(status_name), users!bookings_user_id_fkey(department_id)')
+                .select('user_id, current_approver_id, status_id, booking_status(status_name), users!bookings_user_id_fkey(department_id, resort_id)')
                 .eq('booking_id', bookingId)
                 .limit(1)
         );
@@ -239,6 +242,7 @@ export function registerManagerRoutes(router) {
                     comments: comments || null,
                     approval_level: approvalLevel,
                     department_id: booking.users?.department_id ?? null,
+                    resort_id: booking.users?.resort_id ?? null,
                 })
             );
 

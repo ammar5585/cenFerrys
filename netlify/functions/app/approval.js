@@ -139,11 +139,16 @@ export async function routeBookingApproval(bookingId) {
     return { status_id: statusId, approver_id: approverId, role: chosenRole };
 }
 
-/** Fetches a department's approval config row, or null if none exists (or departmentId is null/undefined). */
-export async function getDepartmentApprovalConfig(departmentId) {
-    if (!departmentId) return null;
+/** Fetches a resort+department's approval config row, or null if none exists (or either id is null/undefined). */
+export async function getDepartmentApprovalConfig(resortId, departmentId) {
+    if (!resortId || !departmentId) return null;
     const rows = unwrap(
-        await db().from('department_approval_config').select('*').eq('department_id', departmentId).limit(1)
+        await db()
+            .from('department_approval_config')
+            .select('*')
+            .eq('resort_id', resortId)
+            .eq('department_id', departmentId)
+            .limit(1)
     );
     return rows[0] ?? null;
 }
@@ -173,8 +178,8 @@ async function isApproverViable(userId) {
  * department_approval_config row (the pre-seed in the migration is a
  * convenience for the admin UI, not something this function trusts).
  */
-export async function routeDepartmentApproval(bookingId, departmentId) {
-    const config = await getDepartmentApprovalConfig(departmentId);
+export async function routeDepartmentApproval(bookingId, resortId, departmentId) {
+    const config = await getDepartmentApprovalConfig(resortId, departmentId);
     if (!config || config.approval_mode !== 'department_hierarchy') {
         return routeBookingApproval(bookingId);
     }
@@ -239,10 +244,13 @@ export async function routeDepartmentApproval(bookingId, departmentId) {
  * (see the project's plan doc, "Corrections from validation" #2).
  *
  * `booking` must have: booking_id, status_id, current_approver_id,
- * department_id (the department that is actually routing this booking).
+ * department_id, resort_id (the resort+department that is actually
+ * routing this booking - the same resort's config must be used, since
+ * each resort now has a fully independent hierarchy for the same
+ * department).
  */
 export async function escalateApproval(booking, reason) {
-    const config = await getDepartmentApprovalConfig(booking.department_id);
+    const config = await getDepartmentApprovalConfig(booking.resort_id, booking.department_id);
     if (!config) return { escalated: false, reason: 'no_config' };
 
     const statusRows = unwrap(
@@ -305,6 +313,7 @@ export async function escalateApproval(booking, reason) {
             action: 'escalated',
             approval_level: departingLevel,
             department_id: booking.department_id,
+            resort_id: booking.resort_id,
             original_approver_id: booking.current_approver_id,
             escalated_to_approver_id: nextApproverId,
             escalation_reason: reason,

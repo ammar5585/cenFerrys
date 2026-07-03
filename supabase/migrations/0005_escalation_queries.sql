@@ -13,15 +13,16 @@
 -- Bookings whose department has SLA auto-escalation enabled and have
 -- sat with their current approver longer than that department's
 -- configured sla_hours.
+DROP FUNCTION IF EXISTS find_sla_overdue_bookings();
 CREATE OR REPLACE FUNCTION find_sla_overdue_bookings()
-RETURNS TABLE(booking_id INTEGER, status_id INTEGER, current_approver_id INTEGER, department_id INTEGER) AS $$
+RETURNS TABLE(booking_id INTEGER, status_id INTEGER, current_approver_id INTEGER, department_id INTEGER, resort_id INTEGER) AS $$
 BEGIN
     RETURN QUERY
-    SELECT b.booking_id, b.status_id, b.current_approver_id, u.department_id
+    SELECT b.booking_id, b.status_id, b.current_approver_id, u.department_id, u.resort_id
     FROM bookings b
     JOIN users u ON u.user_id = b.user_id
     JOIN booking_status bs ON bs.status_id = b.status_id
-    JOIN department_approval_config dac ON dac.department_id = u.department_id
+    JOIN department_approval_config dac ON dac.department_id = u.department_id AND dac.resort_id = u.resort_id
     WHERE bs.status_name LIKE 'Pending%'
       AND dac.approval_mode = 'department_hierarchy'
       AND dac.auto_escalation_enabled = true
@@ -36,15 +37,16 @@ $$ LANGUAGE plpgsql STABLE;
 -- settings, since "the assigned person literally cannot act" is a
 -- distinct trigger from a timeout (see the project's plan doc,
 -- "Corrections from validation" #4).
+DROP FUNCTION IF EXISTS find_inactive_approver_bookings();
 CREATE OR REPLACE FUNCTION find_inactive_approver_bookings()
-RETURNS TABLE(booking_id INTEGER, status_id INTEGER, current_approver_id INTEGER, department_id INTEGER) AS $$
+RETURNS TABLE(booking_id INTEGER, status_id INTEGER, current_approver_id INTEGER, department_id INTEGER, resort_id INTEGER) AS $$
 BEGIN
     RETURN QUERY
-    SELECT b.booking_id, b.status_id, b.current_approver_id, u.department_id
+    SELECT b.booking_id, b.status_id, b.current_approver_id, u.department_id, u.resort_id
     FROM bookings b
     JOIN users u ON u.user_id = b.user_id
     JOIN booking_status bs ON bs.status_id = b.status_id
-    JOIN department_approval_config dac ON dac.department_id = u.department_id
+    JOIN department_approval_config dac ON dac.department_id = u.department_id AND dac.resort_id = u.resort_id
     JOIN users approver ON approver.user_id = b.current_approver_id
     WHERE bs.status_name LIKE 'Pending%'
       AND dac.approval_mode = 'department_hierarchy'
