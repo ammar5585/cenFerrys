@@ -12,10 +12,12 @@
     "@supabase/supabase-js": "^2.45.4",
     "bcryptjs": "^2.4.3",
     "cookie": "^0.6.0",
+    "csv-parse": "^7.0.1",
     "file-type": "^19.5.0",
     "jsonwebtoken": "^9.0.2"
   },
   "devDependencies": {
-    "netlify-cli": "^17.38.0"
+    "netlify-cli": "^17.38.0",
+    "pg": "^8.22.0"
   }
 }
