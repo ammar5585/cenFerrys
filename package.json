@@ -1,0 +1,21 @@
+{
+  "name": "ferry-portal-netlify",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Staff Ferry Transfer Portal - Netlify Functions + Supabase Postgres port of the original PHP/MySQL app.",
+  "type": "module",
+  "scripts": {
+    "dev": "netlify dev",
+    "seed-passwords": "node scripts/hash-seed-passwords.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "bcryptjs": "^2.4.3",
+    "cookie": "^0.6.0",
+    "file-type": "^19.5.0",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "netlify-cli": "^17.38.0"
+  }
+}

@@ -1,0 +1,615 @@
+// Port of staff/dashboard.php, staff/book.php, staff/my_bookings.php,
+// staff/profile.php, staff/print_confirmation.php.
+
+import { db, unwrap } from '../db.js';
+import { requireRole, requireLogin } from '../guards.js';
+import { renderShellForRequest } from '../shellHelper.js';
+import { html, raw, h } from '../templates/html.js';
+import { csrfField, verifyCsrf } from '../csrf.js';
+import { getSetting } from '../settings.js';
+import { getStatusId, routeBookingApproval } from '../approval.js';
+import { bookFerrySeat } from '../seats.js';
+import { createNotification } from '../notifications.js';
+import { logActivity, clientIp } from '../activity.js';
+import { uploadProfilePicture } from '../uploads.js';
+import { redirectTo, htmlResponse, notFound } from '../response.js';
+import { flashSetCookie } from '../flash.js';
+import { formatDate, formatDateTime, formatTime, statusBadgeClass } from '../format.js';
+import { ROLE_STAFF, ROLE_ADMIN } from '../session.js';
+
+async function readFormBody(request) {
+    const form = await request.formData();
+    const out = {};
+    for (const [key, value] of form.entries()) out[key] = value;
+    return out;
+}
+
+// ---------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------
+async function staffDashboardBody(userId, csrfToken) {
+    const upcoming = unwrap(
+        await db()
+            .from('bookings')
+            .select('booking_id, travel_date, direction, purpose, seats, status_id, booking_status(status_name, badge_color), ferry_schedule(departure_time)')
+            .eq('user_id', userId)
+            .gte('travel_date', new Date().toISOString().slice(0, 10))
+            .order('travel_date', { ascending: true })
+    );
+    const activeUpcoming = upcoming.filter((b) => !['Cancelled', 'Rejected', 'Expired'].includes(b.booking_status.status_name));
+
+    const history = unwrap(
+        await db()
+            .from('bookings')
+            .select('booking_id, travel_date, direction, booking_status(status_name, badge_color), ferry_schedule(departure_time)')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(5)
+    );
+
+    return html`
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h5 class="mb-0">Welcome</h5>
+    <a href="/staff/book" class="btn btn-primary"><i class="bi bi-plus-circle"></i> New Booking</a>
+</div>
+<div class="row g-3">
+    <div class="col-lg-7">
+        <div class="card shadow-sm mb-3">
+            <div class="card-header bg-white"><i class="bi bi-calendar-check"></i> Upcoming Bookings</div>
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead><tr><th>Date</th><th>Time</th><th>Direction</th><th>Purpose</th><th>Status</th><th></th></tr></thead>
+                    <tbody>
+                    ${raw(
+                        activeUpcoming
+                            .map(
+                                (b) => html`<tr>
+                                <td>${formatDate(b.travel_date)}</td>
+                                <td>${formatTime(b.ferry_schedule.departure_time)}</td>
+                                <td>${b.direction}</td>
+                                <td>${b.purpose}</td>
+                                <td><span class="badge ${statusBadgeClass(b.booking_status.badge_color)}">${b.booking_status.status_name}</span></td>
+                                <td>
+                                    <form method="post" action="/staff/my_bookings" data-confirm="Cancel this booking?">
+                                        ${raw(csrfField(csrfToken))}
+                                        <input type="hidden" name="action" value="cancel">
+                                        <input type="hidden" name="booking_id" value="${b.booking_id}">
+                                        <button class="btn btn-sm btn-outline-danger">Cancel</button>
+                                    </form>
+                                </td>
+                            </tr>`
+                            )
+                            .map((r) => r.toString())
+                            .join('') || '<tr><td colspan="6" class="text-center text-muted py-3">No upcoming bookings. <a href="/staff/book">Book a ferry</a>.</td></tr>'
+                    )}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="card shadow-sm">
+            <div class="card-header bg-white d-flex justify-content-between">
+                <span><i class="bi bi-journal-text"></i> Recent Booking History</span>
+                <a href="/staff/my_bookings" class="small">View all</a>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead><tr><th>Date</th><th>Direction</th><th>Status</th></tr></thead>
+                    <tbody>
+                    ${raw(
+                        history
+                            .map(
+                                (b) => html`<tr>
+                                <td>${formatDate(b.travel_date)}</td>
+                                <td>${b.direction}</td>
+                                <td><span class="badge ${statusBadgeClass(b.booking_status.badge_color)}">${b.booking_status.status_name}</span></td>
+                            </tr>`
+                            )
+                            .map((r) => r.toString())
+                            .join('')
+                    )}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="card shadow-sm">
+            <div class="card-body text-center">
+                <i class="bi bi-water" style="font-size:2rem;color:#0d6efd;"></i>
+                <h6 class="mt-2">Need a ferry transfer?</h6>
+                <p class="text-muted small">Submit a booking request - it will be routed automatically for approval.</p>
+                <a href="/staff/book" class="btn btn-primary w-100">Quick Booking</a>
+            </div>
+        </div>
+    </div>
+</div>`;
+}
+
+// ---------------------------------------------------------------------
+// Booking form
+// ---------------------------------------------------------------------
+function bookingFormBody({ errors, maxSeats, cutoffHours, routes, csrfToken }) {
+    return html`
+<h5 class="mb-3"><i class="bi bi-plus-circle"></i> New Ferry Booking</h5>
+
+${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `${e}<br>`).join(''))}</div>` : ''}
+
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <form method="post" id="bookingForm">
+                    ${raw(csrfField(csrfToken))}
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Travel Date *</label>
+                            <input type="date" name="travel_date" id="travelDate" class="form-control" required min="${new Date().toISOString().slice(0, 10)}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Direction *</label>
+                            <select name="direction_select" id="direction" class="form-select" required>
+                                <option value="">-- Select Direction --</option>
+                                ${raw(routes.map((r) => `<option value="${h(r.direction)}">${h(r.direction)}</option>`).join(''))}
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Ferry Time *</label>
+                            <div id="scheduleOptions" class="row g-2">
+                                <div class="col-12 text-muted small">Select a date and direction to view available ferry times.</div>
+                            </div>
+                            <input type="hidden" name="schedule_id" id="scheduleId" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Seats</label>
+                            <select name="seats" class="form-select">
+                                ${raw(Array.from({ length: maxSeats }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join(''))}
+                            </select>
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label">Purpose of Travel *</label>
+                            <input type="text" name="purpose" class="form-control" required placeholder="e.g. Medical appointment, Day off, Bank errand">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Remarks</label>
+                            <textarea name="remarks" class="form-control" rows="2"></textarea>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary mt-3" id="submitBtn" disabled>Submit Booking Request</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="card shadow-sm">
+            <div class="card-body small text-muted">
+                <p><i class="bi bi-info-circle"></i> Your request will be routed automatically:</p>
+                <ol class="ps-3">
+                    <li>General Manager (if available)</li>
+                    <li>Resident Manager (if GM unavailable)</li>
+                    <li>HR Manager (if both unavailable)</li>
+                </ol>
+                <p>Bookings must be made at least ${cutoffHours} hour(s) before departure. Maximum ${maxSeats} seat(s) per booking.</p>
+            </div>
+        </div>
+    </div>
+</div>`;
+}
+
+const BOOKING_PAGE_SCRIPT = `
+(function () {
+    var dateInput = document.getElementById('travelDate');
+    var directionSelect = document.getElementById('direction');
+    var container = document.getElementById('scheduleOptions');
+    var scheduleIdInput = document.getElementById('scheduleId');
+    var submitBtn = document.getElementById('submitBtn');
+
+    function loadSchedules() {
+        scheduleIdInput.value = '';
+        submitBtn.disabled = true;
+        var date = dateInput.value, direction = directionSelect.value;
+        if (!date || !direction) {
+            container.innerHTML = '<div class="col-12 text-muted small">Select a date and direction to view available ferry times.</div>';
+            return;
+        }
+        container.innerHTML = '<div class="col-12 text-muted small"><span class="spinner-border spinner-border-sm"></span> Loading...</div>';
+
+        fetch(window.BASE_URL + 'ajax/get_schedule_seats?date=' + encodeURIComponent(date) + '&direction=' + encodeURIComponent(direction))
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+                if (!res.success || res.schedules.length === 0) {
+                    container.innerHTML = '<div class="col-12 text-muted small">No ferries operate on the selected date/direction.</div>';
+                    return;
+                }
+                container.innerHTML = '';
+                res.schedules.forEach(function (s) {
+                    var full = s.remaining <= 0;
+                    var col = document.createElement('div');
+                    col.className = 'col-md-4';
+                    col.innerHTML =
+                        '<div class="form-check border rounded p-2 ' + (full ? 'opacity-50' : '') + '">' +
+                        '<input class="form-check-input" type="radio" name="schedule_radio" value="' + s.schedule_id + '" id="sch' + s.schedule_id + '" ' + (full ? 'disabled' : '') + '>' +
+                        '<label class="form-check-label w-100" for="sch' + s.schedule_id + '">' +
+                        '<strong>' + s.time_label + '</strong><br>' +
+                        '<span class="' + (full ? 'seat-full' : 'seat-ok') + '">' + (full ? 'FULL' : s.remaining + ' seats left') + '</span>' +
+                        '<br><small class="text-muted">' + s.booked + ' / ' + s.capacity + ' booked</small>' +
+                        '</label></div>';
+                    container.appendChild(col);
+                });
+                container.querySelectorAll('input[name="schedule_radio"]').forEach(function (radio) {
+                    radio.addEventListener('change', function () {
+                        scheduleIdInput.value = this.value;
+                        submitBtn.disabled = false;
+                    });
+                });
+            });
+    }
+
+    dateInput.addEventListener('change', loadSchedules);
+    directionSelect.addEventListener('change', loadSchedules);
+})();`;
+
+// ---------------------------------------------------------------------
+// My bookings
+// ---------------------------------------------------------------------
+async function myBookingsBody(userId, statusFilter, csrfToken) {
+    let query = db()
+        .from('bookings')
+        .select('booking_id, travel_date, direction, purpose, seats, created_at, status_id, booking_status(status_name, badge_color), ferry_schedule(departure_time)')
+        .eq('user_id', userId)
+        .order('travel_date', { ascending: false });
+    if (statusFilter) query = query.eq('status_id', statusFilter);
+    const bookings = unwrap(await query);
+
+    const statuses = unwrap(await db().from('booking_status').select('status_id, status_name').order('status_id'));
+
+    const rows = bookings
+        .map((b) => {
+            const cancellable = !['Cancelled', 'Rejected', 'Completed', 'Expired'].includes(b.booking_status.status_name);
+            return html`<tr>
+                <td>${formatDate(b.travel_date)}</td>
+                <td>${formatTime(b.ferry_schedule.departure_time)}</td>
+                <td>${b.direction}</td>
+                <td>${b.purpose}</td>
+                <td>${b.seats}</td>
+                <td><span class="badge ${statusBadgeClass(b.booking_status.badge_color)}">${b.booking_status.status_name}</span></td>
+                <td>${formatDateTime(b.created_at)}</td>
+                <td>
+                    ${cancellable
+                        ? html`<form method="post" data-confirm="Cancel this booking?">
+                            ${raw(csrfField(csrfToken))}
+                            <input type="hidden" name="action" value="cancel">
+                            <input type="hidden" name="booking_id" value="${b.booking_id}">
+                            <button class="btn btn-sm btn-outline-danger">Cancel</button>
+                        </form>`
+                        : ''}
+                    <a class="btn btn-sm btn-outline-secondary" target="_blank" href="/staff/print_confirmation?id=${b.booking_id}"><i class="bi bi-printer"></i></a>
+                </td>
+            </tr>`;
+        })
+        .map((r) => r.toString())
+        .join('');
+
+    return html`
+<h5 class="mb-3"><i class="bi bi-journal-text"></i> My Booking History</h5>
+<div class="card shadow-sm mb-3">
+    <div class="card-body">
+        <form method="get" class="row g-2">
+            <div class="col-md-3">
+                <select name="status" class="form-select">
+                    <option value="0">All Status</option>
+                    ${raw(statuses.map((s) => `<option value="${s.status_id}" ${statusFilter == s.status_id ? 'selected' : ''}>${h(s.status_name)}</option>`).join(''))}
+                </select>
+            </div>
+            <div class="col-md-2"><button class="btn btn-outline-primary btn-sm w-100" type="submit">Filter</button></div>
+        </form>
+    </div>
+</div>
+<div class="card shadow-sm">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+            <thead><tr><th>Date</th><th>Time</th><th>Direction</th><th>Purpose</th><th>Seats</th><th>Status</th><th>Submitted</th><th></th></tr></thead>
+            <tbody>${raw(rows || '<tr><td colspan="8" class="text-center text-muted py-4">No bookings yet.</td></tr>')}</tbody>
+        </table>
+    </div>
+</div>`;
+}
+
+// ---------------------------------------------------------------------
+// Profile
+// ---------------------------------------------------------------------
+async function profileBody({ profile, errors, csrfToken }) {
+    return html`
+<h5 class="mb-3"><i class="bi bi-person-circle"></i> My Profile</h5>
+${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `${e}<br>`).join(''))}</div>` : ''}
+<div class="row g-3">
+    <div class="col-lg-4">
+        <div class="card shadow-sm text-center">
+            <div class="card-body">
+                ${profile.profile_picture
+                    ? html`<img src="${profile.profile_picture}" class="rounded-circle mb-2" width="100" height="100" style="object-fit:cover;">`
+                    : html`<div class="avatar-circle mx-auto mb-2" style="width:80px;height:80px;font-size:2rem;">${profile.full_name.charAt(0).toUpperCase()}</div>`}
+                <h6>${profile.full_name}</h6>
+                <p class="text-muted small mb-0">${profile.roles?.role_name ?? ''}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-8">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <dl class="row small text-muted mb-3">
+                    <dt class="col-sm-4">Employee ID</dt><dd class="col-sm-8">${profile.employee_id}</dd>
+                    <dt class="col-sm-4">Username</dt><dd class="col-sm-8">${profile.username}</dd>
+                    <dt class="col-sm-4">Department</dt><dd class="col-sm-8">${profile.departments?.department_name ?? '-'}</dd>
+                    <dt class="col-sm-4">Designation</dt><dd class="col-sm-8">${profile.designation ?? '-'}</dd>
+                </dl>
+                <form method="post" enctype="multipart/form-data">
+                    ${raw(csrfField(csrfToken))}
+                    <div class="mb-3">
+                        <label class="form-label">Email (optional)</label>
+                        <input type="email" name="email" class="form-control" value="${profile.email ?? ''}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Phone (optional)</label>
+                        <input type="text" name="phone" class="form-control" value="${profile.phone ?? ''}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Profile Picture</label>
+                        <input type="file" name="profile_picture" class="form-control" accept=".jpg,.jpeg,.png,.webp">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>`;
+}
+
+// ---------------------------------------------------------------------
+// Routes
+// ---------------------------------------------------------------------
+export function registerStaffRoutes(router) {
+    router.get('/staff/dashboard', async (request) => {
+        const auth = await requireRole(request, [ROLE_STAFF]);
+        if (auth.response) return auth.response;
+        const body = await staffDashboardBody(auth.user.user_id, auth.user.csrf);
+        return renderShellForRequest({ request, auth, pageTitle: 'My Dashboard', path: '/staff/dashboard', bodyHtml: body });
+    });
+
+    router.get('/staff/book', async (request) => {
+        const auth = await requireRole(request, [ROLE_STAFF]);
+        if (auth.response) return auth.response;
+
+        const maxSeats = Number(await getSetting('max_seats_per_booking', 4));
+        const cutoffHours = Number(await getSetting('booking_cutoff_hours', 2));
+        const routes = unwrap(await db().from('ferry_routes').select('direction').eq('status', 'active').order('direction'));
+
+        const body = bookingFormBody({ errors: [], maxSeats, cutoffHours, routes, csrfToken: auth.user.csrf });
+        return renderShellForRequest({
+            request,
+            auth,
+            pageTitle: 'New Booking',
+            path: '/staff/book',
+            bodyHtml: body,
+            extraScripts: BOOKING_PAGE_SCRIPT,
+        });
+    });
+
+    router.post('/staff/book', async (request) => {
+        const auth = await requireRole(request, [ROLE_STAFF]);
+        if (auth.response) return auth.response;
+        const { user } = auth;
+
+        const form = await readFormBody(request);
+        if (!verifyCsrf(user.csrf, form.csrf_token)) return notFound();
+
+        const maxSeats = Number(await getSetting('max_seats_per_booking', 4));
+        const cutoffHours = Number(await getSetting('booking_cutoff_hours', 2));
+        const scheduleId = Number(form.schedule_id || 0);
+        const travelDate = form.travel_date || '';
+        const seats = Math.max(1, Math.min(maxSeats, Number(form.seats || 1)));
+        const purpose = (form.purpose || '').trim();
+        const remarks = (form.remarks || '').trim();
+
+        const errors = [];
+        const today = new Date().toISOString().slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(travelDate) || travelDate < today) {
+            errors.push('Please choose a valid, future travel date.');
+        }
+        if (!purpose) errors.push('Purpose of travel is required.');
+
+        let schedule = null;
+        if (scheduleId) {
+            const rows = unwrap(
+                await db()
+                    .from('ferry_schedule')
+                    .select('schedule_id, departure_time, weekdays, ferry_routes(direction)')
+                    .eq('schedule_id', scheduleId)
+                    .eq('status', 'active')
+                    .limit(1)
+            );
+            schedule = rows[0] ?? null;
+        }
+        if (!schedule) {
+            errors.push('Please select a valid ferry schedule.');
+        } else if (!errors.length) {
+            const weekdayAbbr = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(`${travelDate}T00:00:00Z`).getUTCDay()];
+            if (!schedule.weekdays.includes(weekdayAbbr)) {
+                errors.push('The selected ferry does not operate on that day.');
+            }
+            const departureDateTime = new Date(`${travelDate}T${schedule.departure_time}`);
+            if ((departureDateTime.getTime() - Date.now()) / 1000 < cutoffHours * 3600) {
+                errors.push(`Bookings must be made at least ${cutoffHours} hour(s) before departure.`);
+            }
+        }
+
+        if (!errors.length) {
+            try {
+                const booking = await bookFerrySeat({
+                    userId: user.user_id,
+                    scheduleId,
+                    travelDate,
+                    direction: schedule.ferry_routes.direction,
+                    purpose,
+                    remarks,
+                    seats,
+                });
+                await routeBookingApproval(booking.booking_id);
+                await createNotification(user.user_id, 'Your ferry booking request has been submitted and is awaiting approval.', 'booking', booking.booking_id);
+                await logActivity(user.user_id, 'Submitted ferry booking', `booking_id=${booking.booking_id}`, clientIp(request));
+
+                return redirectTo('/staff/my_bookings', {
+                    cookies: [auth.setCookie, flashSetCookie('success', 'Booking submitted successfully and routed for approval.')].filter(Boolean),
+                });
+            } catch (err) {
+                if (err.message === 'CAPACITY_EXCEEDED') {
+                    errors.push('Not enough seats remaining on this ferry. Please choose another time.');
+                } else {
+                    errors.push('Could not create booking. Please try again.');
+                }
+            }
+        }
+
+        const routes = unwrap(await db().from('ferry_routes').select('direction').eq('status', 'active').order('direction'));
+        const body = bookingFormBody({ errors, maxSeats, cutoffHours, routes, csrfToken: user.csrf });
+        return renderShellForRequest({
+            request,
+            auth,
+            pageTitle: 'New Booking',
+            path: '/staff/book',
+            bodyHtml: body,
+            extraScripts: BOOKING_PAGE_SCRIPT,
+        });
+    });
+
+    router.get('/staff/my_bookings', async (request) => {
+        const auth = await requireRole(request, [ROLE_STAFF]);
+        if (auth.response) return auth.response;
+        const url = new URL(request.url);
+        const statusFilter = Number(url.searchParams.get('status') || 0);
+        const body = await myBookingsBody(auth.user.user_id, statusFilter, auth.user.csrf);
+        return renderShellForRequest({ request, auth, pageTitle: 'My Bookings', path: '/staff/my_bookings', bodyHtml: body });
+    });
+
+    router.post('/staff/my_bookings', async (request) => {
+        const auth = await requireRole(request, [ROLE_STAFF]);
+        if (auth.response) return auth.response;
+        const { user } = auth;
+
+        const form = await readFormBody(request);
+        if (!verifyCsrf(user.csrf, form.csrf_token)) return notFound();
+
+        if (form.action === 'cancel') {
+            const bookingId = Number(form.booking_id);
+            const rows = unwrap(
+                await db().from('bookings').select('booking_id').eq('booking_id', bookingId).eq('user_id', user.user_id).limit(1)
+            );
+            if (rows.length) {
+                const cancelledId = await getStatusId('Cancelled');
+                unwrap(await db().from('bookings').update({ status_id: cancelledId }).eq('booking_id', bookingId));
+                await logActivity(user.user_id, 'Cancelled booking', `booking_id=${bookingId}`, clientIp(request));
+                await createNotification(user.user_id, 'Your ferry booking has been cancelled.', 'booking', bookingId);
+                return redirectTo('/staff/my_bookings', { cookies: [auth.setCookie, flashSetCookie('success', 'Booking cancelled.')].filter(Boolean) });
+            }
+            return redirectTo('/staff/my_bookings', { cookies: [auth.setCookie, flashSetCookie('error', 'Booking not found.')].filter(Boolean) });
+        }
+        return redirectTo('/staff/my_bookings', { cookies: [auth.setCookie] });
+    });
+
+    // Accessible to any logged-in role (not staff-only) - matches the PHP version.
+    router.get('/staff/profile', async (request) => {
+        const auth = await requireLogin(request);
+        if (auth.response) return auth.response;
+
+        const rows = unwrap(
+            await db()
+                .from('users')
+                .select('user_id, employee_id, full_name, username, email, phone, profile_picture, designation, roles(role_name), departments(department_name)')
+                .eq('user_id', auth.user.user_id)
+                .limit(1)
+        );
+        const body = await profileBody({ profile: rows[0], errors: [], csrfToken: auth.user.csrf });
+        return renderShellForRequest({ request, auth, pageTitle: 'My Profile', path: '/staff/profile', bodyHtml: body });
+    });
+
+    router.post('/staff/profile', async (request) => {
+        const auth = await requireLogin(request);
+        if (auth.response) return auth.response;
+        const { user } = auth;
+
+        const form = await request.formData();
+        if (!verifyCsrf(user.csrf, form.get('csrf_token'))) return notFound();
+
+        const errors = [];
+        const update = {
+            email: (form.get('email') || '').toString().trim() || null,
+            phone: (form.get('phone') || '').toString().trim() || null,
+        };
+
+        const file = form.get('profile_picture');
+        if (file && file.size > 0) {
+            try {
+                update.profile_picture = await uploadProfilePicture(file, user.user_id);
+            } catch (err) {
+                errors.push(err.message);
+            }
+        }
+
+        if (!errors.length) {
+            unwrap(await db().from('users').update(update).eq('user_id', user.user_id));
+            await logActivity(user.user_id, 'Updated profile', null, clientIp(request));
+            return redirectTo('/staff/profile', { cookies: [auth.setCookie, flashSetCookie('success', 'Profile updated.')].filter(Boolean) });
+        }
+
+        const rows = unwrap(
+            await db()
+                .from('users')
+                .select('user_id, employee_id, full_name, username, email, phone, profile_picture, designation, roles(role_name), departments(department_name)')
+                .eq('user_id', user.user_id)
+                .limit(1)
+        );
+        const body = await profileBody({ profile: rows[0], errors, csrfToken: user.csrf });
+        return renderShellForRequest({ request, auth, pageTitle: 'My Profile', path: '/staff/profile', bodyHtml: body });
+    });
+
+    router.get('/staff/print_confirmation', async (request) => {
+        const auth = await requireLogin(request);
+        if (auth.response) return auth.response;
+
+        const url = new URL(request.url);
+        const bookingId = Number(url.searchParams.get('id') || 0);
+        const rows = unwrap(
+            await db()
+                .from('bookings')
+                .select('booking_id, user_id, travel_date, direction, purpose, seats, booking_status(status_name), ferry_schedule(departure_time), users!bookings_user_id_fkey(full_name, employee_id)')
+                .eq('booking_id', bookingId)
+                .limit(1)
+        );
+        const booking = rows[0];
+        if (!booking || (booking.user_id !== auth.user.user_id && auth.user.role_name !== ROLE_ADMIN)) {
+            return notFound('Booking not found.');
+        }
+
+        const companyName = await getSetting('company_name', 'Staff Ferry Transfer Portal');
+        const body = html`<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Booking Confirmation #${booking.booking_id}</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"></head>
+<body class="p-4"><div class="container" style="max-width: 600px;">
+    <div class="text-center mb-4"><h4>${companyName}</h4><p class="text-muted">Ferry Booking Confirmation</p></div>
+    <table class="table table-bordered">
+        <tr><th>Booking ID</th><td>#${booking.booking_id}</td></tr>
+        <tr><th>Employee</th><td>${booking.users.full_name} (${booking.users.employee_id})</td></tr>
+        <tr><th>Travel Date</th><td>${formatDate(booking.travel_date)}</td></tr>
+        <tr><th>Departure Time</th><td>${formatTime(booking.ferry_schedule.departure_time)}</td></tr>
+        <tr><th>Direction</th><td>${booking.direction}</td></tr>
+        <tr><th>Seats</th><td>${booking.seats}</td></tr>
+        <tr><th>Purpose</th><td>${booking.purpose}</td></tr>
+        <tr><th>Status</th><td>${booking.booking_status.status_name}</td></tr>
+    </table>
+    <div class="text-center no-print mt-3"><button class="btn btn-primary" onclick="window.print()">Print</button></div>
+</div>
+<style>@media print { .no-print { display: none; } }</style>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body></html>`;
+        return htmlResponse(body.toString());
+    });
+}

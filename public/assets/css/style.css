@@ -1,0 +1,207 @@
+/* =====================================================================
+   Staff Ferry Transfer Portal - Custom Styles
+   Layered on top of Bootstrap 5. Supports light/dark via [data-bs-theme].
+   ===================================================================== */
+
+:root {
+    --sidebar-width: 250px;
+    --topbar-height: 60px;
+    --brand-color: #0d6efd;
+}
+
+body {
+    background-color: #f4f6f9;
+    font-family: 'Segoe UI', Roboto, system-ui, sans-serif;
+}
+
+[data-bs-theme="dark"] body {
+    background-color: #14181d;
+}
+
+/* ---------------- Layout ---------------- */
+.app-wrapper {
+    display: flex;
+    min-height: 100vh;
+}
+
+.sidebar {
+    width: var(--sidebar-width);
+    flex-shrink: 0;
+    background-color: #1b2434;
+    color: #cfd6e4;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    overflow-y: auto;
+    transition: transform 0.25s ease;
+    z-index: 1040;
+}
+
+.sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #fff;
+    padding: 1.1rem 1.25rem;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    padding: 0.75rem 0;
+}
+
+.nav-heading {
+    text-transform: uppercase;
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    color: #7c8aa5;
+    padding: 0.9rem 1.25rem 0.35rem;
+}
+
+.sidebar .nav-link {
+    color: #cfd6e4;
+    padding: 0.55rem 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    border-left: 3px solid transparent;
+}
+
+.sidebar .nav-link i { width: 1.1rem; text-align: center; }
+
+.sidebar .nav-link:hover {
+    background-color: rgba(255,255,255,0.06);
+    color: #fff;
+}
+
+.sidebar .nav-link.active {
+    background-color: rgba(13,110,253,0.15);
+    color: #fff;
+    border-left-color: var(--brand-color);
+}
+
+.main-content {
+    margin-left: var(--sidebar-width);
+    flex-grow: 1;
+    padding: 1.5rem;
+    width: 100%;
+}
+
+.topbar {
+    height: var(--topbar-height);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #fff;
+    border-bottom: 1px solid #e5e9f0;
+    padding: 0 1.25rem;
+    margin-left: var(--sidebar-width);
+    position: sticky;
+    top: 0;
+    z-index: 1030;
+}
+
+[data-bs-theme="dark"] .topbar,
+[data-bs-theme="dark"] .card {
+    background-color: #1e2530;
+    border-color: #2c3543;
+}
+
+.topbar-actions { display: flex; align-items: center; gap: 0.5rem; }
+
+.btn-icon {
+    background: transparent;
+    border: none;
+    font-size: 1.2rem;
+    color: inherit;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.btn-icon:hover { background-color: rgba(0,0,0,0.06); }
+
+.avatar-circle {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--brand-color);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.notif-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    font-size: 0.6rem;
+}
+
+.notif-dropdown { width: 320px; max-height: 400px; overflow-y: auto; }
+.notif-item.unread { font-weight: 600; }
+
+/* ---------------- Dashboard cards ---------------- */
+.stat-card {
+    border: none;
+    border-radius: 0.75rem;
+    padding: 1.1rem 1.25rem;
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.stat-card .stat-value { font-size: 1.8rem; font-weight: 700; }
+.stat-card .stat-label { font-size: 0.85rem; opacity: 0.9; }
+.stat-card i { font-size: 1.8rem; opacity: 0.85; }
+
+.bg-grad-blue    { background: linear-gradient(135deg, #4facfe, #00f2fe); }
+.bg-grad-green   { background: linear-gradient(135deg, #43e97b, #38f9d7); }
+.bg-grad-orange  { background: linear-gradient(135deg, #f7971e, #ffd200); color:#3a2a00; }
+.bg-grad-red     { background: linear-gradient(135deg, #ff5f6d, #ffc371); }
+.bg-grad-purple  { background: linear-gradient(135deg, #7f7fd5, #86a8e7); }
+.bg-grad-dark    { background: linear-gradient(135deg, #232526, #414345); }
+
+/* ---------------- Misc ---------------- */
+.seat-full { color: #dc3545; font-weight: 700; }
+.seat-ok { color: #198754; font-weight: 600; }
+
+.login-wrapper {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #0d6efd, #0dcaf0);
+}
+.login-card {
+    width: 100%;
+    max-width: 400px;
+    border-radius: 1rem;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+}
+
+@media (max-width: 991.98px) {
+    .sidebar { transform: translateX(-100%); }
+    .sidebar.show { transform: translateX(0); }
+    .main-content, .topbar { margin-left: 0; }
+}
+
+.table-responsive-card .table td { vertical-align: middle; }
+
+.loading-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(255,255,255,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+}
