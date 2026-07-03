@@ -20,6 +20,7 @@ export function renderSidebar(roleName, currentPath, isDeptApprover = false) {
         links.push(
             html`<div class="nav-heading">Administration</div>`,
             navLink('/admin/users', 'bi-people', 'User Management', currentPath),
+            navLink('/admin/departments', 'bi-diagram-2', 'Departments', currentPath),
             navLink('/admin/schedules', 'bi-calendar3', 'Ferry Schedules', currentPath),
             navLink('/admin/routes', 'bi-signpost-split', 'Routes', currentPath),
             navLink('/admin/holidays', 'bi-calendar-x', 'Holidays', currentPath),
