@@ -19,6 +19,11 @@ export async function verifyPassword(password, hash) {
     return bcrypt.compare(password, hash);
 }
 
+/** Shared by the admin "reset password" action and the CSV bulk-import path. */
+export function generateTempPassword() {
+    return `Ferry@${Math.floor(10000 + Math.random() * 90000)}`;
+}
+
 function jwtSecret() {
     const secret = process.env.JWT_SECRET;
     if (!secret) throw new Error('JWT_SECRET is not set. See .env.example.');

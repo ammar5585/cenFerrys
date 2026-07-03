@@ -7,10 +7,10 @@ import { requireRole } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
-import { hashPassword } from '../auth.js';
+import { hashPassword, generateTempPassword } from '../auth.js';
 import { getRemainingSeats } from '../seats.js';
 import { logActivity, clientIp } from '../activity.js';
-import { redirectTo, notFound } from '../response.js';
+import { redirectTo, notFound, csvResponse } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatTime } from '../format.js';
 import { ROLE_ADMIN } from '../session.js';
@@ -135,15 +135,20 @@ async function adminDashboardBody() {
 // ---------------------------------------------------------------------
 // Users CRUD
 // ---------------------------------------------------------------------
-function userFormFields({ u, departments, roles, managers }) {
+function userFormFields({ u, departments, roles, managers, resorts }) {
     return html`
 <div class="row g-3">
     <div class="col-md-6"><label class="form-label">Employee ID *</label><input type="text" name="employee_id" class="form-control" required value="${u?.employee_id ?? ''}"></div>
     <div class="col-md-6"><label class="form-label">Full Name *</label><input type="text" name="full_name" class="form-control" required value="${u?.full_name ?? ''}"></div>
     <div class="col-md-6"><label class="form-label">Username *</label><input type="text" name="username" class="form-control" required value="${u?.username ?? ''}"></div>
     <div class="col-md-6"><label class="form-label">Password ${u ? '(leave blank to keep unchanged)' : '*'}</label><input type="password" name="password" class="form-control" ${u ? '' : 'required'}></div>
-    <div class="col-md-6"><label class="form-label">Department</label>
-        <select name="department_id" class="form-select"><option value="">-- None --</option>
+    <div class="col-md-6"><label class="form-label">Resort *</label>
+        <select name="resort_id" class="form-select" required><option value="">-- Select Resort --</option>
+        ${raw(resorts.map((r) => `<option value="${r.resort_id}" ${u?.resort_id == r.resort_id ? 'selected' : ''}>${h(r.resort_name)}</option>`).join(''))}
+        </select>
+    </div>
+    <div class="col-md-6"><label class="form-label">Department *</label>
+        <select name="department_id" class="form-select" required><option value="">-- Select Department --</option>
         ${raw(departments.map((d) => `<option value="${d.department_id}" ${u?.department_id == d.department_id ? 'selected' : ''}>${h(d.department_name)}</option>`).join(''))}
         </select>
     </div>
@@ -169,14 +174,36 @@ function userFormFields({ u, departments, roles, managers }) {
 </div>`;
 }
 
-async function usersPageBody({ search, deptFilter, roleFilter, statusFilter, csrfToken, errors }) {
+// Explicit allowlist mapping a trusted `sort` query value to its safe
+// .order() call - never interpolate the raw querystring value directly
+// (same discipline as the `search` filter below, which is filtered in JS
+// rather than built into a PostgREST .or() string).
+const SORT_COLUMNS = {
+    name: { column: 'full_name' },
+    employee_id: { column: 'employee_id' },
+    department: { column: 'department_name', foreignTable: 'departments' },
+    resort: { column: 'resort_name', foreignTable: 'resorts' },
+    role: { column: 'role_name', foreignTable: 'roles' },
+    status: { column: 'status' },
+};
+
+async function fetchFilteredUsers({ search, deptFilter, roleFilter, resortFilter, statusFilter, sortKey, sortDir }) {
     let query = db()
         .from('users')
-        .select('user_id, employee_id, full_name, username, designation, status, department_id, role_id, reporting_manager_id, roles(role_name), departments(department_name), reporting_manager:reporting_manager_id(full_name)')
-        .order('created_at', { ascending: false });
+        .select(
+            'user_id, employee_id, full_name, username, designation, status, department_id, role_id, resort_id, reporting_manager_id, roles(role_name), departments(department_name), resorts(resort_name), reporting_manager:reporting_manager_id(full_name)'
+        );
     if (deptFilter) query = query.eq('department_id', deptFilter);
     if (roleFilter) query = query.eq('role_id', roleFilter);
+    if (resortFilter) query = query.eq('resort_id', resortFilter);
     if (['active', 'inactive'].includes(statusFilter)) query = query.eq('status', statusFilter);
+
+    const sort = SORT_COLUMNS[sortKey] ?? null;
+    const ascending = sortDir !== 'desc';
+    query = sort
+        ? query.order(sort.column, { foreignTable: sort.foreignTable, ascending })
+        : query.order('created_at', { ascending: false });
+
     let users = unwrap(await query);
 
     // Filtered in JS rather than a PostgREST .or() filter string, which
@@ -190,26 +217,33 @@ async function usersPageBody({ search, deptFilter, roleFilter, statusFilter, csr
                 u.employee_id.toLowerCase().includes(needle)
         );
     }
+    return users;
+}
+
+async function usersPageBody({ search, deptFilter, roleFilter, resortFilter, statusFilter, sortKey, sortDir, csrfToken, errors }) {
+    const users = await fetchFilteredUsers({ search, deptFilter, roleFilter, resortFilter, statusFilter, sortKey, sortDir });
 
     const departments = unwrap(await db().from('departments').select('*').order('department_name'));
     const roles = unwrap(await db().from('roles').select('*').order('role_id'));
+    const resorts = unwrap(await db().from('resorts').select('*').order('resort_name'));
     const managers = unwrap(await db().from('users').select('user_id, full_name, employee_id').eq('status', 'active').order('full_name'));
 
     const rowsHtml = users
         .map(
             (u) => html`<tr>
             <td>${u.employee_id}</td><td>${u.full_name}</td><td>${u.username}</td>
+            <td>${u.resorts?.resort_name ?? '-'}</td>
             <td>${u.departments?.department_name ?? '-'}</td><td>${u.designation ?? '-'}</td>
             <td><span class="badge bg-primary-subtle text-primary-emphasis">${u.roles.role_name}</span></td>
             <td>${u.reporting_manager?.full_name ?? '-'}</td>
-            <td><span class="badge ${u.status === 'active' ? 'bg-success' : 'bg-secondary'}">${u.status.charAt(0).toUpperCase() + u.status.slice(1)}</span></td>
+            <td><span class="badge ${u.status === 'active' ? 'bg-success' : 'bg-secondary'}">${u.status === 'active' ? 'Active' : 'Archived'}</span></td>
             <td class="text-nowrap">
                 <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editUserModal${u.user_id}"><i class="bi bi-pencil"></i></button>
                 <form method="post" class="d-inline" data-confirm="Generate a new temporary password for this user?">
                     ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="reset_password"><input type="hidden" name="user_id" value="${u.user_id}">
                     <button class="btn btn-sm btn-outline-warning"><i class="bi bi-key"></i></button>
                 </form>
-                <form method="post" class="d-inline" data-confirm="Toggle active status for this user?">
+                <form method="post" class="d-inline" data-confirm="${u.status === 'active' ? 'Archive (deactivate) this user?' : 'Restore (reactivate) this user?'}">
                     ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="toggle_status"><input type="hidden" name="user_id" value="${u.user_id}">
                     <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-toggle2-on"></i></button>
                 </form>
@@ -222,38 +256,92 @@ async function usersPageBody({ search, deptFilter, roleFilter, statusFilter, csr
         <div class="modal fade" id="editUserModal${u.user_id}" tabindex="-1"><div class="modal-dialog"><form method="post" class="modal-content">
             ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="edit"><input type="hidden" name="user_id" value="${u.user_id}">
             <div class="modal-header"><h5 class="modal-title">Edit User</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-            <div class="modal-body">${userFormFields({ u, departments, roles, managers })}</div>
+            <div class="modal-body">${userFormFields({ u, departments, roles, managers, resorts })}</div>
             <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Save Changes</button></div>
         </form></div></div>`
         )
         .map((r) => r.toString())
         .join('');
 
+    const queryString = new URLSearchParams({
+        search,
+        department: String(deptFilter || 0),
+        role: String(roleFilter || 0),
+        resort: String(resortFilter || 0),
+        status: statusFilter,
+        sort: sortKey || '',
+        dir: sortDir || '',
+    }).toString();
+
     return html`
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h5 class="mb-0"><i class="bi bi-people"></i> User Management</h5>
-    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addUserModal"><i class="bi bi-plus-lg"></i> Add User</button>
+    <div class="d-flex gap-2">
+        <a class="btn btn-outline-success" href="/admin/users?${queryString}&format=csv"><i class="bi bi-file-earmark-excel"></i> Export CSV</a>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addUserModal"><i class="bi bi-plus-lg"></i> Add User</button>
+    </div>
 </div>
 ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `${e}<br>`).join(''))}</div>` : ''}
 <div class="card shadow-sm mb-3"><div class="card-body">
     <form method="get" class="row g-2">
-        <div class="col-md-4"><input type="text" name="search" class="form-control" placeholder="Search name, username, employee ID" value="${search}"></div>
-        <div class="col-md-3"><select name="department" class="form-select"><option value="0">All Departments</option>${raw(departments.map((d) => `<option value="${d.department_id}" ${deptFilter == d.department_id ? 'selected' : ''}>${h(d.department_name)}</option>`).join(''))}</select></div>
-        <div class="col-md-3"><select name="role" class="form-select"><option value="0">All Roles</option>${raw(roles.map((r) => `<option value="${r.role_id}" ${roleFilter == r.role_id ? 'selected' : ''}>${h(r.role_name)}</option>`).join(''))}</select></div>
-        <div class="col-md-2"><select name="status" class="form-select"><option value="">All Status</option><option value="active" ${statusFilter === 'active' ? 'selected' : ''}>Active</option><option value="inactive" ${statusFilter === 'inactive' ? 'selected' : ''}>Inactive</option></select></div>
+        <div class="col-md-3"><input type="text" name="search" class="form-control" placeholder="Search name, username, employee ID" value="${search}"></div>
+        <div class="col-md-2"><select name="department" class="form-select"><option value="0">All Departments</option>${raw(departments.map((d) => `<option value="${d.department_id}" ${deptFilter == d.department_id ? 'selected' : ''}>${h(d.department_name)}</option>`).join(''))}</select></div>
+        <div class="col-md-2"><select name="resort" class="form-select"><option value="0">All Resorts</option>${raw(resorts.map((r) => `<option value="${r.resort_id}" ${resortFilter == r.resort_id ? 'selected' : ''}>${h(r.resort_name)}</option>`).join(''))}</select></div>
+        <div class="col-md-2"><select name="role" class="form-select"><option value="0">All Roles</option>${raw(roles.map((r) => `<option value="${r.role_id}" ${roleFilter == r.role_id ? 'selected' : ''}>${h(r.role_name)}</option>`).join(''))}</select></div>
+        <div class="col-md-1"><select name="status" class="form-select"><option value="">All</option><option value="active" ${statusFilter === 'active' ? 'selected' : ''}>Active</option><option value="inactive" ${statusFilter === 'inactive' ? 'selected' : ''}>Archived</option></select></div>
+        <div class="col-md-2">
+            <div class="input-group">
+                <select name="sort" class="form-select">
+                    <option value="">Default order</option>
+                    <option value="name" ${sortKey === 'name' ? 'selected' : ''}>Name</option>
+                    <option value="employee_id" ${sortKey === 'employee_id' ? 'selected' : ''}>Employee ID</option>
+                    <option value="department" ${sortKey === 'department' ? 'selected' : ''}>Department</option>
+                    <option value="resort" ${sortKey === 'resort' ? 'selected' : ''}>Resort</option>
+                    <option value="role" ${sortKey === 'role' ? 'selected' : ''}>Role</option>
+                    <option value="status" ${sortKey === 'status' ? 'selected' : ''}>Status</option>
+                </select>
+                <select name="dir" class="form-select" style="max-width:5.5rem;">
+                    <option value="asc" ${sortDir !== 'desc' ? 'selected' : ''}>Asc</option>
+                    <option value="desc" ${sortDir === 'desc' ? 'selected' : ''}>Desc</option>
+                </select>
+            </div>
+        </div>
         <div class="col-12"><button class="btn btn-outline-primary btn-sm" type="submit"><i class="bi bi-search"></i> Filter</button> <a href="/admin/users" class="btn btn-outline-secondary btn-sm">Reset</a></div>
     </form>
 </div></div>
 <div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover mb-0 align-middle">
-    <thead><tr><th>Employee ID</th><th>Name</th><th>Username</th><th>Department</th><th>Designation</th><th>Role</th><th>Manager</th><th>Status</th><th>Actions</th></tr></thead>
-    <tbody>${raw(rowsHtml || '<tr><td colspan="9" class="text-center text-muted py-4">No users found.</td></tr>')}</tbody>
+    <thead><tr><th>Employee ID</th><th>Name</th><th>Username</th><th>Resort</th><th>Department</th><th>Designation</th><th>Role</th><th>Manager</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>${raw(rowsHtml || '<tr><td colspan="10" class="text-center text-muted py-4">No users found.</td></tr>')}</tbody>
 </table></div></div>
 <div class="modal fade" id="addUserModal" tabindex="-1"><div class="modal-dialog"><form method="post" class="modal-content">
     ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="add">
     <div class="modal-header"><h5 class="modal-title">Add User</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-    <div class="modal-body">${userFormFields({ u: null, departments, roles, managers })}</div>
+    <div class="modal-body">${userFormFields({ u: null, departments, roles, managers, resorts })}</div>
     <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Create User</button></div>
 </form></div></div>`;
+}
+
+function usersToCsv(users) {
+    const header = 'Employee ID,Full Name,Username,Resort,Department,Designation,Role,Reporting Manager,Status\n';
+    const escape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const body = users
+        .map((u) =>
+            [
+                u.employee_id,
+                u.full_name,
+                u.username,
+                u.resorts?.resort_name ?? '',
+                u.departments?.department_name ?? '',
+                u.designation ?? '',
+                u.roles.role_name,
+                u.reporting_manager?.full_name ?? '',
+                u.status === 'active' ? 'Active' : 'Archived',
+            ]
+                .map(escape)
+                .join(',')
+        )
+        .join('\n');
+    return header + body;
 }
 
 // ---------------------------------------------------------------------
@@ -384,14 +472,23 @@ export function registerAdminRoutes(router) {
         const auth = await requireRole(request, [ROLE_ADMIN]);
         if (auth.response) return auth.response;
         const url = new URL(request.url);
-        const body = await usersPageBody({
+        const filters = {
             search: url.searchParams.get('search') || '',
             deptFilter: Number(url.searchParams.get('department') || 0),
             roleFilter: Number(url.searchParams.get('role') || 0),
+            resortFilter: Number(url.searchParams.get('resort') || 0),
             statusFilter: url.searchParams.get('status') || '',
-            csrfToken: auth.user.csrf,
-            errors: [],
-        });
+            sortKey: url.searchParams.get('sort') || '',
+            sortDir: url.searchParams.get('dir') || '',
+        };
+
+        if (url.searchParams.get('format') === 'csv') {
+            const users = await fetchFilteredUsers(filters);
+            const filename = `ferry_portal_users_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.csv`;
+            return csvResponse(usersToCsv(users), filename);
+        }
+
+        const body = await usersPageBody({ ...filters, csrfToken: auth.user.csrf, errors: [] });
         return renderShellForRequest({ request, auth, pageTitle: 'User Management', path: '/admin/users', bodyHtml: body });
     });
 
@@ -409,6 +506,7 @@ export function registerAdminRoutes(router) {
             const fullName = (form.full_name || '').trim();
             const username = (form.username || '').trim();
             const password = form.password || '';
+            const resortId = Number(form.resort_id) || null;
             const departmentId = Number(form.department_id) || null;
             const designation = (form.designation || '').trim() || null;
             const roleId = Number(form.role_id) || 0;
@@ -420,6 +518,8 @@ export function registerAdminRoutes(router) {
 
             const errors = [];
             if (!employeeId || !fullName || !username || !roleId) errors.push('Employee ID, Full Name, Username, and Role are required.');
+            if (!resortId) errors.push('Resort is required.');
+            if (!departmentId) errors.push('Department is required.');
             if (action === 'add' && !password) errors.push('Password is required for a new user.');
 
             if (!errors.length) {
@@ -429,14 +529,14 @@ export function registerAdminRoutes(router) {
                         unwrap(
                             await db().from('users').insert({
                                 employee_id: employeeId, full_name: fullName, username, password: hash,
-                                department_id: departmentId, designation, role_id: roleId, reporting_manager_id: managerId,
+                                resort_id: resortId, department_id: departmentId, designation, role_id: roleId, reporting_manager_id: managerId,
                                 email, phone, status,
                             })
                         );
                         await logActivity(user.user_id, 'Created user', username, clientIp(request));
                         return redirectTo('/admin/users', { cookies: [auth.setCookie, flashSetCookie('success', `User '${fullName}' created successfully.`)].filter(Boolean) });
                     }
-                    const update = { employee_id: employeeId, full_name: fullName, username, department_id: departmentId, designation, role_id: roleId, reporting_manager_id: managerId, email, phone, status };
+                    const update = { employee_id: employeeId, full_name: fullName, username, resort_id: resortId, department_id: departmentId, designation, role_id: roleId, reporting_manager_id: managerId, email, phone, status };
                     if (password) update.password = await hashPassword(password);
                     unwrap(await db().from('users').update(update).eq('user_id', userId));
                     await logActivity(user.user_id, 'Updated user', username, clientIp(request));
@@ -446,7 +546,7 @@ export function registerAdminRoutes(router) {
                 }
             }
             const url = new URL(request.url);
-            const body = await usersPageBody({ search: '', deptFilter: 0, roleFilter: 0, statusFilter: '', csrfToken: user.csrf, errors });
+            const body = await usersPageBody({ search: '', deptFilter: 0, roleFilter: 0, resortFilter: 0, statusFilter: '', sortKey: '', sortDir: '', csrfToken: user.csrf, errors });
             return renderShellForRequest({ request, auth, pageTitle: 'User Management', path: url.pathname, bodyHtml: body });
         }
 
@@ -476,7 +576,7 @@ export function registerAdminRoutes(router) {
 
         if (action === 'reset_password') {
             const userId = Number(form.user_id);
-            const temp = `Ferry@${Math.floor(10000 + Math.random() * 90000)}`;
+            const temp = generateTempPassword();
             const hash = await hashPassword(temp);
             unwrap(await db().from('users').update({ password: hash, must_change_password: true }).eq('user_id', userId));
             await logActivity(user.user_id, 'Reset user password', `user_id=${userId}`, clientIp(request));
