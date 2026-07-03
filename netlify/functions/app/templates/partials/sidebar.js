@@ -13,7 +13,7 @@ function navLink(path, icon, label, currentPath) {
           </a>`;
 }
 
-export function renderSidebar(roleName, currentPath, isDeptApprover = false) {
+export function renderSidebar(roleName, currentPath, isDeptApprover = false, companyName = 'Ferry Portal', siteLogo = '') {
     const links = [navLink('/dashboard', 'bi-speedometer2', 'Dashboard', currentPath)];
 
     if (roleName === ROLE_ADMIN) {
@@ -31,6 +31,7 @@ export function renderSidebar(roleName, currentPath, isDeptApprover = false) {
             navLink('/admin/bookings', 'bi-journal-check', 'All Bookings', currentPath),
             navLink('/admin/reports', 'bi-graph-up', 'Reports', currentPath),
             navLink('/admin/activity_logs', 'bi-clock-history', 'Activity Logs', currentPath),
+            navLink('/admin/branding', 'bi-palette', 'Website Branding', currentPath),
             navLink('/admin/settings', 'bi-gear', 'Settings', currentPath)
         );
     }
@@ -98,8 +99,8 @@ export function renderSidebar(roleName, currentPath, isDeptApprover = false) {
     return html`
 <aside class="sidebar" id="sidebar">
     <div class="sidebar-brand">
-        <i class="bi bi-water"></i>
-        <span>Ferry Portal</span>
+        ${siteLogo ? html`<img src="${siteLogo}" alt="" class="sidebar-brand-logo">` : html`<i class="bi bi-water"></i>`}
+        <span>${companyName}</span>
     </div>
     <nav class="sidebar-nav">
         ${raw(links.map((l) => l.toString()).join(''))}

@@ -1,11 +1,13 @@
-// Port of admin/settings.php - settings table editor + portal logo upload.
+// Port of admin/settings.php - operational settings (booking limits,
+// password policy, maintenance mode, etc.). Visual branding (logos,
+// favicon, portal title/name) lives on the separate /admin/branding
+// page (admin_branding.js).
 
 import { requireRole } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
 import { getSetting, setSetting, resetSettingsCache } from '../settings.js';
-import { uploadPortalLogo } from '../uploads.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
@@ -14,8 +16,6 @@ import { ROLE_ADMIN } from '../session.js';
 const WEEKDAY_OPTIONS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 async function settingsBody({ errors, csrfToken }) {
-    const companyName = await getSetting('company_name', '');
-    const portalLogo = await getSetting('portal_logo', '');
     const maxSeats = await getSetting('max_seats_per_booking', 4);
     const cutoffHours = await getSetting('booking_cutoff_hours', 2);
     const workingDaysStr = await getSetting('working_days', 'Mon,Tue,Wed,Thu,Fri,Sat,Sun');
@@ -28,12 +28,11 @@ async function settingsBody({ errors, csrfToken }) {
     return html`
 <h5 class="mb-3"><i class="bi bi-gear"></i> Portal Settings</h5>
 ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `${e}<br>`).join(''))}</div>` : ''}
+<p class="text-muted small">Logos, favicon, portal title/name, and other visual branding now live on the <a href="/admin/branding">Website Branding</a> page.</p>
 <div class="card shadow-sm"><div class="card-body">
     <form method="post" enctype="multipart/form-data">
         ${raw(csrfField(csrfToken))}
         <div class="row g-3">
-            <div class="col-md-6"><label class="form-label">Company Name</label><input type="text" name="company_name" class="form-control" value="${companyName}"></div>
-            <div class="col-md-6"><label class="form-label">Portal Logo</label><input type="file" name="portal_logo" class="form-control" accept=".jpg,.jpeg,.png,.svg,.webp"><div class="form-text">Current: ${portalLogo || '(none)'}</div></div>
             <div class="col-md-4"><label class="form-label">Max Seats Per Booking</label><input type="number" min="1" name="max_seats_per_booking" class="form-control" value="${maxSeats}"></div>
             <div class="col-md-4"><label class="form-label">Booking Cut-Off Time (hours before departure)</label><input type="number" min="0" name="booking_cutoff_hours" class="form-control" value="${cutoffHours}"></div>
             <div class="col-md-4"><label class="form-label">Session Timeout (minutes)</label><input type="number" min="5" name="session_timeout_minutes" class="form-control" value="${sessionTimeout}"></div>
@@ -66,8 +65,6 @@ export function registerAdminSettingsRoutes(router) {
         const form = await request.formData();
         if (!verifyCsrf(user.csrf, form.get('csrf_token'))) return notFound();
 
-        const errors = [];
-        await setSetting('company_name', (form.get('company_name') || '').toString().trim());
         await setSetting('max_seats_per_booking', Math.max(1, Number(form.get('max_seats_per_booking')) || 4));
         await setSetting('booking_cutoff_hours', Math.max(0, Number(form.get('booking_cutoff_hours')) || 2));
         await setSetting('working_days', form.getAll('working_days').join(','));
@@ -76,22 +73,7 @@ export function registerAdminSettingsRoutes(router) {
         await setSetting('maintenance_mode', form.get('maintenance_mode') ? '1' : '0');
         await setSetting('notifications_enabled', form.get('notifications_enabled') ? '1' : '0');
 
-        const logoFile = form.get('portal_logo');
-        if (logoFile && logoFile.size > 0) {
-            try {
-                const url = await uploadPortalLogo(logoFile);
-                await setSetting('portal_logo', url);
-            } catch (err) {
-                errors.push(err.message);
-            }
-        }
-
         resetSettingsCache();
-
-        if (errors.length) {
-            const body = await settingsBody({ errors, csrfToken: user.csrf });
-            return renderShellForRequest({ request, auth, pageTitle: 'Settings', path: '/admin/settings', bodyHtml: body });
-        }
 
         await logActivity(user.user_id, 'Updated portal settings', null, clientIp(request));
         return redirectTo('/admin/settings', { cookies: [auth.setCookie, flashSetCookie('success', 'Settings saved.')].filter(Boolean) });

@@ -22,13 +22,26 @@ async function readFormBody(request) {
     return out;
 }
 
-function loginPage({ error, timeout, csrfToken, companyName, username = '' }) {
+/** Branding settings shared by every pre-login page (login, forgot-password). */
+async function getPublicBranding() {
+    const [companyName, portalTitle, favicon, loginLogo, loginBackground] = await Promise.all([
+        getSetting('company_name', 'Staff Ferry Transfer Portal'),
+        getSetting('portal_title', ''),
+        getSetting('favicon', ''),
+        getSetting('login_logo', ''),
+        getSetting('login_background', ''),
+    ]);
+    return { companyName, portalTitle, favicon, loginLogo, loginBackground };
+}
+
+function loginPage({ error, timeout, csrfToken, companyName, portalTitle, favicon, loginLogo, loginBackground, username = '' }) {
+    const wrapperStyle = loginBackground ? `background-image:url('${loginBackground}');background-size:cover;background-position:center;` : '';
     const body = html`
-<div class="login-wrapper">
+<div class="login-wrapper" style="${wrapperStyle}">
     <div class="card login-card">
         <div class="card-body p-4">
             <div class="text-center mb-4">
-                <i class="bi bi-water" style="font-size:2.5rem;color:#0d6efd;"></i>
+                ${loginLogo ? html`<img src="${loginLogo}" alt="" class="login-logo">` : html`<i class="bi bi-water" style="font-size:2.5rem;color:#0d6efd;"></i>`}
                 <h4 class="mt-2 mb-0">${companyName}</h4>
                 <p class="text-muted small">Staff Ferry Transfer Portal</p>
             </div>
@@ -56,7 +69,7 @@ function loginPage({ error, timeout, csrfToken, companyName, username = '' }) {
         </div>
     </div>
 </div>`;
-    return publicShell({ pageTitle: 'Login', companyName, bodyHtml: body });
+    return publicShell({ pageTitle: 'Login', companyName, portalTitle, favicon, bodyHtml: body });
 }
 
 export function registerAuthRoutes(router) {
@@ -64,20 +77,20 @@ export function registerAuthRoutes(router) {
         const { user } = await getSession(request);
         if (user) return redirectTo('/dashboard');
 
-        const companyName = await getSetting('company_name', 'Staff Ferry Transfer Portal');
+        const branding = await getPublicBranding();
         const url = new URL(request.url);
         const { token, setCookie } = mintPreAuthCsrf();
         const body = loginPage({
             error: null,
             timeout: url.searchParams.get('timeout') === '1',
             csrfToken: token,
-            companyName,
+            ...branding,
         });
         return htmlResponse(body.toString(), { cookies: [setCookie] });
     });
 
     router.post('/auth/login', async (request) => {
-        const companyName = await getSetting('company_name', 'Staff Ferry Transfer Portal');
+        const branding = await getPublicBranding();
         const form = await readFormBody(request);
         const submittedCsrf = form.csrf_token;
         const preAuthCsrf = readPreAuthCsrfCookie(request);
@@ -91,7 +104,7 @@ export function registerAuthRoutes(router) {
 
         if (!username || !password) {
             const { token, setCookie } = mintPreAuthCsrf();
-            const body = loginPage({ error: 'Please enter both username and password.', timeout: false, csrfToken: token, companyName, username });
+            const body = loginPage({ error: 'Please enter both username and password.', timeout: false, csrfToken: token, ...branding, username });
             return htmlResponse(body.toString(), { cookies: [setCookie] });
         }
 
@@ -108,13 +121,13 @@ export function registerAuthRoutes(router) {
         if (!user || !passwordOk) {
             await logActivity(user?.user_id ?? null, 'Failed login attempt', `Username: ${username}`, clientIp(request));
             const { token, setCookie } = mintPreAuthCsrf();
-            const body = loginPage({ error: 'Invalid username or password.', timeout: false, csrfToken: token, companyName, username });
+            const body = loginPage({ error: 'Invalid username or password.', timeout: false, csrfToken: token, ...branding, username });
             return htmlResponse(body.toString(), { cookies: [setCookie] });
         }
 
         if (user.status !== 'active') {
             const { token, setCookie } = mintPreAuthCsrf();
-            const body = loginPage({ error: 'Your account is inactive. Please contact the Administrator.', timeout: false, csrfToken: token, companyName, username });
+            const body = loginPage({ error: 'Your account is inactive. Please contact the Administrator.', timeout: false, csrfToken: token, ...branding, username });
             return htmlResponse(body.toString(), { cookies: [setCookie] });
         }
 
@@ -122,7 +135,7 @@ export function registerAuthRoutes(router) {
         const roleName = user.roles?.role_name;
         if (maintenanceMode === '1' && roleName !== ROLE_ADMIN) {
             const { token, setCookie } = mintPreAuthCsrf();
-            const body = loginPage({ error: 'The portal is currently under maintenance. Please try again later.', timeout: false, csrfToken: token, companyName, username });
+            const body = loginPage({ error: 'The portal is currently under maintenance. Please try again later.', timeout: false, csrfToken: token, ...branding, username });
             return htmlResponse(body.toString(), { cookies: [setCookie] });
         }
 
@@ -226,14 +239,14 @@ export function registerAuthRoutes(router) {
         const { user } = await getSession(request);
         if (user) return redirectTo('/dashboard');
 
-        const companyName = await getSetting('company_name', 'Staff Ferry Transfer Portal');
+        const branding = await getPublicBranding();
         const { token, setCookie } = mintPreAuthCsrf();
-        const body = forgotPasswordPage({ submitted: false, error: null, csrfToken: token, companyName });
+        const body = forgotPasswordPage({ submitted: false, error: null, csrfToken: token, ...branding });
         return htmlResponse(body.toString(), { cookies: [setCookie] });
     });
 
     router.post('/auth/forgot_password', async (request) => {
-        const companyName = await getSetting('company_name', 'Staff Ferry Transfer Portal');
+        const branding = await getPublicBranding();
         const form = await readFormBody(request);
         const preAuthCsrf = readPreAuthCsrfCookie(request);
         if (!verifyCsrf(preAuthCsrf, form.csrf_token)) return forbidden();
@@ -241,7 +254,7 @@ export function registerAuthRoutes(router) {
         const identifier = (form.identifier || '').trim();
         if (!identifier) {
             const { token, setCookie } = mintPreAuthCsrf();
-            const body = forgotPasswordPage({ submitted: false, error: 'Please enter your Username or Employee ID.', csrfToken: token, companyName });
+            const body = forgotPasswordPage({ submitted: false, error: 'Please enter your Username or Employee ID.', csrfToken: token, ...branding });
             return htmlResponse(body.toString(), { cookies: [setCookie] });
         }
 
@@ -271,7 +284,7 @@ export function registerAuthRoutes(router) {
         }
         await logActivity(matched?.user_id ?? null, 'Password reset requested', `Identifier: ${identifier}`, clientIp(request));
 
-        const body = forgotPasswordPage({ submitted: true, error: null, csrfToken: null, companyName });
+        const body = forgotPasswordPage({ submitted: true, error: null, csrfToken: null, ...branding });
         return htmlResponse(body.toString());
     });
 }
@@ -309,7 +322,7 @@ function changePasswordBody({ errors, minLength, csrfToken }) {
 </div>`;
 }
 
-function forgotPasswordPage({ submitted, error, csrfToken, companyName }) {
+function forgotPasswordPage({ submitted, error, csrfToken, companyName, portalTitle, favicon }) {
     const body = html`
 <div class="login-wrapper">
     <div class="card login-card">
@@ -336,5 +349,5 @@ function forgotPasswordPage({ submitted, error, csrfToken, companyName }) {
         </div>
     </div>
 </div>`;
-    return publicShell({ pageTitle: 'Forgot Password', companyName, bodyHtml: body });
+    return publicShell({ pageTitle: 'Forgot Password', companyName, portalTitle, favicon, bodyHtml: body });
 }

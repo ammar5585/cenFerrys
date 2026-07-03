@@ -6,6 +6,12 @@ import { html, raw } from './html.js';
 import { renderNavbar } from './partials/navbar.js';
 import { renderSidebar } from './partials/sidebar.js';
 
+// Zero-asset default favicon (nothing ships on disk today) - a simple
+// inline SVG data URI, computed once at module load via encodeURIComponent
+// rather than hand-escaped, to avoid a subtly-broken hand-encoded string.
+const DEFAULT_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="#0d6efd"/><text x="50" y="70" font-size="60" text-anchor="middle">🌊</text></svg>`;
+const DEFAULT_FAVICON = `data:image/svg+xml,${encodeURIComponent(DEFAULT_FAVICON_SVG)}`;
+
 /**
  * Renders a full authenticated page.
  * `bodyHtml` is the page's <main> content (a SafeString from html``).
@@ -16,6 +22,10 @@ export function shell({
     user,
     pageTitle,
     companyName,
+    portalTitle = '',
+    siteLogo = '',
+    favicon = '',
+    bannerImage = '',
     flashMessages = [],
     csrfToken,
     unreadCount = 0,
@@ -25,7 +35,7 @@ export function shell({
     extraScripts = '',
 }) {
     const navbarHtml = renderNavbar({ user, pageTitle, unreadCount, notifications });
-    const sidebarHtml = renderSidebar(user.role_name, currentPath, user.is_dept_approver);
+    const sidebarHtml = renderSidebar(user.role_name, currentPath, user.is_dept_approver, companyName, siteLogo);
 
     const flashScript = flashMessages
         .map((m) => `showToast(${JSON.stringify(m.type)}, ${JSON.stringify(m.message)});`)
@@ -36,7 +46,8 @@ export function shell({
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${pageTitle ? pageTitle + ' - ' : ''}${companyName}</title>
+<title>${pageTitle ? pageTitle + ' - ' : ''}${portalTitle || companyName}</title>
+<link rel="icon" href="${favicon || DEFAULT_FAVICON}">
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
@@ -53,6 +64,7 @@ export function shell({
 <div class="app-wrapper">
 ${raw(sidebarHtml)}
 ${raw(navbarHtml)}
+${bannerImage ? html`<div class="portal-banner"><img src="${bannerImage}" alt=""></div>` : ''}
 <main class="main-content">
 ${raw(bodyHtml)}
 </main>
@@ -76,13 +88,14 @@ ${raw(extraScripts)}
 }
 
 /** Standalone page shell for public pages (login, forgot-password) with no sidebar/navbar. */
-export function publicShell({ pageTitle, companyName, bodyHtml }) {
+export function publicShell({ pageTitle, companyName, portalTitle = '', favicon = '', bodyHtml }) {
     return html`<!DOCTYPE html>
 <html lang="en" data-bs-theme="light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${pageTitle ? pageTitle + ' - ' : ''}${companyName}</title>
+<title>${pageTitle ? pageTitle + ' - ' : ''}${portalTitle || companyName}</title>
+<link rel="icon" href="${favicon || DEFAULT_FAVICON}">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
 <link href="/assets/css/style.css" rel="stylesheet">

@@ -199,6 +199,7 @@ ${scheduleId
         const passengers = await passengersFor(scheduleId, date);
         const totalSeats = passengers.reduce((sum, p) => sum + p.seats, 0);
         const companyName = await getSetting('company_name', 'Staff Ferry Transfer Portal');
+        const siteLogo = await getSetting('site_logo', '');
 
         const rows = passengers
             .map(
@@ -215,6 +216,7 @@ ${scheduleId
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"></head>
 <body class="p-4"><div class="container">
     <div class="text-center mb-4">
+        ${siteLogo ? html`<img src="${siteLogo}" alt="" style="max-height:60px;" class="mb-2 d-block mx-auto">` : ''}
         <h4>${companyName}</h4>
         <p class="text-muted mb-0">Ferry Passenger Manifest</p>
         <p><strong>${schedule.ferry_routes.direction}</strong> &middot; ${formatDate(date)} &middot; Departure: ${formatTime(schedule.departure_time)}</p>

@@ -595,11 +595,12 @@ export function registerStaffRoutes(router) {
         }
 
         const companyName = await getSetting('company_name', 'Staff Ferry Transfer Portal');
+        const siteLogo = await getSetting('site_logo', '');
         const body = html`<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><title>Booking Confirmation #${booking.booking_id}</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"></head>
 <body class="p-4"><div class="container" style="max-width: 600px;">
-    <div class="text-center mb-4"><h4>${companyName}</h4><p class="text-muted">Ferry Booking Confirmation</p></div>
+    <div class="text-center mb-4">${siteLogo ? html`<img src="${siteLogo}" alt="" style="max-height:60px;" class="mb-2 d-block mx-auto">` : ''}<h4>${companyName}</h4><p class="text-muted">Ferry Booking Confirmation</p></div>
     <table class="table table-bordered">
         <tr><th>Booking ID</th><td>#${booking.booking_id}</td></tr>
         <tr><th>Employee</th><td>${booking.users.full_name} (${booking.users.employee_id})</td></tr>

@@ -15,8 +15,12 @@ import { htmlResponse } from './response.js';
  */
 export async function renderShellForRequest({ request, auth, pageTitle, bodyHtml, path, extraScripts, extraCookies = [] }) {
     const { user, setCookie } = auth;
-    const [companyName, unreadCount, notifications, flashMessages] = await Promise.all([
+    const [companyName, portalTitle, siteLogo, favicon, bannerImage, unreadCount, notifications, flashMessages] = await Promise.all([
         getSetting('company_name', 'Staff Ferry Transfer Portal'),
+        getSetting('portal_title', ''),
+        getSetting('site_logo', ''),
+        getSetting('favicon', ''),
+        getSetting('banner_image', ''),
         getUnreadNotificationCount(user.user_id),
         getRecentNotifications(user.user_id, 8),
         Promise.resolve(flashGet(request)),
@@ -26,6 +30,10 @@ export async function renderShellForRequest({ request, auth, pageTitle, bodyHtml
         user,
         pageTitle,
         companyName,
+        portalTitle,
+        siteLogo,
+        favicon,
+        bannerImage,
         flashMessages,
         csrfToken: user.csrf,
         unreadCount,

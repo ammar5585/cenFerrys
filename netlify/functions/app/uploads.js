@@ -13,6 +13,12 @@ const MAX_BYTES = 2 * 1024 * 1024; // 2MB, matches the PHP app's cap
 
 const PROFILE_PICTURE_TYPES = new Set(['jpg', 'jpeg', 'png', 'webp']);
 const LOGO_TYPES = new Set(['jpg', 'jpeg', 'png', 'svg', 'webp']);
+// Favicons: PNG/SVG only (not full .ico support) - every target browser
+// accepts either via <link rel="icon">, and this reuses the LOGO_TYPES
+// SVG-skip-sniff branch in handleUpload with no new logic.
+const FAVICON_TYPES = new Set(['png', 'svg']);
+// Login background / banner images are photographic, not vector.
+const BACKGROUND_TYPES = new Set(['jpg', 'jpeg', 'png', 'webp']);
 
 /**
  * Validates and uploads a File (from Request.formData()) to a public
@@ -63,10 +69,42 @@ export function uploadProfilePicture(file, userId) {
     });
 }
 
-export function uploadPortalLogo(file) {
+export function uploadSiteLogo(file) {
     return handleUpload(file, {
         bucket: 'portal-assets',
         allowedExt: LOGO_TYPES,
-        prefix: 'logo',
+        prefix: 'site_logo',
+    });
+}
+
+export function uploadLoginLogo(file) {
+    return handleUpload(file, {
+        bucket: 'portal-assets',
+        allowedExt: LOGO_TYPES,
+        prefix: 'login_logo',
+    });
+}
+
+export function uploadFavicon(file) {
+    return handleUpload(file, {
+        bucket: 'portal-assets',
+        allowedExt: FAVICON_TYPES,
+        prefix: 'favicon',
+    });
+}
+
+export function uploadLoginBackground(file) {
+    return handleUpload(file, {
+        bucket: 'portal-assets',
+        allowedExt: BACKGROUND_TYPES,
+        prefix: 'login_bg',
+    });
+}
+
+export function uploadBannerImage(file) {
+    return handleUpload(file, {
+        bucket: 'portal-assets',
+        allowedExt: BACKGROUND_TYPES,
+        prefix: 'banner',
     });
 }

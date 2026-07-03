@@ -8,6 +8,7 @@ import { requireRole } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csvResponse } from '../response.js';
+import { getSetting } from '../settings.js';
 import { formatDate, formatTime } from '../format.js';
 import { ROLE_ADMIN, ROLE_GM, ROLE_RM, ROLE_HR } from '../session.js';
 
@@ -31,7 +32,7 @@ async function fetchReportRows({ dateFrom, dateTo, deptFilter, empFilter, routeF
     return rows;
 }
 
-function reportPageBody({ rows, filters, filterOptions, scope, basePath }) {
+function reportPageBody({ rows, filters, filterOptions, scope, basePath, companyName, siteLogo }) {
     const { departments, employees, routes, statuses } = filterOptions;
     const showFullFilters = scope === 'admin';
 
@@ -50,6 +51,11 @@ function reportPageBody({ rows, filters, filterOptions, scope, basePath }) {
         .join('');
 
     return html`
+<div class="print-masthead d-none text-center mb-3">
+    ${siteLogo ? html`<img src="${siteLogo}" alt="" style="max-height:60px;" class="mb-2 d-block mx-auto">` : ''}
+    <h4>${companyName}</h4>
+    <p class="text-muted mb-0">Booking Report</p>
+</div>
 <h5 class="mb-3"><i class="bi bi-graph-up"></i> Booking Reports</h5>
 <div class="card shadow-sm mb-3 no-print"><div class="card-body">
     <form method="get" class="row g-2">
@@ -77,7 +83,7 @@ function reportPageBody({ rows, filters, filterOptions, scope, basePath }) {
         <tbody>${raw(rowsHtml || `<tr><td colspan="${showFullFilters ? 10 : 9}" class="text-center text-muted py-4">No results for the selected filters.</td></tr>`)}</tbody>
     </table></div>
 </div>
-<style>@media print { .no-print, .sidebar, .topbar { display: none !important; } .main-content { margin-left: 0 !important; } }</style>`;
+<style>@media print { .no-print, .sidebar, .topbar, .portal-banner { display: none !important; } .main-content { margin-left: 0 !important; } .print-masthead { display: block !important; } }</style>`;
 }
 
 async function loadFilterOptions() {
@@ -145,6 +151,8 @@ async function handleReport(request, auth, scope, basePath) {
     }
 
     const filterOptions = await loadFilterOptions();
-    const body = reportPageBody({ rows, filters, filterOptions, scope, basePath });
+    const companyName = await getSetting('company_name', 'Staff Ferry Transfer Portal');
+    const siteLogo = await getSetting('site_logo', '');
+    const body = reportPageBody({ rows, filters, filterOptions, scope, basePath, companyName, siteLogo });
     return renderShellForRequest({ request, auth, pageTitle: 'Reports', path: basePath, bodyHtml: body });
 }
