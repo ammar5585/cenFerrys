@@ -195,6 +195,13 @@ async function notifyExecutives(bookingId, message) {
  * or 'legacy'; `executives` is every currently active GM/RM/HR user,
  * ordered to reflect the legacy chain's priority (GM, then RM, then HR),
  * for display in either mode.
+ *
+ * Department Hierarchy is the default: only an EXPLICIT 'legacy' config
+ * row opts a department back into the old GM -> RM -> HR chain. A
+ * missing config row (a department added without one, or departmentId
+ * itself null) must never silently behave like legacy - that would
+ * make every newly-added department default back to the org-wide chain
+ * the business no longer wants as the normal path.
  */
 export async function getApprovalWorkflowInfo(resortId, departmentId) {
     const config = await getDepartmentApprovalConfig(resortId, departmentId);
@@ -211,20 +218,22 @@ export async function getApprovalWorkflowInfo(resortId, departmentId) {
         .map((u) => ({ fullName: u.full_name, roleName: u.roles.role_name }))
         .sort((a, b) => rolePriority.indexOf(a.roleName) - rolePriority.indexOf(b.roleName));
 
-    const mode = config && config.approval_mode === 'department_hierarchy' ? 'department_hierarchy' : 'legacy';
+    const mode = config?.approval_mode === 'legacy' ? 'legacy' : 'department_hierarchy';
     return { mode, executives };
 }
 
 /**
  * Routes a booking through its department's 3-tier hierarchy (Department
- * Manager -> Assistant Manager -> Supervisor), OR delegates unchanged to
- * the legacy routeBookingApproval() whenever department-hierarchy mode
- * isn't active for this booking - a null config row (department has no
- * config, or departmentId itself is null) is treated identically to an
- * explicit 'legacy' mode, so this is safe even if a department is ever
- * added without a matching department_approval_config row (the pre-seed
- * in the migration is a convenience for the admin UI, not something
- * this function trusts).
+ * Manager -> Assistant Manager -> Supervisor) - the default path - or
+ * delegates to the legacy routeBookingApproval() (GM -> RM -> HR) only
+ * when the department has an EXPLICIT 'legacy' config row. A missing
+ * config row (department added without one, or departmentId itself
+ * null) is treated as an unconfigured department-hierarchy department,
+ * not legacy: it flows into the "no viable tier" branch below and stays
+ * pending/unassigned pending an executive override, exactly like a
+ * department_hierarchy department whose tiers haven't been assigned
+ * yet. This keeps "department hierarchy, GM/RM/HR only as an override"
+ * the real default for every department, present and future.
  *
  * If no departmental tier has a viable approver, the booking is left
  * pending/unassigned (current_approver_id = null) rather than
@@ -233,7 +242,7 @@ export async function getApprovalWorkflowInfo(resortId, departmentId) {
  */
 export async function routeDepartmentApproval(bookingId, resortId, departmentId) {
     const config = await getDepartmentApprovalConfig(resortId, departmentId);
-    if (!config || config.approval_mode !== 'department_hierarchy') {
+    if (config?.approval_mode === 'legacy') {
         return routeBookingApproval(bookingId);
     }
 
@@ -241,7 +250,7 @@ export async function routeDepartmentApproval(bookingId, resortId, departmentId)
     let approverId = null;
 
     for (const { level, configColumn } of DEPARTMENT_LEVELS) {
-        const candidateId = config[configColumn];
+        const candidateId = config?.[configColumn];
         if (candidateId && (await isApproverViable(candidateId))) {
             chosenLevel = level;
             approverId = candidateId;

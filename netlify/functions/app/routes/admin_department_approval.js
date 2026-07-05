@@ -48,8 +48,12 @@ async function departmentApprovalPageBody(csrfToken) {
         .map((r) => {
             const cards = departments
                 .map((d) => {
+                    // Department Hierarchy is the real runtime default for a
+                    // department with no config row (see approval.js) - the
+                    // fallback shown here must match, not silently default
+                    // the display to Legacy.
                     const cfg = configByKey.get(`${r.resort_id}:${d.department_id}`) ?? {
-                        approval_mode: 'legacy',
+                        approval_mode: 'department_hierarchy',
                         manager_user_id: null,
                         assistant_manager_user_id: null,
                         supervisor_user_id: null,
