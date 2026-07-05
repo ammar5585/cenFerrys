@@ -411,7 +411,7 @@ async function usersPageBody({ search, deptFilter, roleFilter, resortFilter, sta
         reopen && reopen.type
             ? raw(`<script>document.addEventListener('DOMContentLoaded', function () {
     var el = document.getElementById(${reopen.type === 'edit' ? `'editUserModal${reopen.userId}'` : `'addUserModal'`});
-    if (el && window.bootstrap) new bootstrap.Modal(el).show();
+    if (el && window.bootstrap) bootstrap.Modal.getOrCreateInstance(el).show();
 });</script>`)
             : '';
 
