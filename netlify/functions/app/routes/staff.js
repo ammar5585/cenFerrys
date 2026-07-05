@@ -495,7 +495,7 @@ export function registerStaffRoutes(router) {
                 if (err.message === 'CAPACITY_EXCEEDED') {
                     errors.push('Not enough seats remaining on this ferry. Please choose another time.');
                 } else {
-                    errors.push('Could not create booking. Please try again.');
+                    errors.push(`Could not create booking: ${err.message}`);
                 }
             }
         }

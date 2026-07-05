@@ -3,8 +3,12 @@
 // ran inline.
 
 import { db, unwrap } from './db.js';
+import { getSetting } from './settings.js';
 
 export async function createNotification(userId, message, type = 'info', bookingId = null) {
+    const enabled = await getSetting('notifications_enabled', '1');
+    if (enabled !== '1') return;
+
     unwrap(
         await db()
             .from('notifications')

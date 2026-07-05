@@ -10,6 +10,7 @@ import { csrfField, verifyCsrf } from '../csrf.js';
 import { hashPassword, generateTempPassword } from '../auth.js';
 import { getRemainingSeats } from '../seats.js';
 import { logActivity, clientIp } from '../activity.js';
+import { uploadProfilePicture } from '../uploads.js';
 import { redirectTo, notFound, csvResponse } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatTime } from '../format.js';
@@ -135,41 +136,55 @@ async function adminDashboardBody() {
 // ---------------------------------------------------------------------
 // Users CRUD
 // ---------------------------------------------------------------------
-function userFormFields({ u, departments, roles, managers, resorts }) {
+function userFormFields({ u, departments, roles, managers, resorts, values, isApprover }) {
+    // `values` (optional): the raw submitted form values from a rejected
+    // save, redisplayed in place of `u`'s stored DB values so the admin
+    // doesn't lose what they typed when validation/duplicate-key fails.
+    const v = (key, fallback = '') => (values && values[key] !== undefined ? values[key] : (u?.[key] ?? fallback));
     return html`
 <div class="row g-3">
-    <div class="col-md-6"><label class="form-label">Employee ID *</label><input type="text" name="employee_id" class="form-control" required value="${u?.employee_id ?? ''}"></div>
-    <div class="col-md-6"><label class="form-label">Full Name *</label><input type="text" name="full_name" class="form-control" required value="${u?.full_name ?? ''}"></div>
-    <div class="col-md-6"><label class="form-label">Username *</label><input type="text" name="username" class="form-control" required value="${u?.username ?? ''}"></div>
+    <div class="col-md-6"><label class="form-label">Employee ID *</label><input type="text" name="employee_id" class="form-control" required value="${v('employee_id')}"></div>
+    <div class="col-md-6"><label class="form-label">Full Name *</label><input type="text" name="full_name" class="form-control" required value="${v('full_name')}"></div>
+    <div class="col-md-6"><label class="form-label">Username *</label><input type="text" name="username" class="form-control" required value="${v('username')}"></div>
     <div class="col-md-6"><label class="form-label">Password ${u ? '(leave blank to keep unchanged)' : '*'}</label><input type="password" name="password" class="form-control" ${u ? '' : 'required'}></div>
     <div class="col-md-6"><label class="form-label">Resort *</label>
         <select name="resort_id" class="form-select" required><option value="">-- Select Resort --</option>
-        ${raw(resorts.map((r) => `<option value="${r.resort_id}" ${u?.resort_id == r.resort_id ? 'selected' : ''}>${h(r.resort_name)}</option>`).join(''))}
+        ${raw(resorts.map((r) => `<option value="${r.resort_id}" ${v('resort_id') == r.resort_id ? 'selected' : ''}>${h(r.resort_name)}</option>`).join(''))}
         </select>
     </div>
     <div class="col-md-6"><label class="form-label">Department *</label>
         <select name="department_id" class="form-select" required><option value="">-- Select Department --</option>
-        ${raw(departments.map((d) => `<option value="${d.department_id}" ${u?.department_id == d.department_id ? 'selected' : ''}>${h(d.department_name)}</option>`).join(''))}
+        ${raw(departments.map((d) => `<option value="${d.department_id}" ${v('department_id') == d.department_id ? 'selected' : ''}>${h(d.department_name)}</option>`).join(''))}
         </select>
     </div>
-    <div class="col-md-6"><label class="form-label">Designation</label><input type="text" name="designation" class="form-control" value="${u?.designation ?? ''}"></div>
+    <div class="col-md-6"><label class="form-label">Designation</label><input type="text" name="designation" class="form-control" value="${v('designation')}"></div>
     <div class="col-md-6"><label class="form-label">Role *</label>
         <select name="role_id" class="form-select" required><option value="">-- Select Role --</option>
-        ${raw(roles.map((r) => `<option value="${r.role_id}" ${u?.role_id == r.role_id ? 'selected' : ''}>${h(r.role_name)}</option>`).join(''))}
+        ${raw(roles.map((r) => `<option value="${r.role_id}" ${v('role_id') == r.role_id ? 'selected' : ''}>${h(r.role_name)}</option>`).join(''))}
         </select>
     </div>
     <div class="col-md-6"><label class="form-label">Reporting Manager</label>
         <select name="reporting_manager_id" class="form-select"><option value="">-- None --</option>
-        ${raw(managers.filter((m) => !u || m.user_id !== u.user_id).map((m) => `<option value="${m.user_id}" ${u?.reporting_manager_id == m.user_id ? 'selected' : ''}>${h(m.full_name)} (${h(m.employee_id)})</option>`).join(''))}
+        ${raw(managers.filter((m) => !u || m.user_id !== u.user_id).map((m) => `<option value="${m.user_id}" ${v('reporting_manager_id') == m.user_id ? 'selected' : ''}>${h(m.full_name)} (${h(m.employee_id)})</option>`).join(''))}
         </select>
     </div>
-    <div class="col-md-6"><label class="form-label">Email (optional)</label><input type="email" name="email" class="form-control" value="${u?.email ?? ''}"></div>
-    <div class="col-md-6"><label class="form-label">Phone (optional)</label><input type="text" name="phone" class="form-control" value="${u?.phone ?? ''}"></div>
+    <div class="col-md-6"><label class="form-label">Email (optional)</label><input type="email" name="email" class="form-control" value="${v('email')}"></div>
+    <div class="col-md-6"><label class="form-label">Phone (optional)</label><input type="text" name="phone" class="form-control" value="${v('phone')}"></div>
     <div class="col-md-6"><label class="form-label">Status</label>
         <select name="status" class="form-select">
-            <option value="active" ${(u?.status ?? 'active') === 'active' ? 'selected' : ''}>Active</option>
-            <option value="inactive" ${u?.status === 'inactive' ? 'selected' : ''}>Inactive</option>
+            <option value="active" ${v('status', 'active') === 'active' ? 'selected' : ''}>Active</option>
+            <option value="inactive" ${v('status') === 'inactive' ? 'selected' : ''}>Inactive</option>
         </select>
+    </div>
+    ${u ? html`<div class="col-md-6">
+        <label class="form-label d-block">Approval Role</label>
+        <span class="badge ${isApprover ? 'bg-success' : 'bg-secondary'}">${isApprover ? 'Department Approver' : 'Not an approver'}</span>
+        <div class="form-text">Assigned via <a href="/admin/department_approval" target="_blank">Department Approval Configuration</a>, not here.</div>
+    </div>` : ''}
+    <div class="col-md-6">
+        <label class="form-label">Profile Photo</label>
+        ${u?.profile_picture ? html`<img src="${u.profile_picture}" class="rounded-circle d-block mb-2" width="56" height="56" style="object-fit:cover;">` : ''}
+        <input type="file" name="profile_picture" class="form-control" accept=".jpg,.jpeg,.png,.webp">
     </div>
 </div>`;
 }
@@ -191,7 +206,7 @@ async function fetchFilteredUsers({ search, deptFilter, roleFilter, resortFilter
     let query = db()
         .from('users')
         .select(
-            'user_id, employee_id, full_name, username, designation, status, department_id, role_id, resort_id, reporting_manager_id, roles(role_name), departments(department_name), resorts(resort_name), reporting_manager:reporting_manager_id(full_name)'
+            'user_id, employee_id, full_name, username, designation, status, department_id, role_id, resort_id, reporting_manager_id, profile_picture, roles(role_name), departments(department_name), resorts(resort_name), reporting_manager:reporting_manager_id(full_name)'
         );
     if (deptFilter) query = query.eq('department_id', deptFilter);
     if (roleFilter) query = query.eq('role_id', roleFilter);
@@ -220,13 +235,31 @@ async function fetchFilteredUsers({ search, deptFilter, roleFilter, resortFilter
     return users;
 }
 
-async function usersPageBody({ search, deptFilter, roleFilter, resortFilter, statusFilter, sortKey, sortDir, csrfToken, errors }) {
+async function usersPageBody({ search, deptFilter, roleFilter, resortFilter, statusFilter, sortKey, sortDir, csrfToken, errors, reopen }) {
     const users = await fetchFilteredUsers({ search, deptFilter, roleFilter, resortFilter, statusFilter, sortKey, sortDir });
 
     const departments = unwrap(await db().from('departments').select('*').order('department_name'));
     const roles = unwrap(await db().from('roles').select('*').order('role_id'));
     const resorts = unwrap(await db().from('resorts').select('*').order('resort_name'));
     const managers = unwrap(await db().from('users').select('user_id, full_name, employee_id').eq('status', 'active').order('full_name'));
+
+    // "Approval Role" isn't a column on users - it's derived from whether
+    // this user is assigned as manager/assistant/supervisor in any
+    // department currently in 'department_hierarchy' mode (same rule as
+    // session.js's checkIsDepartmentApprover, computed in bulk here to
+    // avoid one query per row).
+    const approverConfigs = unwrap(
+        await db()
+            .from('department_approval_config')
+            .select('manager_user_id, assistant_manager_user_id, supervisor_user_id')
+            .eq('approval_mode', 'department_hierarchy')
+    );
+    const approverIds = new Set();
+    for (const c of approverConfigs) {
+        for (const id of [c.manager_user_id, c.assistant_manager_user_id, c.supervisor_user_id]) {
+            if (id) approverIds.add(id);
+        }
+    }
 
     const rowsHtml = users
         .map(
@@ -253,15 +286,26 @@ async function usersPageBody({ search, deptFilter, roleFilter, resortFilter, sta
                 </form>
             </td>
         </tr>
-        <div class="modal fade" id="editUserModal${u.user_id}" tabindex="-1"><div class="modal-dialog modal-dialog-scrollable"><form method="post" class="modal-content">
+        <div class="modal fade" id="editUserModal${u.user_id}" tabindex="-1"><div class="modal-dialog modal-dialog-scrollable"><form method="post" enctype="multipart/form-data" class="modal-content">
             ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="edit"><input type="hidden" name="user_id" value="${u.user_id}">
             <div class="modal-header"><h5 class="modal-title">Edit User</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-            <div class="modal-body">${userFormFields({ u, departments, roles, managers, resorts })}</div>
+            <div class="modal-body">
+                ${reopen && reopen.type === 'edit' && reopen.userId === u.user_id && reopen.errors?.length ? html`<div class="alert alert-danger py-2">${raw(reopen.errors.map((e) => `${e}<br>`).join(''))}</div>` : ''}
+                ${userFormFields({ u, departments, roles, managers, resorts, values: reopen && reopen.type === 'edit' && reopen.userId === u.user_id ? reopen.values : undefined, isApprover: approverIds.has(u.user_id) })}
+            </div>
             <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Save Changes</button></div>
         </form></div></div>`
         )
         .map((r) => r.toString())
         .join('');
+
+    const reopenScript =
+        reopen && reopen.type
+            ? raw(`<script>document.addEventListener('DOMContentLoaded', function () {
+    var el = document.getElementById(${reopen.type === 'edit' ? `'editUserModal${reopen.userId}'` : `'addUserModal'`});
+    if (el && window.bootstrap) new bootstrap.Modal(el).show();
+});</script>`)
+            : '';
 
     const queryString = new URLSearchParams({
         search,
@@ -313,12 +357,16 @@ ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `
     <thead><tr><th>Employee ID</th><th>Name</th><th>Username</th><th>Resort</th><th>Department</th><th>Designation</th><th>Role</th><th>Manager</th><th>Status</th><th>Actions</th></tr></thead>
     <tbody>${raw(rowsHtml || '<tr><td colspan="10" class="text-center text-muted py-4">No users found.</td></tr>')}</tbody>
 </table></div></div>
-<div class="modal fade" id="addUserModal" tabindex="-1"><div class="modal-dialog modal-dialog-scrollable"><form method="post" class="modal-content">
+<div class="modal fade" id="addUserModal" tabindex="-1"><div class="modal-dialog modal-dialog-scrollable"><form method="post" enctype="multipart/form-data" class="modal-content">
     ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="add">
     <div class="modal-header"><h5 class="modal-title">Add User</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-    <div class="modal-body">${userFormFields({ u: null, departments, roles, managers, resorts })}</div>
+    <div class="modal-body">
+        ${reopen && reopen.type === 'add' && reopen.errors?.length ? html`<div class="alert alert-danger py-2">${raw(reopen.errors.map((e) => `${e}<br>`).join(''))}</div>` : ''}
+        ${userFormFields({ u: null, departments, roles, managers, resorts, values: reopen && reopen.type === 'add' ? reopen.values : undefined })}
+    </div>
     <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Create User</button></div>
-</form></div></div>`;
+</form></div></div>
+${reopenScript}`;
 }
 
 function usersToCsv(users) {
@@ -515,6 +563,8 @@ export function registerAdminRoutes(router) {
             const phone = (form.phone || '').trim() || null;
             const status = form.status === 'inactive' ? 'inactive' : 'active';
             const userId = Number(form.user_id) || 0;
+            const photoFile = form.profile_picture;
+            const hasPhoto = photoFile && typeof photoFile.arrayBuffer === 'function' && photoFile.size > 0;
 
             const errors = [];
             if (!employeeId || !fullName || !username || !roleId) errors.push('Employee ID, Full Name, Username, and Role are required.');
@@ -526,28 +576,40 @@ export function registerAdminRoutes(router) {
                 try {
                     if (action === 'add') {
                         const hash = await hashPassword(password);
-                        unwrap(
-                            await db().from('users').insert({
-                                employee_id: employeeId, full_name: fullName, username, password: hash,
-                                resort_id: resortId, department_id: departmentId, designation, role_id: roleId, reporting_manager_id: managerId,
-                                email, phone, status,
-                            })
+                        const inserted = unwrap(
+                            await db()
+                                .from('users')
+                                .insert({
+                                    employee_id: employeeId, full_name: fullName, username, password: hash,
+                                    resort_id: resortId, department_id: departmentId, designation, role_id: roleId, reporting_manager_id: managerId,
+                                    email, phone, status,
+                                })
+                                .select('user_id')
                         );
+                        const newUserId = inserted[0]?.user_id;
+                        if (hasPhoto && newUserId) {
+                            const url = await uploadProfilePicture(photoFile, newUserId);
+                            unwrap(await db().from('users').update({ profile_picture: url }).eq('user_id', newUserId));
+                        }
                         await logActivity(user.user_id, 'Created user', username, clientIp(request));
                         return redirectTo('/admin/users', { cookies: [auth.setCookie, flashSetCookie('success', `User '${fullName}' created successfully.`)].filter(Boolean) });
                     }
                     const update = { employee_id: employeeId, full_name: fullName, username, resort_id: resortId, department_id: departmentId, designation, role_id: roleId, reporting_manager_id: managerId, email, phone, status };
                     if (password) update.password = await hashPassword(password);
+                    if (hasPhoto) update.profile_picture = await uploadProfilePicture(photoFile, userId);
                     unwrap(await db().from('users').update(update).eq('user_id', userId));
                     await logActivity(user.user_id, 'Updated user', username, clientIp(request));
                     return redirectTo('/admin/users', { cookies: [auth.setCookie, flashSetCookie('success', `User '${fullName}' updated successfully.`)].filter(Boolean) });
                 } catch (err) {
-                    errors.push(err.message?.includes('duplicate') ? 'Employee ID or Username already exists.' : 'Database error while saving user.');
+                    errors.push(err.message?.includes('duplicate') ? 'Employee ID or Username already exists.' : `Database error while saving user: ${err.message}`);
                 }
             }
-            const url = new URL(request.url);
-            const body = await usersPageBody({ search: '', deptFilter: 0, roleFilter: 0, resortFilter: 0, statusFilter: '', sortKey: '', sortDir: '', csrfToken: user.csrf, errors });
-            return renderShellForRequest({ request, auth, pageTitle: 'User Management', path: url.pathname, bodyHtml: body });
+            const body = await usersPageBody({
+                search: '', deptFilter: 0, roleFilter: 0, resortFilter: 0, statusFilter: '', sortKey: '', sortDir: '',
+                csrfToken: user.csrf, errors: [],
+                reopen: { type: action, userId, values: form, errors },
+            });
+            return renderShellForRequest({ request, auth, pageTitle: 'User Management', path: '/admin/users', bodyHtml: body });
         }
 
         if (action === 'delete') {
