@@ -369,6 +369,11 @@ async function usersPageBody({ search, deptFilter, roleFilter, resortFilter, sta
         }
     }
 
+    // Built as two separate strings, not interleaved: a <div class="modal">
+    // can never be a direct child of <tbody> - browsers "foster parent"
+    // (silently hoist) invalid table content out of the table entirely,
+    // scrambling the DOM. Every per-row modal is rendered together, after
+    // the table closes, instead.
     const rowsHtml = users
         .map(
             (u) => html`<tr>
@@ -393,8 +398,14 @@ async function usersPageBody({ search, deptFilter, roleFilter, resortFilter, sta
                     <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
                 </form>
             </td>
-        </tr>
-        <div class="modal fade" id="editUserModal${u.user_id}" tabindex="-1"><div class="modal-dialog modal-dialog-scrollable"><form method="post" enctype="multipart/form-data" class="modal-content">
+        </tr>`
+        )
+        .map((r) => r.toString())
+        .join('');
+
+    const editModalsHtml = users
+        .map(
+            (u) => html`<div class="modal fade" id="editUserModal${u.user_id}" tabindex="-1"><div class="modal-dialog modal-dialog-scrollable"><form method="post" enctype="multipart/form-data" class="modal-content">
             ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="edit"><input type="hidden" name="user_id" value="${u.user_id}">
             <div class="modal-header"><h5 class="modal-title">Edit User</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
             <div class="modal-body">
@@ -465,6 +476,7 @@ ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `
     <thead><tr><th>Employee ID</th><th>Name</th><th>Username</th><th>Resort</th><th>Department</th><th>Designation</th><th>Role</th><th>Manager</th><th>Status</th><th>Actions</th></tr></thead>
     <tbody>${raw(rowsHtml || '<tr><td colspan="10" class="text-center text-muted py-4">No users found.</td></tr>')}</tbody>
 </table></div></div>
+${raw(editModalsHtml)}
 <div class="modal fade" id="addUserModal" tabindex="-1"><div class="modal-dialog modal-dialog-scrollable"><form method="post" enctype="multipart/form-data" class="modal-content">
     ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="add">
     <div class="modal-header"><h5 class="modal-title">Add User</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
@@ -530,6 +542,10 @@ async function schedulesPageBody(csrfToken) {
     );
     const routes = unwrap(await db().from('ferry_routes').select('*').eq('status', 'active').order('route_name'));
 
+    // Rows and per-row modals are built as separate strings, not
+    // interleaved - a <div class="modal"> can never be a direct child of
+    // <tbody> (browsers foster-parent/hoist invalid table content out of
+    // the table entirely, scrambling the DOM).
     const rowsHtml = schedules
         .map(
             (s) => html`<tr>
@@ -544,8 +560,14 @@ async function schedulesPageBody(csrfToken) {
                 <form method="post" class="d-inline">${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="toggle_status"><input type="hidden" name="schedule_id" value="${s.schedule_id}"><button class="btn btn-sm btn-outline-secondary"><i class="bi bi-toggle2-on"></i></button></form>
                 <form method="post" class="d-inline" data-confirm="Delete this schedule?">${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="delete"><input type="hidden" name="schedule_id" value="${s.schedule_id}"><button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
             </td>
-        </tr>
-        <div class="modal fade" id="editScheduleModal${s.schedule_id}" tabindex="-1"><div class="modal-dialog modal-dialog-scrollable"><form method="post" class="modal-content">
+        </tr>`
+        )
+        .map((r) => r.toString())
+        .join('');
+
+    const editModalsHtml = schedules
+        .map(
+            (s) => html`<div class="modal fade" id="editScheduleModal${s.schedule_id}" tabindex="-1"><div class="modal-dialog modal-dialog-scrollable"><form method="post" class="modal-content">
             ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="edit"><input type="hidden" name="schedule_id" value="${s.schedule_id}">
             <div class="modal-header"><h5 class="modal-title">Edit Schedule</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
             <div class="modal-body">${scheduleFormFields({ sched: s, routes })}</div>
@@ -564,6 +586,7 @@ async function schedulesPageBody(csrfToken) {
     <thead><tr><th>Route</th><th>Departure</th><th>Capacity</th><th>Weekdays</th><th>Holiday</th><th>Status</th><th>Notes</th><th>Actions</th></tr></thead>
     <tbody>${raw(rowsHtml || '<tr><td colspan="8" class="text-center text-muted py-4">No schedules configured yet.</td></tr>')}</tbody>
 </table></div></div>
+${raw(editModalsHtml)}
 <div class="modal fade" id="addScheduleModal" tabindex="-1"><div class="modal-dialog modal-dialog-scrollable"><form method="post" class="modal-content">
     ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="add">
     <div class="modal-header"><h5 class="modal-title">Create Schedule</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
