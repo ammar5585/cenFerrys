@@ -184,6 +184,19 @@ body {
 }
 .btn-icon:hover { background-color: rgba(0,0,0,0.06); }
 
+/* The user-menu button also needs to fit an avatar circle plus two
+   lines of name/role text (at md+ widths) - .btn-icon's fixed 40x40
+   circle sizing only fits a bare icon, so the text was overflowing
+   outside the button's bounds instead of the button growing to fit
+   it. Auto width/height and a pill shape instead of a fixed circle. */
+.btn-icon.btn-user-menu {
+    width: auto;
+    height: auto;
+    min-height: 40px;
+    border-radius: 999px;
+    padding: 0.25rem 0.6rem 0.25rem 0.25rem;
+}
+
 .avatar-circle {
     width: 32px;
     height: 32px;

@@ -49,7 +49,7 @@ export function renderNavbar({ user, pageTitle, unreadCount, notifications }) {
         </div>
 
         <div class="dropdown">
-            <button class="btn btn-icon d-flex align-items-center gap-2" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="User menu for ${user.full_name}">
+            <button class="btn btn-icon btn-user-menu d-flex align-items-center gap-2" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="User menu for ${user.full_name}">
                 <span class="avatar-circle">${user.full_name.charAt(0).toUpperCase()}</span>
                 <span class="topbar-user-info d-none d-md-flex">
                     <span class="user-name">${user.full_name}</span>
