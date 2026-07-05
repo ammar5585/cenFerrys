@@ -237,7 +237,12 @@ const BOOKING_PAGE_SCRIPT = `
                     container.innerHTML = '<div class="col-12 text-danger small">Your session has expired. Please <a href="' + window.BASE_URL + 'auth/login">log in again</a>.</div>';
                     return;
                 }
-                if (!res.success || !res.schedules || res.schedules.length === 0) {
+                if (!res.success) {
+                    container.innerHTML = '<div class="col-12 text-danger small">' + (res.message || 'Could not load ferry schedules.') +
+                        ' <a href="#" class="retry-schedules">Retry</a></div>';
+                    return;
+                }
+                if (!res.schedules || res.schedules.length === 0) {
                     container.innerHTML = '<div class="col-12 text-muted small">No ferries operate on the selected date/direction.</div>';
                     return;
                 }
@@ -264,9 +269,17 @@ const BOOKING_PAGE_SCRIPT = `
                 });
             })
             .catch(function () {
-                container.innerHTML = '<div class="col-12 text-danger small">Unable to load ferry schedules. Please refresh and try again.</div>';
+                container.innerHTML = '<div class="col-12 text-danger small">Unable to reach the server. Check your connection and ' +
+                    '<a href="#" class="retry-schedules">retry</a>.</div>';
             });
     }
+
+    container.addEventListener('click', function (e) {
+        if (e.target.closest('.retry-schedules')) {
+            e.preventDefault();
+            loadSchedules();
+        }
+    });
 
     dateInput.addEventListener('change', loadSchedules);
     directionSelect.addEventListener('change', loadSchedules);

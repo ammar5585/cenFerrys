@@ -24,36 +24,45 @@ export function registerAjaxRoutes(router) {
             return jsonResponse({ success: false, schedules: [] });
         }
 
-        const weekday = WEEKDAY_ABBR[new Date(`${date}T00:00:00Z`).getUTCDay()];
+        // Any unexpected failure below (a transient DB/RPC error, etc.) must
+        // still come back as valid JSON - letting it bubble up to the
+        // catch-all handler would return an HTML error page instead, which
+        // breaks the client's response.json() call and shows a useless
+        // "unable to load" message with no indication of what went wrong.
+        try {
+            const weekday = WEEKDAY_ABBR[new Date(`${date}T00:00:00Z`).getUTCDay()];
 
-        const routeRows = unwrap(
-            await db().from('ferry_routes').select('route_id').eq('direction', direction).limit(1)
-        );
-        if (!routeRows.length) return jsonResponse({ success: true, schedules: [] });
+            const routeRows = unwrap(
+                await db().from('ferry_routes').select('route_id').eq('direction', direction).limit(1)
+            );
+            if (!routeRows.length) return jsonResponse({ success: true, schedules: [] });
 
-        const schedules = unwrap(
-            await db()
-                .from('ferry_schedule')
-                .select('schedule_id, departure_time, capacity, weekdays')
-                .eq('route_id', routeRows[0].route_id)
-                .eq('status', 'active')
-                .order('departure_time', { ascending: true })
-        );
-        const matching = schedules.filter((s) => s.weekdays.includes(weekday));
+            const schedules = unwrap(
+                await db()
+                    .from('ferry_schedule')
+                    .select('schedule_id, departure_time, capacity, weekdays')
+                    .eq('route_id', routeRows[0].route_id)
+                    .eq('status', 'active')
+                    .order('departure_time', { ascending: true })
+            );
+            const matching = schedules.filter((s) => Array.isArray(s.weekdays) && s.weekdays.includes(weekday));
 
-        const result = [];
-        for (const s of matching) {
-            const { capacity, booked, remaining } = await getRemainingSeats(s.schedule_id, date);
-            result.push({
-                schedule_id: s.schedule_id,
-                time_label: formatTime(s.departure_time),
-                capacity,
-                booked,
-                remaining,
-            });
+            const result = [];
+            for (const s of matching) {
+                const { capacity, booked, remaining } = await getRemainingSeats(s.schedule_id, date);
+                result.push({
+                    schedule_id: s.schedule_id,
+                    time_label: formatTime(s.departure_time),
+                    capacity,
+                    booked,
+                    remaining,
+                });
+            }
+
+            return jsonResponse({ success: true, schedules: result });
+        } catch (err) {
+            return jsonResponse({ success: false, message: `Could not load ferry schedules: ${err.message}`, schedules: [] });
         }
-
-        return jsonResponse({ success: true, schedules: result });
     });
 
     // POST - mutates state, so CSRF-checked (matches main.js's postJSON, which
