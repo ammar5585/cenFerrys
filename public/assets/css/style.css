@@ -32,8 +32,15 @@ body {
 }
 
 /* ---------------- Layout ---------------- */
+/* Not a flex container: .sidebar is position:fixed (out of normal flow
+   entirely), so the only real in-flow children here are the topbar,
+   optional banner, and main content - plain block stacking with each
+   one's own margin-left to clear the fixed sidebar is all that's
+   needed. A flex row here was a latent bug: with the sidebar excluded
+   from flex layout, topbar (no flex-grow) would shrink to its content
+   width instead of spanning full width, leaving a large blank gap
+   beside it instead of stacking normally above the main content. */
 .app-wrapper {
-    display: flex;
     min-height: 100vh;
 }
 
@@ -109,9 +116,7 @@ body {
 
 .main-content {
     margin-left: calc(var(--sidebar-width) + 1.5rem);
-    flex-grow: 1;
     padding: 1.5rem 1.5rem 1.5rem 0.75rem;
-    width: 100%;
 }
 
 .topbar {

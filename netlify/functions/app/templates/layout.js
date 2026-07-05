@@ -162,7 +162,7 @@ ${footerHtml({ companyName, footerText, copyrightText })}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
     window.BASE_URL = "/";
-    window.CSRF_TOKEN = ${JSON.stringify(csrfToken)};
+    window.CSRF_TOKEN = ${raw(JSON.stringify(csrfToken))};
 </script>
 <script src="/assets/js/main.js"></script>
 <script>
