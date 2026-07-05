@@ -16,8 +16,9 @@
     --theme-font-size: 16px;
     /* Page background behind the floating sidebar/cards - not admin
        configurable (unlike the four theme-* variables above), just a
-       soft neutral backdrop that suits any theme color on top of it. */
-    --page-bg: #eef2f9;
+       soft neutral backdrop that suits any theme color on top of it.
+       Matches the pale blue-gray wash from the reference dashboard. */
+    --page-bg: #dde6f4;
 }
 
 body {
@@ -226,6 +227,10 @@ body {
     font-size: 1.15rem;
     color: #fff;
     flex-shrink: 0;
+    /* Uniform dark badge by default, matching the reference dashboard's
+       flat black icon circles - a bg-grad-* class on the same element
+       still overrides this where a dashboard wants color-coding. */
+    background: var(--theme-primary-color);
 }
 
 .bg-grad-blue    { background: linear-gradient(135deg, #4facfe, #00f2fe); }

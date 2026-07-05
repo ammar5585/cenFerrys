@@ -34,10 +34,10 @@ async function readFormBody(request) {
 // ---------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------
-function statCard({ value, label, icon, gradClass }) {
+function statCard({ value, label, icon }) {
     return html`<div class="col-sm-6 col-lg-3">
     <div class="stat-card d-flex align-items-center gap-3">
-        <div class="stat-icon-badge ${gradClass}"><i class="bi ${icon}"></i></div>
+        <div class="stat-icon-badge"><i class="bi ${icon}"></i></div>
         <div><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div>
     </div>
 </div>`;
@@ -162,14 +162,14 @@ async function adminDashboardBody(fullName) {
 <div class="dash-greeting">${greeting()}, ${fullName.split(' ')[0]}!</div>
 <p class="dash-greeting-sub mb-4">Here's what's happening across the portal today.</p>
 <div class="row g-3 mb-4">
-    ${statCard({ value: totalStaff, label: 'Total Staff', icon: 'bi-people', gradClass: 'bg-grad-blue' })}
-    ${statCard({ value: todaysBookings, label: "Today's Bookings", icon: 'bi-journal-plus', gradClass: 'bg-grad-purple' })}
-    ${statCard({ value: pendingApprovals, label: 'Pending Approvals', icon: 'bi-hourglass-split', gradClass: 'bg-grad-orange' })}
-    ${statCard({ value: statusCounts.Approved, label: 'Approved', icon: 'bi-check-circle', gradClass: 'bg-grad-green' })}
-    ${statCard({ value: statusCounts.Rejected, label: 'Rejected', icon: 'bi-x-circle', gradClass: 'bg-grad-red' })}
-    ${statCard({ value: statusCounts.Cancelled, label: 'Cancelled', icon: 'bi-slash-circle', gradClass: 'bg-grad-dark' })}
-    ${statCard({ value: todaysTrips.length, label: "Today's Ferry Trips", icon: 'bi-water', gradClass: 'bg-grad-blue' })}
-    ${statCard({ value: availableSeatsTotal, label: 'Available Seats Today', icon: 'bi-person-check', gradClass: 'bg-grad-green' })}
+    ${statCard({ value: totalStaff, label: 'Total Staff', icon: 'bi-people' })}
+    ${statCard({ value: todaysBookings, label: "Today's Bookings", icon: 'bi-journal-plus' })}
+    ${statCard({ value: pendingApprovals, label: 'Pending Approvals', icon: 'bi-hourglass-split' })}
+    ${statCard({ value: statusCounts.Approved, label: 'Approved', icon: 'bi-check-circle' })}
+    ${statCard({ value: statusCounts.Rejected, label: 'Rejected', icon: 'bi-x-circle' })}
+    ${statCard({ value: statusCounts.Cancelled, label: 'Cancelled', icon: 'bi-slash-circle' })}
+    ${statCard({ value: todaysTrips.length, label: "Today's Ferry Trips", icon: 'bi-water' })}
+    ${statCard({ value: availableSeatsTotal, label: 'Available Seats Today', icon: 'bi-person-check' })}
 </div>
 <div class="row g-3 mb-3">
     <div class="col-lg-7">

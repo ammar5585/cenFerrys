@@ -95,9 +95,9 @@ async function managerDashboardBody(user) {
 ${isApprover
     ? html`
 <div class="row g-3 mb-4">
-    <div class="col-sm-4"><div class="stat-card d-flex align-items-center gap-3"><div class="stat-icon-badge bg-grad-orange"><i class="bi bi-hourglass-split"></i></div><div><div class="stat-value">${pendingCount}</div><div class="stat-label">Pending Requests</div></div></div></div>
-    <div class="col-sm-4"><div class="stat-card d-flex align-items-center gap-3"><div class="stat-icon-badge bg-grad-green"><i class="bi bi-check-circle"></i></div><div><div class="stat-value">${approvedCount}</div><div class="stat-label">Approved by Me</div></div></div></div>
-    <div class="col-sm-4"><div class="stat-card d-flex align-items-center gap-3"><div class="stat-icon-badge bg-grad-red"><i class="bi bi-x-circle"></i></div><div><div class="stat-value">${rejectedCount}</div><div class="stat-label">Rejected by Me</div></div></div></div>
+    <div class="col-sm-4"><div class="stat-card d-flex align-items-center gap-3"><div class="stat-icon-badge"><i class="bi bi-hourglass-split"></i></div><div><div class="stat-value">${pendingCount}</div><div class="stat-label">Pending Requests</div></div></div></div>
+    <div class="col-sm-4"><div class="stat-card d-flex align-items-center gap-3"><div class="stat-icon-badge"><i class="bi bi-check-circle"></i></div><div><div class="stat-value">${approvedCount}</div><div class="stat-label">Approved by Me</div></div></div></div>
+    <div class="col-sm-4"><div class="stat-card d-flex align-items-center gap-3"><div class="stat-icon-badge"><i class="bi bi-x-circle"></i></div><div><div class="stat-value">${rejectedCount}</div><div class="stat-label">Rejected by Me</div></div></div></div>
 </div>
 <div class="card shadow-sm">
     <div class="card-header bg-white d-flex justify-content-between"><span><i class="bi bi-hourglass-split"></i> Requests Awaiting Your Approval</span><a href="/manager/approvals" class="small">View all</a></div>
