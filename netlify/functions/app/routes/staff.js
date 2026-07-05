@@ -14,7 +14,7 @@ import { logActivity, clientIp } from '../activity.js';
 import { uploadProfilePicture } from '../uploads.js';
 import { redirectTo, htmlResponse, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
-import { formatDate, formatDateTime, formatTime, statusBadgeClass } from '../format.js';
+import { formatDate, formatDateTime, formatTime, statusBadgeClass, greeting } from '../format.js';
 import { ROLE_STAFF, ROLE_ADMIN } from '../session.js';
 
 async function readFormBody(request) {
@@ -27,7 +27,7 @@ async function readFormBody(request) {
 // ---------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------
-async function staffDashboardBody(userId, csrfToken) {
+async function staffDashboardBody(userId, fullName, csrfToken) {
     const upcoming = unwrap(
         await db()
             .from('bookings')
@@ -47,43 +47,53 @@ async function staffDashboardBody(userId, csrfToken) {
             .limit(5)
     );
 
+    const upcomingHtml = activeUpcoming
+        .map(
+            (b) => html`<li class="dash-todo-item">
+            <span class="dash-todo-dot bg-${b.booking_status.badge_color}"></span>
+            <div class="dash-todo-body">
+                <div class="dash-todo-title">${formatDate(b.travel_date)} at ${formatTime(b.ferry_schedule.departure_time)} &middot; ${b.direction}</div>
+                <div class="dash-todo-meta">${b.purpose} &middot; <span class="badge ${statusBadgeClass(b.booking_status.badge_color)}">${b.booking_status.status_name}</span></div>
+            </div>
+            <form method="post" action="/staff/my_bookings" data-confirm="Cancel this booking?">
+                ${raw(csrfField(csrfToken))}
+                <input type="hidden" name="action" value="cancel">
+                <input type="hidden" name="booking_id" value="${b.booking_id}">
+                <button class="btn btn-sm btn-outline-danger">Cancel</button>
+            </form>
+        </li>`
+        )
+        .map((r) => r.toString())
+        .join('');
+
+    const historyHtml = history
+        .map(
+            (b) => html`<li class="dash-activity-item">
+            <span class="avatar-circle">${b.direction.charAt(0)}</span>
+            <div class="dash-activity-body">
+                <div class="dash-activity-title">${b.direction}</div>
+                <div class="dash-activity-detail">${formatDate(b.travel_date)} at ${formatTime(b.ferry_schedule.departure_time)}</div>
+            </div>
+            <span class="badge ${statusBadgeClass(b.booking_status.badge_color)}">${b.booking_status.status_name}</span>
+        </li>`
+        )
+        .map((r) => r.toString())
+        .join('');
+
     return html`
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h5 class="mb-0">Welcome</h5>
+<div class="d-flex justify-content-between align-items-center mb-1">
+    <div>
+        <div class="dash-greeting">${greeting()}, ${fullName.split(' ')[0]}!</div>
+        <p class="dash-greeting-sub mb-0">Here's your ferry booking overview.</p>
+    </div>
     <a href="/staff/book" class="btn btn-primary"><i class="bi bi-plus-circle"></i> New Booking</a>
 </div>
-<div class="row g-3">
+<div class="row g-3 mt-1">
     <div class="col-lg-7">
         <div class="card shadow-sm mb-3">
             <div class="card-header bg-white"><i class="bi bi-calendar-check"></i> Upcoming Bookings</div>
-            <div class="table-responsive">
-                <table class="table table-hover mb-0 align-middle">
-                    <thead><tr><th>Date</th><th>Time</th><th>Direction</th><th>Purpose</th><th>Status</th><th></th></tr></thead>
-                    <tbody>
-                    ${raw(
-                        activeUpcoming
-                            .map(
-                                (b) => html`<tr>
-                                <td>${formatDate(b.travel_date)}</td>
-                                <td>${formatTime(b.ferry_schedule.departure_time)}</td>
-                                <td>${b.direction}</td>
-                                <td>${b.purpose}</td>
-                                <td><span class="badge ${statusBadgeClass(b.booking_status.badge_color)}">${b.booking_status.status_name}</span></td>
-                                <td>
-                                    <form method="post" action="/staff/my_bookings" data-confirm="Cancel this booking?">
-                                        ${raw(csrfField(csrfToken))}
-                                        <input type="hidden" name="action" value="cancel">
-                                        <input type="hidden" name="booking_id" value="${b.booking_id}">
-                                        <button class="btn btn-sm btn-outline-danger">Cancel</button>
-                                    </form>
-                                </td>
-                            </tr>`
-                            )
-                            .map((r) => r.toString())
-                            .join('') || '<tr><td colspan="6" class="text-center text-muted py-3">No upcoming bookings. <a href="/staff/book">Book a ferry</a>.</td></tr>'
-                    )}
-                    </tbody>
-                </table>
+            <div class="card-body pt-2">
+                <ul class="dash-todo-list">${raw(upcomingHtml || '<li class="text-muted small py-2">No upcoming bookings. <a href="/staff/book">Book a ferry</a>.</li>')}</ul>
             </div>
         </div>
         <div class="card shadow-sm">
@@ -91,31 +101,15 @@ async function staffDashboardBody(userId, csrfToken) {
                 <span><i class="bi bi-journal-text"></i> Recent Booking History</span>
                 <a href="/staff/my_bookings" class="small">View all</a>
             </div>
-            <div class="table-responsive">
-                <table class="table table-hover mb-0 align-middle">
-                    <thead><tr><th>Date</th><th>Direction</th><th>Status</th></tr></thead>
-                    <tbody>
-                    ${raw(
-                        history
-                            .map(
-                                (b) => html`<tr>
-                                <td>${formatDate(b.travel_date)}</td>
-                                <td>${b.direction}</td>
-                                <td><span class="badge ${statusBadgeClass(b.booking_status.badge_color)}">${b.booking_status.status_name}</span></td>
-                            </tr>`
-                            )
-                            .map((r) => r.toString())
-                            .join('')
-                    )}
-                    </tbody>
-                </table>
+            <div class="card-body pt-2">
+                <ul class="dash-todo-list">${raw(historyHtml || '<li class="text-muted small py-2">No bookings yet.</li>')}</ul>
             </div>
         </div>
     </div>
     <div class="col-lg-5">
         <div class="card shadow-sm">
             <div class="card-body text-center">
-                <i class="bi bi-water" style="font-size:2rem;color:#0d6efd;"></i>
+                <i class="bi bi-water" style="font-size:2rem;color:var(--theme-primary-color);"></i>
                 <h6 class="mt-2">Need a ferry transfer?</h6>
                 <p class="text-muted small">Submit a booking request - it will be routed automatically for approval.</p>
                 <a href="/staff/book" class="btn btn-primary w-100">Quick Booking</a>
@@ -413,7 +407,7 @@ export function registerStaffRoutes(router) {
     router.get('/staff/dashboard', async (request) => {
         const auth = await requireRole(request, [ROLE_STAFF]);
         if (auth.response) return auth.response;
-        const body = await staffDashboardBody(auth.user.user_id, auth.user.csrf);
+        const body = await staffDashboardBody(auth.user.user_id, auth.user.full_name, auth.user.csrf);
         return renderShellForRequest({ request, auth, pageTitle: 'My Dashboard', path: '/staff/dashboard', bodyHtml: body });
     });
 

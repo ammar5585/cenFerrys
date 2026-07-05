@@ -7,12 +7,12 @@ import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { getSetting } from '../settings.js';
 import { csvResponse, htmlResponse, notFound } from '../response.js';
-import { formatDate, formatTime } from '../format.js';
+import { formatDate, formatTime, greeting } from '../format.js';
 import { ROLE_TRANSPORT, ROLE_ADMIN } from '../session.js';
 
 const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-async function transportDashboardBody() {
+async function transportDashboardBody(fullName) {
     const today = new Date().toISOString().slice(0, 10);
     const schedules = await activeSchedulesForDate(today);
 
@@ -46,10 +46,11 @@ async function transportDashboardBody() {
         .join('');
 
     return html`
-<h5 class="mb-3">Welcome</h5>
+<div class="dash-greeting">${greeting()}, ${fullName.split(' ')[0]}!</div>
+<p class="dash-greeting-sub mb-4">Here's today's ferry schedule.</p>
 <div class="row g-3 mb-4">
-    <div class="col-sm-6 col-lg-3"><div class="stat-card bg-grad-blue d-flex justify-content-between align-items-center"><div><div class="stat-value">${tripRows.length}</div><div class="stat-label">Today's Ferry Trips</div></div><i class="bi bi-water"></i></div></div>
-    <div class="col-sm-6 col-lg-3"><div class="stat-card bg-grad-green d-flex justify-content-between align-items-center"><div><div class="stat-value">${totalPassengers}</div><div class="stat-label">Total Passengers Today</div></div><i class="bi bi-people"></i></div></div>
+    <div class="col-sm-6 col-lg-3"><div class="stat-card d-flex align-items-center gap-3"><div class="stat-icon-badge bg-grad-blue"><i class="bi bi-water"></i></div><div><div class="stat-value">${tripRows.length}</div><div class="stat-label">Today's Ferry Trips</div></div></div></div>
+    <div class="col-sm-6 col-lg-3"><div class="stat-card d-flex align-items-center gap-3"><div class="stat-icon-badge bg-grad-green"><i class="bi bi-people"></i></div><div><div class="stat-value">${totalPassengers}</div><div class="stat-label">Total Passengers Today</div></div></div></div>
 </div>
 <div class="card shadow-sm">
     <div class="card-header bg-white d-flex justify-content-between"><span><i class="bi bi-list-check"></i> Today's Departures</span><a href="/transport/passenger_list" class="small">View Passenger Lists</a></div>
@@ -90,7 +91,7 @@ export function registerTransportRoutes(router) {
     router.get('/transport/dashboard', async (request) => {
         const auth = await requireRole(request, [ROLE_TRANSPORT]);
         if (auth.response) return auth.response;
-        const body = await transportDashboardBody();
+        const body = await transportDashboardBody(auth.user.full_name);
         return renderShellForRequest({ request, auth, pageTitle: 'Transport Dashboard', path: '/transport/dashboard', bodyHtml: body });
     });
 

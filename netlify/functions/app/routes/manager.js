@@ -10,7 +10,7 @@ import { createNotification } from '../notifications.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
-import { formatDate, formatTime } from '../format.js';
+import { formatDate, formatTime, greeting } from '../format.js';
 import { ROLE_GM, ROLE_RM, ROLE_HR, ROLE_DEPT_MGR } from '../session.js';
 
 const APPROVER_ROLES = [ROLE_GM, ROLE_RM, ROLE_HR];
@@ -59,11 +59,13 @@ async function managerDashboardBody(user) {
         );
         pendingRequestsHtml = rows
             .map(
-                (r) => html`<tr>
-                <td>${r.users.full_name}</td><td>${formatDate(r.travel_date)}</td><td>${formatTime(r.ferry_schedule.departure_time)}</td>
-                <td>${r.direction}</td><td>${r.purpose}</td>
-                <td><span class="badge ${r.booking_status.badge_color === 'warning' ? 'bg-warning text-dark' : 'bg-secondary'}">${r.booking_status.status_name}</span></td>
-            </tr>`
+                (r) => html`<li class="dash-todo-item">
+                <span class="dash-todo-dot ${r.booking_status.badge_color === 'warning' ? 'bg-warning' : 'bg-secondary'}"></span>
+                <div class="dash-todo-body">
+                    <div class="dash-todo-title">${r.users.full_name} <small class="text-muted">${r.users.employee_id}</small></div>
+                    <div class="dash-todo-meta">${formatDate(r.travel_date)} at ${formatTime(r.ferry_schedule.departure_time)} &middot; ${r.direction} &middot; ${r.purpose}</div>
+                </div>
+            </li>`
             )
             .map((r) => r.toString())
             .join('');
@@ -88,20 +90,20 @@ async function managerDashboardBody(user) {
     }
 
     return html`
-<h5 class="mb-3">Welcome, ${user.full_name} <small class="text-muted">${user.role_name}</small></h5>
+<div class="dash-greeting">${greeting()}, ${user.full_name.split(' ')[0]}!</div>
+<p class="dash-greeting-sub mb-4">${user.role_name}</p>
 ${isApprover
     ? html`
 <div class="row g-3 mb-4">
-    <div class="col-sm-4"><div class="stat-card bg-grad-orange d-flex justify-content-between align-items-center"><div><div class="stat-value">${pendingCount}</div><div class="stat-label">Pending Requests</div></div><i class="bi bi-hourglass-split"></i></div></div>
-    <div class="col-sm-4"><div class="stat-card bg-grad-green d-flex justify-content-between align-items-center"><div><div class="stat-value">${approvedCount}</div><div class="stat-label">Approved by Me</div></div><i class="bi bi-check-circle"></i></div></div>
-    <div class="col-sm-4"><div class="stat-card bg-grad-red d-flex justify-content-between align-items-center"><div><div class="stat-value">${rejectedCount}</div><div class="stat-label">Rejected by Me</div></div><i class="bi bi-x-circle"></i></div></div>
+    <div class="col-sm-4"><div class="stat-card d-flex align-items-center gap-3"><div class="stat-icon-badge bg-grad-orange"><i class="bi bi-hourglass-split"></i></div><div><div class="stat-value">${pendingCount}</div><div class="stat-label">Pending Requests</div></div></div></div>
+    <div class="col-sm-4"><div class="stat-card d-flex align-items-center gap-3"><div class="stat-icon-badge bg-grad-green"><i class="bi bi-check-circle"></i></div><div><div class="stat-value">${approvedCount}</div><div class="stat-label">Approved by Me</div></div></div></div>
+    <div class="col-sm-4"><div class="stat-card d-flex align-items-center gap-3"><div class="stat-icon-badge bg-grad-red"><i class="bi bi-x-circle"></i></div><div><div class="stat-value">${rejectedCount}</div><div class="stat-label">Rejected by Me</div></div></div></div>
 </div>
 <div class="card shadow-sm">
     <div class="card-header bg-white d-flex justify-content-between"><span><i class="bi bi-hourglass-split"></i> Requests Awaiting Your Approval</span><a href="/manager/approvals" class="small">View all</a></div>
-    <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
-        <thead><tr><th>Employee</th><th>Date</th><th>Time</th><th>Direction</th><th>Purpose</th><th>Status</th></tr></thead>
-        <tbody>${raw(pendingRequestsHtml || '<tr><td colspan="6" class="text-center text-muted py-3">No pending requests.</td></tr>')}</tbody>
-    </table></div>
+    <div class="card-body pt-2">
+        <ul class="dash-todo-list">${raw(pendingRequestsHtml || '<li class="text-muted small py-2">No pending requests.</li>')}</ul>
+    </div>
 </div>`
     : ''}
 ${user.role_name === ROLE_DEPT_MGR

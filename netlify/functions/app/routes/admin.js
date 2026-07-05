@@ -13,7 +13,7 @@ import { logActivity, clientIp } from '../activity.js';
 import { uploadProfilePicture } from '../uploads.js';
 import { redirectTo, notFound, csvResponse } from '../response.js';
 import { flashSetCookie } from '../flash.js';
-import { formatTime } from '../format.js';
+import { formatTime, timeAgo, greeting } from '../format.js';
 import { ROLE_ADMIN } from '../session.js';
 
 const WEEKDAY_OPTIONS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -34,7 +34,16 @@ async function readFormBody(request) {
 // ---------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------
-async function adminDashboardBody() {
+function statCard({ value, label, icon, gradClass }) {
+    return html`<div class="col-sm-6 col-lg-3">
+    <div class="stat-card d-flex align-items-center gap-3">
+        <div class="stat-icon-badge ${gradClass}"><i class="bi ${icon}"></i></div>
+        <div><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div>
+    </div>
+</div>`;
+}
+
+async function adminDashboardBody(fullName) {
     const today = new Date().toISOString().slice(0, 10);
     const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
 
@@ -70,13 +79,47 @@ async function adminDashboardBody() {
         tripRows.push({ ...t, booked, remaining });
     }
 
+    // Requests currently unassigned (no viable department-hierarchy
+    // approver at any tier) - these are exactly the ones an executive
+    // needs to override, same rule notifyExecutives() in approval.js
+    // fires on.
+    const unassignedRows = unwrap(
+        await db()
+            .from('bookings')
+            .select('booking_id, travel_date, purpose, users!bookings_user_id_fkey(full_name, departments(department_name)), booking_status!inner(status_name)')
+            .is('current_approver_id', null)
+            .like('booking_status.status_name', 'Pending%', { foreignTable: 'booking_status' })
+            .order('travel_date', { ascending: true })
+            .limit(6)
+    );
+
     const recentActivity = unwrap(
         await db()
             .from('activity_logs')
             .select('action, details, created_at, users(full_name)')
             .order('created_at', { ascending: false })
-            .limit(10)
+            .limit(8)
     );
+
+    // Bookings submitted per day, last 7 days (inclusive of today) - feeds
+    // the Chart.js trend line below.
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+    const recentBookings = unwrap(
+        await db()
+            .from('bookings')
+            .select('created_at')
+            .gte('created_at', sevenDaysAgo.toISOString())
+    );
+    const dayLabels = [];
+    const dayCounts = [];
+    for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const key = d.toISOString().slice(0, 10);
+        dayLabels.push(d.toLocaleDateString(undefined, { weekday: 'short' }));
+        dayCounts.push(recentBookings.filter((b) => b.created_at.slice(0, 10) === key).length);
+    }
 
     const tripsHtml = tripRows
         .map(
@@ -88,26 +131,64 @@ async function adminDashboardBody() {
         .map((r) => r.toString())
         .join('');
 
+    const todoHtml = unassignedRows
+        .map(
+            (r) => html`<li class="dash-todo-item">
+            <span class="dash-todo-dot"></span>
+            <div class="dash-todo-body">
+                <div class="dash-todo-title">${r.users.full_name}</div>
+                <div class="dash-todo-meta">${r.users.departments?.department_name ?? '-'} &middot; ${r.purpose}</div>
+            </div>
+        </li>`
+        )
+        .map((r) => r.toString())
+        .join('');
+
     const activityHtml = recentActivity
         .map(
-            (log) => html`<li class="list-group-item">
-            <div class="d-flex justify-content-between"><strong>${log.action}</strong><small class="text-muted">${new Date(log.created_at).toLocaleString()}</small></div>
-            <div class="small text-muted">${log.users?.full_name ?? 'System'}${log.details ? ' — ' + log.details : ''}</div>
+            (log) => html`<li class="dash-activity-item">
+            <span class="avatar-circle">${(log.users?.full_name ?? 'S').charAt(0).toUpperCase()}</span>
+            <div class="dash-activity-body">
+                <div class="dash-activity-title">${log.action}</div>
+                <div class="dash-activity-detail">${log.users?.full_name ?? 'System'}${log.details ? ' — ' + log.details : ''}</div>
+            </div>
+            <span class="dash-activity-time">${timeAgo(log.created_at)}</span>
         </li>`
         )
         .map((r) => r.toString())
         .join('');
 
     return html`
+<div class="dash-greeting">${greeting()}, ${fullName.split(' ')[0]}!</div>
+<p class="dash-greeting-sub mb-4">Here's what's happening across the portal today.</p>
 <div class="row g-3 mb-4">
-    <div class="col-sm-6 col-lg-3"><div class="stat-card bg-grad-blue d-flex justify-content-between align-items-center"><div><div class="stat-value">${totalStaff}</div><div class="stat-label">Total Staff</div></div><i class="bi bi-people"></i></div></div>
-    <div class="col-sm-6 col-lg-3"><div class="stat-card bg-grad-purple d-flex justify-content-between align-items-center"><div><div class="stat-value">${todaysBookings}</div><div class="stat-label">Today's Bookings</div></div><i class="bi bi-journal-plus"></i></div></div>
-    <div class="col-sm-6 col-lg-3"><div class="stat-card bg-grad-orange d-flex justify-content-between align-items-center"><div><div class="stat-value">${pendingApprovals}</div><div class="stat-label">Pending Approvals</div></div><i class="bi bi-hourglass-split"></i></div></div>
-    <div class="col-sm-6 col-lg-3"><div class="stat-card bg-grad-green d-flex justify-content-between align-items-center"><div><div class="stat-value">${statusCounts.Approved}</div><div class="stat-label">Approved</div></div><i class="bi bi-check-circle"></i></div></div>
-    <div class="col-sm-6 col-lg-3"><div class="stat-card bg-grad-red d-flex justify-content-between align-items-center"><div><div class="stat-value">${statusCounts.Rejected}</div><div class="stat-label">Rejected</div></div><i class="bi bi-x-circle"></i></div></div>
-    <div class="col-sm-6 col-lg-3"><div class="stat-card bg-grad-dark d-flex justify-content-between align-items-center"><div><div class="stat-value">${statusCounts.Cancelled}</div><div class="stat-label">Cancelled</div></div><i class="bi bi-slash-circle"></i></div></div>
-    <div class="col-sm-6 col-lg-3"><div class="stat-card bg-grad-blue d-flex justify-content-between align-items-center"><div><div class="stat-value">${todaysTrips.length}</div><div class="stat-label">Today's Ferry Trips</div></div><i class="bi bi-water"></i></div></div>
-    <div class="col-sm-6 col-lg-3"><div class="stat-card bg-grad-green d-flex justify-content-between align-items-center"><div><div class="stat-value">${availableSeatsTotal}</div><div class="stat-label">Available Seats Today</div></div><i class="bi bi-person-check"></i></div></div>
+    ${statCard({ value: totalStaff, label: 'Total Staff', icon: 'bi-people', gradClass: 'bg-grad-blue' })}
+    ${statCard({ value: todaysBookings, label: "Today's Bookings", icon: 'bi-journal-plus', gradClass: 'bg-grad-purple' })}
+    ${statCard({ value: pendingApprovals, label: 'Pending Approvals', icon: 'bi-hourglass-split', gradClass: 'bg-grad-orange' })}
+    ${statCard({ value: statusCounts.Approved, label: 'Approved', icon: 'bi-check-circle', gradClass: 'bg-grad-green' })}
+    ${statCard({ value: statusCounts.Rejected, label: 'Rejected', icon: 'bi-x-circle', gradClass: 'bg-grad-red' })}
+    ${statCard({ value: statusCounts.Cancelled, label: 'Cancelled', icon: 'bi-slash-circle', gradClass: 'bg-grad-dark' })}
+    ${statCard({ value: todaysTrips.length, label: "Today's Ferry Trips", icon: 'bi-water', gradClass: 'bg-grad-blue' })}
+    ${statCard({ value: availableSeatsTotal, label: 'Available Seats Today', icon: 'bi-person-check', gradClass: 'bg-grad-green' })}
+</div>
+<div class="row g-3 mb-3">
+    <div class="col-lg-7">
+        <div class="card shadow-sm dash-chart-card h-100">
+            <div class="card-header bg-white"><i class="bi bi-graph-up"></i> Bookings &mdash; Last 7 Days</div>
+            <div class="card-body"><canvas id="bookingsTrendChart"></canvas></div>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white d-flex justify-content-between">
+                <span><i class="bi bi-exclamation-diamond"></i> Awaiting Executive Override</span>
+                ${unassignedRows.length ? html`<a href="/hr/overview" class="small">View all</a>` : ''}
+            </div>
+            <div class="card-body pt-2">
+                <ul class="dash-todo-list">${raw(todoHtml || '<li class="text-muted small py-2">Nothing needs an override right now.</li>')}</ul>
+            </div>
+        </div>
+    </div>
 </div>
 <div class="row g-3">
     <div class="col-lg-7">
@@ -127,10 +208,37 @@ async function adminDashboardBody() {
     <div class="col-lg-5">
         <div class="card shadow-sm">
             <div class="card-header bg-white"><i class="bi bi-clock-history"></i> Recent Activity</div>
-            <ul class="list-group list-group-flush">${raw(activityHtml || '<li class="list-group-item text-muted text-center">No recent activity.</li>')}</ul>
+            <div class="card-body pt-2">
+                <ul class="dash-todo-list">${raw(activityHtml || '<li class="text-muted small py-2">No recent activity.</li>')}</ul>
+            </div>
         </div>
     </div>
-</div>`;
+</div>
+<script>
+(function () {
+    var ctx = document.getElementById('bookingsTrendChart');
+    if (!ctx || !window.Chart) return;
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: ${raw(JSON.stringify(dayLabels))},
+            datasets: [{
+                label: 'Bookings submitted',
+                data: ${raw(JSON.stringify(dayCounts))},
+                borderColor: getComputedStyle(document.documentElement).getPropertyValue('--theme-primary-color').trim() || '#0d6efd',
+                backgroundColor: 'transparent',
+                tension: 0.35,
+                pointRadius: 3,
+            }],
+        },
+        options: {
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+        },
+    });
+})();
+</script>`;
 }
 
 // ---------------------------------------------------------------------
@@ -512,7 +620,7 @@ export function registerAdminRoutes(router) {
     router.get('/admin/dashboard', async (request) => {
         const auth = await requireRole(request, [ROLE_ADMIN]);
         if (auth.response) return auth.response;
-        const body = await adminDashboardBody();
+        const body = await adminDashboardBody(auth.user.full_name);
         return renderShellForRequest({ request, auth, pageTitle: 'Administrator Dashboard', path: '/admin/dashboard', bodyHtml: body });
     });
 
