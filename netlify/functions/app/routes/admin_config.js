@@ -4,7 +4,7 @@
 import { db, unwrap } from '../db.js';
 import { requireRole } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
-import { html, raw } from '../templates/html.js';
+import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
@@ -26,7 +26,19 @@ async function routesPageBody(csrfToken) {
     const rowsHtml = routes
         .map(
             (r) => html`<tr>
-            <td>${r.route_name}</td><td>${r.direction}</td>
+            <td colspan="2">
+                <form method="post" class="d-flex gap-2 align-items-center">
+                    ${raw(csrfField(csrfToken))}
+                    <input type="hidden" name="action" value="rename">
+                    <input type="hidden" name="route_id" value="${r.route_id}">
+                    <input type="text" name="route_name" class="form-control form-control-sm" value="${h(r.route_name)}" required>
+                    <select name="direction" class="form-select form-select-sm" required style="max-width:11rem;">
+                        <option value="Resort to City" ${r.direction === 'Resort to City' ? 'selected' : ''}>Resort to City</option>
+                        <option value="City to Resort" ${r.direction === 'City to Resort' ? 'selected' : ''}>City to Resort</option>
+                    </select>
+                    <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">Save</button>
+                </form>
+            </td>
             <td><span class="badge ${r.status === 'active' ? 'bg-success' : 'bg-secondary'}">${r.status.charAt(0).toUpperCase() + r.status.slice(1)}</span></td>
             <td class="text-nowrap">
                 <form method="post" class="d-inline">${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="toggle_status"><input type="hidden" name="route_id" value="${r.route_id}"><button class="btn btn-sm btn-outline-secondary"><i class="bi bi-toggle2-on"></i></button></form>
@@ -49,7 +61,7 @@ async function routesPageBody(csrfToken) {
         </form>
     </div></div></div>
     <div class="col-lg-7"><div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover mb-0 align-middle">
-        <thead><tr><th>Route Name</th><th>Direction</th><th>Status</th><th>Actions</th></tr></thead>
+        <thead><tr><th colspan="2">Route Name / Direction</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody>${raw(rowsHtml)}</tbody>
     </table></div></div></div>
 </div>`;
@@ -105,6 +117,15 @@ export function registerAdminConfigRoutes(router) {
         if (form.action === 'add' && form.route_name?.trim() && ['Resort to City', 'City to Resort'].includes(form.direction)) {
             unwrap(await db().from('ferry_routes').insert({ route_name: form.route_name.trim(), direction: form.direction }));
             return redirectTo('/admin/routes', { cookies: [auth.setCookie, flashSetCookie('success', 'Route added.')].filter(Boolean) });
+        }
+        if (form.action === 'rename') {
+            const routeId = Number(form.route_id);
+            const routeName = (form.route_name || '').trim();
+            if (!routeId || !routeName || !['Resort to City', 'City to Resort'].includes(form.direction)) {
+                return redirectTo('/admin/routes', { cookies: [auth.setCookie, flashSetCookie('error', 'Route name and a valid direction are required.')].filter(Boolean) });
+            }
+            unwrap(await db().from('ferry_routes').update({ route_name: routeName, direction: form.direction }).eq('route_id', routeId));
+            return redirectTo('/admin/routes', { cookies: [auth.setCookie, flashSetCookie('success', 'Route updated.')].filter(Boolean) });
         }
         if (form.action === 'toggle_status') {
             const rows = unwrap(await db().from('ferry_routes').select('status').eq('route_id', Number(form.route_id)).limit(1));
