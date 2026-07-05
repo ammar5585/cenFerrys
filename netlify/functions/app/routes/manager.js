@@ -20,9 +20,8 @@ const LEVEL_BY_STATUS_NAME = {
     'Waiting GM Approval': 'General Manager',
     'Waiting RM Approval': 'Resident Manager',
     'Waiting HR Approval': 'HR Manager',
-    'Pending Department Manager Approval': 'Department Manager',
-    'Pending Assistant Manager Approval': 'Assistant Manager',
-    'Pending Supervisor Approval': 'Supervisor',
+    'Pending Department Manager Approval': 'Primary Approver (In Charge / Head of Department)',
+    'Pending Assistant Manager Approval': 'Secondary Approver (Assistant In Charge / Assistant Manager)',
     'Pending HR Approval': 'HR',
 };
 

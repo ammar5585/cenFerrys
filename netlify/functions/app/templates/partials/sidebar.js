@@ -24,6 +24,7 @@ export function renderSidebar(roleName, currentPath, isDeptApprover = false, com
             navLink('/admin/departments', 'bi-diagram-2', 'Departments', currentPath),
             navLink('/admin/schedules', 'bi-calendar3', 'Ferry Schedules', currentPath),
             navLink('/admin/routes', 'bi-signpost-split', 'Routes', currentPath),
+            navLink('/admin/directions', 'bi-arrow-left-right', 'Direction Management', currentPath),
             navLink('/admin/holidays', 'bi-calendar-x', 'Holidays', currentPath),
             navLink('/admin/manager_availability', 'bi-person-check', 'Manager Availability', currentPath),
             navLink('/admin/department_approval', 'bi-diagram-3', 'Department Approval Config', currentPath),
@@ -58,8 +59,8 @@ export function renderSidebar(roleName, currentPath, isDeptApprover = false, com
         // not just HR - see routes/hr_overview.js's widened role guard.
         links.push(navLink('/hr/overview', 'bi-globe', 'Executive Overview', currentPath));
     } else if (isDeptApprover) {
-        // A user assigned as a department's Manager/Assistant
-        // Manager/Supervisor tier, but holding some other RBAC role
+        // A user assigned as a department's Primary/Secondary Approver
+        // tier, but holding some other RBAC role
         // (e.g. Staff) - only /manager/approvals is role-open to them
         // today, so only link that (History/Availability/Reports stay
         // GM/RM/HR-gated and would 403 otherwise).

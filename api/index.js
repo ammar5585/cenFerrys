@@ -22,6 +22,7 @@ import { registerTransportRoutes } from '../netlify/functions/app/routes/transpo
 import { registerAdminRoutes } from '../netlify/functions/app/routes/admin.js';
 import { registerAdminBookingsRoutes } from '../netlify/functions/app/routes/admin_bookings.js';
 import { registerAdminConfigRoutes } from '../netlify/functions/app/routes/admin_config.js';
+import { registerAdminDirectionsRoutes } from '../netlify/functions/app/routes/admin_directions.js';
 import { registerAdminSettingsRoutes } from '../netlify/functions/app/routes/admin_settings.js';
 import { registerAdminBrandingRoutes } from '../netlify/functions/app/routes/admin_branding.js';
 import { registerAdminActivityLogRoutes } from '../netlify/functions/app/routes/admin_activity_logs.js';
@@ -46,6 +47,7 @@ registerTransportRoutes(router);
 registerAdminRoutes(router);
 registerAdminBookingsRoutes(router);
 registerAdminConfigRoutes(router);
+registerAdminDirectionsRoutes(router);
 registerAdminSettingsRoutes(router);
 registerAdminBrandingRoutes(router);
 registerAdminActivityLogRoutes(router);

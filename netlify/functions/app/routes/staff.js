@@ -131,9 +131,8 @@ function approvalWorkflowInfoHtml(workflowInfo) {
 <p class="mb-2"><i class="bi bi-info-circle"></i> Your request will follow your department's approval workflow.</p>
 <p class="mb-1 fw-semibold">Approval Hierarchy</p>
 <ul class="ps-3 mb-2">
-    <li>Department Manager</li>
-    <li>Assistant Manager (if Department Manager is unavailable)</li>
-    <li>Supervisor (if both Department Manager and Assistant Manager are unavailable)</li>
+    <li>Primary Approver (In Charge / Head of Department)</li>
+    <li>Secondary Approver (Assistant In Charge / Assistant Manager) - if the Primary Approver is unavailable</li>
 </ul>
 <p class="mb-1 fw-semibold">Executive Override</p>
 <p class="mb-1">At any stage of the approval process, the following executives may review and approve or reject your request when necessary:</p>

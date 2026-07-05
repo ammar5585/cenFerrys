@@ -87,11 +87,11 @@ async function parseAndValidateCsv(rawText) {
     // anywhere, so a department/resort reassignment can warn (non-blocking)
     // rather than silently orphaning a live hierarchy slot.
     const configRows = unwrap(
-        await db().from('department_approval_config').select('resort_id, department_id, manager_user_id, assistant_manager_user_id, supervisor_user_id')
+        await db().from('department_approval_config').select('resort_id, department_id, manager_user_id, assistant_manager_user_id')
     );
     const approverAssignments = new Map(); // user_id -> [{resort_id, department_id}]
     for (const c of configRows) {
-        for (const uid of [c.manager_user_id, c.assistant_manager_user_id, c.supervisor_user_id]) {
+        for (const uid of [c.manager_user_id, c.assistant_manager_user_id]) {
             if (!uid) continue;
             if (!approverAssignments.has(uid)) approverAssignments.set(uid, []);
             approverAssignments.get(uid).push({ resort_id: c.resort_id, department_id: c.department_id });

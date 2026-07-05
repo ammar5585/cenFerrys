@@ -23,6 +23,10 @@ async function readFormBody(request) {
 // ---------------------------------------------------------------------
 async function routesPageBody(csrfToken) {
     const routes = unwrap(await db().from('ferry_routes').select('*').order('route_id'));
+    const directions = unwrap(await db().from('directions').select('*').eq('status', 'active').order('display_order').order('name'));
+    const directionOptions = (selectedId) =>
+        directions.map((d) => `<option value="${d.direction_id}" ${selectedId === d.direction_id ? 'selected' : ''}>${h(d.name)}</option>`).join('');
+
     const rowsHtml = routes
         .map(
             (r) => html`<tr>
@@ -32,9 +36,8 @@ async function routesPageBody(csrfToken) {
                     <input type="hidden" name="action" value="rename">
                     <input type="hidden" name="route_id" value="${r.route_id}">
                     <input type="text" name="route_name" class="form-control form-control-sm" value="${h(r.route_name)}" required>
-                    <select name="direction" class="form-select form-select-sm" required style="max-width:11rem;">
-                        <option value="Resort to City" ${r.direction === 'Resort to City' ? 'selected' : ''}>Resort to City</option>
-                        <option value="City to Resort" ${r.direction === 'City to Resort' ? 'selected' : ''}>City to Resort</option>
+                    <select name="direction_id" class="form-select form-select-sm" required style="max-width:11rem;">
+                        ${raw(directionOptions(r.direction_id))}
                     </select>
                     <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">Save</button>
                 </form>
@@ -51,12 +54,13 @@ async function routesPageBody(csrfToken) {
 
     return html`
 <h5 class="mb-3"><i class="bi bi-signpost-split"></i> Ferry Routes</h5>
+<p class="text-muted small">Directions are managed separately - see <a href="/admin/directions">Direction Management</a>.</p>
 <div class="row g-3">
     <div class="col-lg-5"><div class="card shadow-sm"><div class="card-header bg-white">Add Route</div><div class="card-body">
         <form method="post">
             ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="add">
             <div class="mb-3"><label class="form-label">Route Name</label><input type="text" name="route_name" class="form-control" required placeholder="e.g. Resort to City Ferry"></div>
-            <div class="mb-3"><label class="form-label">Direction</label><select name="direction" class="form-select" required><option value="Resort to City">Resort to City</option><option value="City to Resort">City to Resort</option></select></div>
+            <div class="mb-3"><label class="form-label">Direction</label><select name="direction_id" class="form-select" required>${raw(directionOptions(null))}</select></div>
             <button class="btn btn-primary" type="submit">Add Route</button>
         </form>
     </div></div></div>
@@ -114,17 +118,29 @@ export function registerAdminConfigRoutes(router) {
         const form = await readFormBody(request);
         if (!verifyCsrf(auth.user.csrf, form.csrf_token)) return notFound();
 
-        if (form.action === 'add' && form.route_name?.trim() && ['Resort to City', 'City to Resort'].includes(form.direction)) {
-            unwrap(await db().from('ferry_routes').insert({ route_name: form.route_name.trim(), direction: form.direction }));
-            return redirectTo('/admin/routes', { cookies: [auth.setCookie, flashSetCookie('success', 'Route added.')].filter(Boolean) });
-        }
-        if (form.action === 'rename') {
-            const routeId = Number(form.route_id);
+        if (form.action === 'add' || form.action === 'rename') {
+            const routeId = Number(form.route_id) || 0;
             const routeName = (form.route_name || '').trim();
-            if (!routeId || !routeName || !['Resort to City', 'City to Resort'].includes(form.direction)) {
-                return redirectTo('/admin/routes', { cookies: [auth.setCookie, flashSetCookie('error', 'Route name and a valid direction are required.')].filter(Boolean) });
+            const directionId = Number(form.direction_id) || 0;
+            if (!routeName || !directionId) {
+                return redirectTo('/admin/routes', { cookies: [auth.setCookie, flashSetCookie('error', 'Route name and a direction are required.')].filter(Boolean) });
             }
-            unwrap(await db().from('ferry_routes').update({ route_name: routeName, direction: form.direction }).eq('route_id', routeId));
+            // Server-side re-validation - never trust the dropdown alone
+            // (same discipline used elsewhere, e.g. admin/users.js).
+            const directionRows = unwrap(await db().from('directions').select('name').eq('direction_id', directionId).eq('status', 'active').limit(1));
+            if (!directionRows.length) {
+                return redirectTo('/admin/routes', { cookies: [auth.setCookie, flashSetCookie('error', 'That direction is no longer active. Please choose another.')].filter(Boolean) });
+            }
+            const direction = directionRows[0].name;
+
+            if (form.action === 'add') {
+                unwrap(await db().from('ferry_routes').insert({ route_name: routeName, direction, direction_id: directionId }));
+                return redirectTo('/admin/routes', { cookies: [auth.setCookie, flashSetCookie('success', 'Route added.')].filter(Boolean) });
+            }
+            if (!routeId) {
+                return redirectTo('/admin/routes', { cookies: [auth.setCookie, flashSetCookie('error', 'Route not found.')].filter(Boolean) });
+            }
+            unwrap(await db().from('ferry_routes').update({ route_name: routeName, direction, direction_id: directionId }).eq('route_id', routeId));
             return redirectTo('/admin/routes', { cookies: [auth.setCookie, flashSetCookie('success', 'Route updated.')].filter(Boolean) });
         }
         if (form.action === 'toggle_status') {

@@ -20,7 +20,11 @@ export function registerAjaxRoutes(router) {
         const date = url.searchParams.get('date') || '';
         const direction = url.searchParams.get('direction') || '';
 
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !['Resort to City', 'City to Resort'].includes(direction)) {
+        // Direction names are admin-managed (Direction Management), not a
+        // fixed set - an unrecognized value just matches zero routes below
+        // and falls through to the existing "no such route" empty result,
+        // same as this file's other invalid-input handling.
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !direction) {
             return jsonResponse({ success: false, schedules: [] });
         }
 

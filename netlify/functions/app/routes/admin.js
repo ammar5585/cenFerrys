@@ -359,12 +359,12 @@ async function usersPageBody({ search, deptFilter, roleFilter, resortFilter, sta
     const approverConfigs = unwrap(
         await db()
             .from('department_approval_config')
-            .select('manager_user_id, assistant_manager_user_id, supervisor_user_id')
+            .select('manager_user_id, assistant_manager_user_id')
             .eq('approval_mode', 'department_hierarchy')
     );
     const approverIds = new Set();
     for (const c of approverConfigs) {
-        for (const id of [c.manager_user_id, c.assistant_manager_user_id, c.supervisor_user_id]) {
+        for (const id of [c.manager_user_id, c.assistant_manager_user_id]) {
             if (id) approverIds.add(id);
         }
     }

@@ -1,9 +1,12 @@
 // Admin config for the department-based approval hierarchy: per
-// department, pick who fills the Department Manager / Assistant
-// Manager / Supervisor tiers (any active user, independent of their
-// system role - see the "Department Manager" naming-collision note
-// below), whether the department uses this hierarchy at all (vs. the
-// legacy org-wide GM -> RM -> HR chain), and SLA auto-escalation timing.
+// department, pick who fills the Primary Approver (In Charge / Head of
+// Department) / Secondary Approver (Assistant In Charge / Assistant
+// Manager) tiers (any active user, independent of their system role),
+// whether the department uses this hierarchy at all (vs. the legacy
+// org-wide GM -> RM -> HR chain), and SLA auto-escalation timing.
+// A third "Supervisor" tier existed previously and was removed by user
+// request (supabase/migrations/0011_remove_supervisor_tier.sql) - no
+// live data depended on it at removal time.
 
 import { db, unwrap } from '../db.js';
 import { requireRole } from '../guards.js';
@@ -56,7 +59,6 @@ async function departmentApprovalPageBody(csrfToken) {
                         approval_mode: 'department_hierarchy',
                         manager_user_id: null,
                         assistant_manager_user_id: null,
-                        supervisor_user_id: null,
                         sla_hours: '',
                         auto_escalation_enabled: true,
                     };
@@ -78,16 +80,12 @@ async function departmentApprovalPageBody(csrfToken) {
                     </select>
                 </div>
                 <div class="mb-2">
-                    <label class="form-label small mb-0">Approval Tier 1 (Department Manager)</label>
+                    <label class="form-label small mb-0">Approval Tier 1 (Primary Approver &ndash; In Charge / Head of Department)</label>
                     <select name="manager_user_id" class="form-select form-select-sm">${raw(userOptions(r.resort_id, cfg.manager_user_id))}</select>
                 </div>
                 <div class="mb-2">
-                    <label class="form-label small mb-0">Approval Tier 2 (Assistant Manager)</label>
+                    <label class="form-label small mb-0">Approval Tier 2 (Secondary Approver &ndash; Assistant In Charge / Assistant Manager)</label>
                     <select name="assistant_manager_user_id" class="form-select form-select-sm">${raw(userOptions(r.resort_id, cfg.assistant_manager_user_id))}</select>
-                </div>
-                <div class="mb-2">
-                    <label class="form-label small mb-0">Approval Tier 3 (Supervisor)</label>
-                    <select name="supervisor_user_id" class="form-select form-select-sm">${raw(userOptions(r.resort_id, cfg.supervisor_user_id))}</select>
                 </div>
                 <p class="text-muted small">Assignment slots are independent of a user's system role - any active user at this resort can be assigned to any tier.</p>
                 <div class="row g-2 mb-2">
@@ -144,7 +142,6 @@ export function registerAdminDepartmentApprovalRoutes(router) {
         const approvalMode = form.approval_mode === 'department_hierarchy' ? 'department_hierarchy' : 'legacy';
         const managerUserId = Number(form.manager_user_id) || null;
         const assistantManagerUserId = Number(form.assistant_manager_user_id) || null;
-        const supervisorUserId = Number(form.supervisor_user_id) || null;
         const slaHoursRaw = (form.sla_hours || '').trim();
         const slaHours = slaHoursRaw === '' ? null : Math.max(0, Number(slaHoursRaw));
         const autoEscalationEnabled = !!form.auto_escalation_enabled;
@@ -153,7 +150,7 @@ export function registerAdminDepartmentApprovalRoutes(router) {
         // active AND belong to this same resort - never trust the dropdown
         // alone (mirrors the same discipline used elsewhere in this
         // codebase, e.g. admin/users.js).
-        const candidateIds = [managerUserId, assistantManagerUserId, supervisorUserId].filter(Boolean);
+        const candidateIds = [managerUserId, assistantManagerUserId].filter(Boolean);
         if (candidateIds.length) {
             const activeRows = unwrap(
                 await db().from('users').select('user_id').eq('status', 'active').eq('resort_id', resortId).in('user_id', candidateIds)
@@ -178,7 +175,6 @@ export function registerAdminDepartmentApprovalRoutes(router) {
                         approval_mode: approvalMode,
                         manager_user_id: managerUserId,
                         assistant_manager_user_id: assistantManagerUserId,
-                        supervisor_user_id: supervisorUserId,
                         sla_hours: slaHours,
                         auto_escalation_enabled: autoEscalationEnabled,
                     },

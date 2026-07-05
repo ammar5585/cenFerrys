@@ -20,9 +20,8 @@ const EXECUTIVE_ROLES = [ROLE_GM, ROLE_RM, ROLE_HR];
 
 /** Ordered department hierarchy: level label, its config-table column, and its booking_status name. */
 const DEPARTMENT_LEVELS = [
-    { level: 'Department Manager', configColumn: 'manager_user_id', statusName: 'Pending Department Manager Approval' },
-    { level: 'Assistant Manager', configColumn: 'assistant_manager_user_id', statusName: 'Pending Assistant Manager Approval' },
-    { level: 'Supervisor', configColumn: 'supervisor_user_id', statusName: 'Pending Supervisor Approval' },
+    { level: 'Primary Approver (In Charge / Head of Department)', configColumn: 'manager_user_id', statusName: 'Pending Department Manager Approval' },
+    { level: 'Secondary Approver (Assistant In Charge / Assistant Manager)', configColumn: 'assistant_manager_user_id', statusName: 'Pending Assistant Manager Approval' },
 ];
 const statusIdCache = new Map();
 const roleIdCache = new Map();
@@ -223,8 +222,8 @@ export async function getApprovalWorkflowInfo(resortId, departmentId) {
 }
 
 /**
- * Routes a booking through its department's 3-tier hierarchy (Department
- * Manager -> Assistant Manager -> Supervisor) - the default path - or
+ * Routes a booking through its department's 2-tier hierarchy (Primary
+ * Approver -> Secondary Approver) - the default path - or
  * delegates to the legacy routeBookingApproval() (GM -> RM -> HR) only
  * when the department has an EXPLICIT 'legacy' config row. A missing
  * config row (department added without one, or departmentId itself
@@ -294,9 +293,10 @@ export async function routeDepartmentApproval(bookingId, resortId, departmentId)
 }
 
 /**
- * Advances a booking to the next level in [Department Manager,
- * Assistant Manager, Supervisor, HR] after its current level, or does
- * nothing if already at HR (the terminal level). Used by the SLA
+ * Advances a booking to the next level in [Primary Approver, Secondary
+ * Approver] after its current level, or does nothing if already at the
+ * terminal level (falls to executive override, not HR - see
+ * routeDepartmentApproval's header comment). Used by the SLA
  * escalation Scheduled Function and by manual verification.
  *
  * Uses the same compare-and-swap pattern as the human approve/reject

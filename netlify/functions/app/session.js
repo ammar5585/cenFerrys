@@ -74,7 +74,7 @@ export async function checkIsDepartmentApprover(userId) {
             .from('department_approval_config')
             .select('department_id')
             .eq('approval_mode', 'department_hierarchy')
-            .or(`manager_user_id.eq.${userId},assistant_manager_user_id.eq.${userId},supervisor_user_id.eq.${userId}`)
+            .or(`manager_user_id.eq.${userId},assistant_manager_user_id.eq.${userId}`)
             .limit(1)
     );
     return rows.length > 0;

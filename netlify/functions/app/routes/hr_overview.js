@@ -5,7 +5,7 @@
 // Manager, Admin) - authority is not restricted by department and is
 // not limited to department-hierarchy-mode departments: a legacy
 // Waiting-GM-Approval booking is just as actionable here as a
-// department-hierarchy Pending-Supervisor-Approval one, or a booking
+// department-hierarchy Pending-Assistant-Manager-Approval one, or a booking
 // left unassigned because no department approver was available. URL
 // stays /hr/overview for backward compatibility with existing links.
 
@@ -31,9 +31,8 @@ const LEVEL_BY_STATUS_NAME = {
     'Waiting GM Approval': 'General Manager',
     'Waiting RM Approval': 'Resident Manager',
     'Waiting HR Approval': 'HR Manager',
-    'Pending Department Manager Approval': 'Department Manager',
-    'Pending Assistant Manager Approval': 'Assistant Manager',
-    'Pending Supervisor Approval': 'Supervisor',
+    'Pending Department Manager Approval': 'Primary Approver (In Charge / Head of Department)',
+    'Pending Assistant Manager Approval': 'Secondary Approver (Assistant In Charge / Assistant Manager)',
     'Pending HR Approval': 'HR',
 };
 
