@@ -23,7 +23,7 @@ export function mintCsrfToken() {
  * case, just cookie-backed instead of JWT-claim-backed.
  */
 export function mintPreAuthCsrf() {
-    const isLocalDev = process.env.NETLIFY_DEV === 'true';
+    const isLocalDev = process.env.VERCEL_ENV === 'development' || process.env.NETLIFY_DEV === 'true';
     const token = mintCsrfToken();
     const setCookie = cookie.serialize(PRE_AUTH_COOKIE, token, {
         httpOnly: true,

@@ -10,7 +10,7 @@ const FLASH_COOKIE = 'ferry_flash';
 
 /** Set-Cookie header value carrying one flash message to the next request. */
 export function flashSetCookie(type, message) {
-    const isLocalDev = process.env.NETLIFY_DEV === 'true';
+    const isLocalDev = process.env.VERCEL_ENV === 'development' || process.env.NETLIFY_DEV === 'true';
     const value = encodeURIComponent(JSON.stringify({ type, message }));
     return cookie.serialize(FLASH_COOKIE, value, {
         httpOnly: true,
@@ -37,7 +37,7 @@ export function flashGet(request) {
 
 /** Set-Cookie header value that clears the flash cookie once it's been read. */
 export function flashClearCookie() {
-    const isLocalDev = process.env.NETLIFY_DEV === 'true';
+    const isLocalDev = process.env.VERCEL_ENV === 'development' || process.env.NETLIFY_DEV === 'true';
     return cookie.serialize(FLASH_COOKIE, '', {
         httpOnly: true,
         secure: !isLocalDev,

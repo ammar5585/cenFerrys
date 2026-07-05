@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "netlify dev",
+    "dev:vercel": "vercel dev",
     "seed-passwords": "node scripts/hash-seed-passwords.mjs"
   },
   "dependencies": {
@@ -18,6 +19,7 @@
   },
   "devDependencies": {
     "netlify-cli": "^17.38.0",
-    "pg": "^8.22.0"
+    "pg": "^8.22.0",
+    "vercel": "^54.20.1"
   }
 }

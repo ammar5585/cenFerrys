@@ -1,0 +1,26 @@
+name: Scheduled Jobs
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  escalate-approvals:
+    if: github.event.schedule == '*/15 * * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call escalate-approvals endpoint
+        run: |
+          curl -sf -X GET "https://cenferrys.vercel.app/api/cron/escalate-approvals" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+
+  expire-bookings:
+    if: github.event.schedule == '*/30 * * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call expire-bookings endpoint
+        run: |
+          curl -sf -X GET "https://cenferrys.vercel.app/api/cron/expire-bookings" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"

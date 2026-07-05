@@ -97,7 +97,7 @@ export function readSessionCookie(request) {
  * "remember me" behaviour, which only ever extended the raw cookie.
  */
 export function buildSessionCookie(token, { rememberDays } = {}) {
-    const isLocalDev = process.env.NETLIFY_DEV === 'true';
+    const isLocalDev = process.env.VERCEL_ENV === 'development' || process.env.NETLIFY_DEV === 'true';
     return cookie.serialize(COOKIE_NAME, token, {
         httpOnly: true,
         secure: !isLocalDev,
@@ -109,7 +109,7 @@ export function buildSessionCookie(token, { rememberDays } = {}) {
 
 /** Set-Cookie header that immediately expires the session cookie (logout). */
 export function clearSessionCookie() {
-    const isLocalDev = process.env.NETLIFY_DEV === 'true';
+    const isLocalDev = process.env.VERCEL_ENV === 'development' || process.env.NETLIFY_DEV === 'true';
     return cookie.serialize(COOKIE_NAME, '', {
         httpOnly: true,
         secure: !isLocalDev,
