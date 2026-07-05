@@ -214,6 +214,11 @@ ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `
 
 const BOOKING_PAGE_SCRIPT = `
 (function () {
+    // Falls back to '/' if window.BASE_URL somehow isn't set by the time
+    // this runs (it's always just "/" in this app anyway - there's no
+    // multi-tenant subpath deployment - so there's no reason a missing
+    // global should ever break this fetch).
+    var baseUrl = window.BASE_URL || '/';
     var dateInput = document.getElementById('travelDate');
     var directionSelect = document.getElementById('direction');
     var container = document.getElementById('scheduleOptions');
@@ -230,11 +235,11 @@ const BOOKING_PAGE_SCRIPT = `
         }
         container.innerHTML = '<div class="col-12 text-muted small"><span class="spinner-border spinner-border-sm"></span> Loading...</div>';
 
-        fetch(window.BASE_URL + 'ajax/get_schedule_seats?date=' + encodeURIComponent(date) + '&direction=' + encodeURIComponent(direction))
+        fetch(baseUrl + 'ajax/get_schedule_seats?date=' + encodeURIComponent(date) + '&direction=' + encodeURIComponent(direction))
             .then(function (r) { return r.json(); })
             .then(function (res) {
                 if (!res.success && res.message === 'Not authenticated') {
-                    container.innerHTML = '<div class="col-12 text-danger small">Your session has expired. Please <a href="' + window.BASE_URL + 'auth/login">log in again</a>.</div>';
+                    container.innerHTML = '<div class="col-12 text-danger small">Your session has expired. Please <a href="' + baseUrl + 'auth/login">log in again</a>.</div>';
                     return;
                 }
                 if (!res.success) {

@@ -88,7 +88,7 @@ function initMarkAllRead() {
         var target = e.target.closest('.mark-all-read');
         if (!target) return;
         e.preventDefault();
-        postJSON(window.BASE_URL + 'ajax/mark_notifications_read', { csrf_token: window.CSRF_TOKEN })
+        postJSON((window.BASE_URL || '/') + 'ajax/mark_notifications_read', { csrf_token: window.CSRF_TOKEN })
             .then(function (res) {
                 if (res.success) { location.reload(); }
             });
