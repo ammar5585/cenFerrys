@@ -88,5 +88,6 @@ export const ROLE_HR = 'HR Manager';
 export const ROLE_TRANSPORT = 'Transport Coordinator';
 export const ROLE_DEPT_MGR = 'Department Manager';
 export const ROLE_STAFF = 'Staff';
+export const ROLE_SECURITY = 'Security';
 
 export const APPROVAL_CHAIN = [ROLE_GM, ROLE_RM, ROLE_HR];

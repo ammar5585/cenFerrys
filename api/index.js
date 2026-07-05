@@ -33,6 +33,7 @@ import { registerHrOverviewRoutes } from '../netlify/functions/app/routes/hr_ove
 import { registerManagerExtraRoutes } from '../netlify/functions/app/routes/manager_extra.js';
 import { registerTransportSchedulesViewRoutes } from '../netlify/functions/app/routes/transport_schedules_view.js';
 import { registerMiscRoutes } from '../netlify/functions/app/routes/misc.js';
+import { registerSecurityRoutes } from '../netlify/functions/app/routes/security.js';
 import { notFound, redirectTo } from '../netlify/functions/app/response.js';
 
 const router = createRouter();
@@ -56,6 +57,7 @@ registerHrOverviewRoutes(router);
 registerManagerExtraRoutes(router);
 registerTransportSchedulesViewRoutes(router);
 registerMiscRoutes(router);
+registerSecurityRoutes(router);
 
 // Root path mirrors index.php: send to /dashboard (which itself
 // redirects to /auth/login when not authenticated).

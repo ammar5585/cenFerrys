@@ -9,6 +9,7 @@ import { csrfField, verifyCsrf } from '../csrf.js';
 import { getSetting } from '../settings.js';
 import { getStatusId, routeDepartmentApproval, getApprovalWorkflowInfo } from '../approval.js';
 import { bookFerrySeat } from '../seats.js';
+import { notifySecurityIfWaitingList } from '../security.js';
 import { createNotification } from '../notifications.js';
 import { logActivity, clientIp } from '../activity.js';
 import { uploadProfilePicture } from '../uploads.js';
@@ -491,6 +492,25 @@ export function registerStaffRoutes(router) {
                     remarks,
                     seats,
                 });
+
+                // book_ferry_seat() waitlists (rather than rejects) a booking
+                // that can't get a seat - skip approval routing entirely for
+                // those; a waiting-list passenger only reaches Approved via
+                // a Security/Admin/HR promotion (see security.js).
+                const waitingListStatusId = await getStatusId('Waiting List');
+                if (booking.status_id === waitingListStatusId) {
+                    await createNotification(
+                        user.user_id,
+                        'This ferry is full - your booking has been placed on the waiting list and you will be notified if a seat opens up.',
+                        'booking',
+                        booking.booking_id
+                    );
+                    await logActivity(user.user_id, 'Ferry booking placed on waiting list', `booking_id=${booking.booking_id}`, clientIp(request));
+                    return redirectTo('/staff/my_bookings', {
+                        cookies: [auth.setCookie, flashSetCookie('success', 'This ferry is full - your booking has been placed on the waiting list.')].filter(Boolean),
+                    });
+                }
+
                 // Department-hierarchy routing if the booker's department has opted
                 // in; routeDepartmentApproval delegates to the untouched legacy
                 // GM->RM->HR chain otherwise (departmentId null also falls through
@@ -546,13 +566,16 @@ export function registerStaffRoutes(router) {
         if (form.action === 'cancel') {
             const bookingId = Number(form.booking_id);
             const rows = unwrap(
-                await db().from('bookings').select('booking_id').eq('booking_id', bookingId).eq('user_id', user.user_id).limit(1)
+                await db().from('bookings').select('booking_id, schedule_id, travel_date').eq('booking_id', bookingId).eq('user_id', user.user_id).limit(1)
             );
             if (rows.length) {
                 const cancelledId = await getStatusId('Cancelled');
                 unwrap(await db().from('bookings').update({ status_id: cancelledId }).eq('booking_id', bookingId));
                 await logActivity(user.user_id, 'Cancelled booking', `booking_id=${bookingId}`, clientIp(request));
                 await createNotification(user.user_id, 'Your ferry booking has been cancelled.', 'booking', bookingId);
+                // A cancellation frees a seat - if this schedule/date has a
+                // waiting list, prompt Security to consider promoting.
+                await notifySecurityIfWaitingList(rows[0].schedule_id, rows[0].travel_date);
                 return redirectTo('/staff/my_bookings', { cookies: [auth.setCookie, flashSetCookie('success', 'Booking cancelled.')].filter(Boolean) });
             }
             return redirectTo('/staff/my_bookings', { cookies: [auth.setCookie, flashSetCookie('error', 'Booking not found.')].filter(Boolean) });

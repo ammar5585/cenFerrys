@@ -3,7 +3,7 @@
 
 import { requireLogin } from '../guards.js';
 import { redirectTo } from '../response.js';
-import { ROLE_ADMIN, ROLE_STAFF, ROLE_GM, ROLE_RM, ROLE_HR, ROLE_DEPT_MGR, ROLE_TRANSPORT } from '../session.js';
+import { ROLE_ADMIN, ROLE_STAFF, ROLE_GM, ROLE_RM, ROLE_HR, ROLE_DEPT_MGR, ROLE_TRANSPORT, ROLE_SECURITY } from '../session.js';
 
 const ROLE_ROUTES = {
     [ROLE_ADMIN]: '/admin/dashboard',
@@ -13,6 +13,7 @@ const ROLE_ROUTES = {
     [ROLE_HR]: '/manager/dashboard',
     [ROLE_DEPT_MGR]: '/manager/dashboard',
     [ROLE_TRANSPORT]: '/transport/dashboard',
+    [ROLE_SECURITY]: '/security/dashboard',
 };
 
 export function registerDashboardRoutes(router) {

@@ -9,6 +9,7 @@ import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
 import { getStatusId } from '../approval.js';
 import { createNotification } from '../notifications.js';
+import { notifySecurityIfWaitingList } from '../security.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
@@ -155,9 +156,14 @@ export function registerAdminBookingsRoutes(router) {
 
             unwrap(await db().from('bookings').update({ status_id: statusId }).eq('booking_id', bookingId));
 
-            const bookingRows = unwrap(await db().from('bookings').select('user_id').eq('booking_id', bookingId).limit(1));
+            const bookingRows = unwrap(await db().from('bookings').select('user_id, schedule_id, travel_date').eq('booking_id', bookingId).limit(1));
             if (bookingRows.length) {
                 await createNotification(bookingRows[0].user_id, `Administrator updated your booking status to: ${statusName}.`, 'booking', bookingId);
+                // An admin change to a released status (Cancelled/Rejected/No
+                // Show) frees a seat - prompt Security if a waiting list exists.
+                if (['Cancelled', 'Rejected', 'No Show'].includes(statusName)) {
+                    await notifySecurityIfWaitingList(bookingRows[0].schedule_id, bookingRows[0].travel_date);
+                }
             }
             await logActivity(user.user_id, 'Admin changed booking status', `booking_id=${bookingId} -> ${statusName}`, clientIp(request));
             return redirectTo('/admin/bookings', { cookies: [auth.setCookie, flashSetCookie('success', 'Booking status updated.')].filter(Boolean) });

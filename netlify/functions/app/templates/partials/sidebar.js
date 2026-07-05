@@ -4,7 +4,7 @@
 // existed only because every PHP page was its own file).
 
 import { html, raw } from '../html.js';
-import { ROLE_ADMIN, ROLE_STAFF, ROLE_GM, ROLE_RM, ROLE_HR, ROLE_DEPT_MGR, ROLE_TRANSPORT } from '../../session.js';
+import { ROLE_ADMIN, ROLE_STAFF, ROLE_GM, ROLE_RM, ROLE_HR, ROLE_DEPT_MGR, ROLE_TRANSPORT, ROLE_SECURITY } from '../../session.js';
 
 function navLink(path, icon, label, currentPath) {
     const active = currentPath === path ? 'active' : '';
@@ -82,6 +82,14 @@ export function renderSidebar(roleName, currentPath, isDeptApprover = false, com
             navLink('/transport/passenger_list', 'bi-list-check', "Today's Passengers", currentPath),
             navLink('/transport/schedules_view', 'bi-calendar3', 'Ferry Schedules', currentPath),
             navLink('/transport/manifest_print', 'bi-printer', 'Print Manifest', currentPath)
+        );
+    }
+
+    if (roleName === ROLE_SECURITY) {
+        links.push(
+            html`<div class="nav-heading">Security</div>`,
+            navLink('/security/manifest', 'bi-clipboard-check', 'Passenger Manifest', currentPath),
+            navLink('/security/waiting_list', 'bi-hourglass-split', 'Waiting List', currentPath)
         );
     }
 
