@@ -2,13 +2,12 @@
 // (Phase 2 scope; schedules_view.js lands in Phase 3).
 
 import { db, unwrap } from '../db.js';
-import { requireRole, requireLogin } from '../guards.js';
+import { requirePermission } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { getSetting } from '../settings.js';
 import { csvResponse, htmlResponse, notFound } from '../response.js';
 import { formatDate, formatTime, greeting } from '../format.js';
-import { ROLE_TRANSPORT, ROLE_ADMIN } from '../session.js';
 
 const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -89,14 +88,14 @@ async function passengersFor(scheduleId, travelDate) {
 
 export function registerTransportRoutes(router) {
     router.get('/transport/dashboard', async (request) => {
-        const auth = await requireRole(request, [ROLE_TRANSPORT]);
+        const auth = await requirePermission(request, 'dashboard.view_transport', { pageTitle: 'Transport Dashboard' });
         if (auth.response) return auth.response;
         const body = await transportDashboardBody(auth.user.full_name);
         return renderShellForRequest({ request, auth, pageTitle: 'Transport Dashboard', path: '/transport/dashboard', bodyHtml: body });
     });
 
     router.get('/transport/passenger_list', async (request) => {
-        const auth = await requireRole(request, [ROLE_TRANSPORT]);
+        const auth = await requirePermission(request, 'booking.view_manifest', { pageTitle: "Today's Passengers" });
         if (auth.response) return auth.response;
 
         const url = new URL(request.url);
@@ -184,7 +183,7 @@ ${scheduleId
     });
 
     router.get('/transport/manifest_print', async (request) => {
-        const auth = await requireRole(request, [ROLE_TRANSPORT, ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'booking.print_manifest', { pageTitle: 'Print Manifest' });
         if (auth.response) return auth.response;
 
         const url = new URL(request.url);

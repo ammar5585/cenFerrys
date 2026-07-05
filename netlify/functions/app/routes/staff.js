@@ -2,7 +2,7 @@
 // staff/profile.php, staff/print_confirmation.php.
 
 import { db, unwrap } from '../db.js';
-import { requireRole, requireLogin } from '../guards.js';
+import { requirePermission, requireLogin } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
@@ -16,7 +16,7 @@ import { uploadProfilePicture } from '../uploads.js';
 import { redirectTo, htmlResponse, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatDate, formatDateTime, formatTime, statusBadgeClass, greeting } from '../format.js';
-import { ROLE_STAFF, ROLE_ADMIN } from '../session.js';
+import { ROLE_ADMIN } from '../session.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -405,14 +405,14 @@ ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `
 // ---------------------------------------------------------------------
 export function registerStaffRoutes(router) {
     router.get('/staff/dashboard', async (request) => {
-        const auth = await requireRole(request, [ROLE_STAFF]);
+        const auth = await requirePermission(request, 'dashboard.view_staff', { pageTitle: 'My Dashboard' });
         if (auth.response) return auth.response;
         const body = await staffDashboardBody(auth.user.user_id, auth.user.full_name, auth.user.csrf);
         return renderShellForRequest({ request, auth, pageTitle: 'My Dashboard', path: '/staff/dashboard', bodyHtml: body });
     });
 
     router.get('/staff/book', async (request) => {
-        const auth = await requireRole(request, [ROLE_STAFF]);
+        const auth = await requirePermission(request, 'booking.create_own', { pageTitle: 'New Booking' });
         if (auth.response) return auth.response;
 
         const maxSeats = Number(await getSetting('max_seats_per_booking', 4));
@@ -433,7 +433,7 @@ export function registerStaffRoutes(router) {
     });
 
     router.post('/staff/book', async (request) => {
-        const auth = await requireRole(request, [ROLE_STAFF]);
+        const auth = await requirePermission(request, 'booking.create_own', { pageTitle: 'New Booking' });
         if (auth.response) return auth.response;
         const { user } = auth;
 
@@ -546,7 +546,7 @@ export function registerStaffRoutes(router) {
     });
 
     router.get('/staff/my_bookings', async (request) => {
-        const auth = await requireRole(request, [ROLE_STAFF]);
+        const auth = await requirePermission(request, 'booking.view_own', { pageTitle: 'My Bookings' });
         if (auth.response) return auth.response;
         const url = new URL(request.url);
         const statusFilter = Number(url.searchParams.get('status') || 0);
@@ -555,7 +555,7 @@ export function registerStaffRoutes(router) {
     });
 
     router.post('/staff/my_bookings', async (request) => {
-        const auth = await requireRole(request, [ROLE_STAFF]);
+        const auth = await requirePermission(request, 'booking.cancel_own', { pageTitle: 'My Bookings' });
         if (auth.response) return auth.response;
         const { user } = auth;
 

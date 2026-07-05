@@ -48,6 +48,10 @@ export function signSessionToken(user, csrfToken, timeoutMinutes) {
         // approver, regardless of their RBAC role - drives sidebar
         // visibility for the Pending Approvals link (see session.js).
         is_dept_approver: !!user.is_dept_approver,
+        // Effective permission bitmask (hex string) - recomputed and
+        // reissued on every request by session.js, so a permission
+        // change takes effect on the user's very next request.
+        perms: user.perms || '0',
         csrf: csrfToken,
     };
     return jwt.sign(payload, jwtSecret(), { expiresIn: `${timeoutMinutes}m` });

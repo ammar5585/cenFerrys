@@ -8,14 +8,13 @@
 // needed here.
 
 import { db, unwrap } from '../db.js';
-import { requireRole } from '../guards.js';
+import { requirePermission } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
-import { ROLE_ADMIN } from '../session.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -73,14 +72,14 @@ async function departmentsPageBody(csrfToken) {
 
 export function registerAdminDepartmentsRoutes(router) {
     router.get('/admin/departments', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'user_management.manage_departments', { pageTitle: 'Departments' });
         if (auth.response) return auth.response;
         const body = await departmentsPageBody(auth.user.csrf);
         return renderShellForRequest({ request, auth, pageTitle: 'Departments', path: '/admin/departments', bodyHtml: body });
     });
 
     router.post('/admin/departments', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'user_management.manage_departments', { pageTitle: 'Departments' });
         if (auth.response) return auth.response;
         const { user } = auth;
         const form = await readFormBody(request);

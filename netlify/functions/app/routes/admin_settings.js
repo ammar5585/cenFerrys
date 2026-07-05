@@ -3,7 +3,7 @@
 // favicon, portal title/name) lives on the separate /admin/branding
 // page (admin_branding.js).
 
-import { requireRole } from '../guards.js';
+import { requirePermission } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
@@ -11,7 +11,6 @@ import { getSetting, setSetting, resetSettingsCache } from '../settings.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
-import { ROLE_ADMIN } from '../session.js';
 
 const WEEKDAY_OPTIONS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -51,14 +50,14 @@ ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `
 
 export function registerAdminSettingsRoutes(router) {
     router.get('/admin/settings', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'settings.manage', { pageTitle: 'Settings' });
         if (auth.response) return auth.response;
         const body = await settingsBody({ errors: [], csrfToken: auth.user.csrf });
         return renderShellForRequest({ request, auth, pageTitle: 'Settings', path: '/admin/settings', bodyHtml: body });
     });
 
     router.post('/admin/settings', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'settings.manage', { pageTitle: 'Settings' });
         if (auth.response) return auth.response;
         const { user } = auth;
 

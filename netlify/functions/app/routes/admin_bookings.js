@@ -3,7 +3,7 @@
 // entirely, matching the PHP version exactly).
 
 import { db, unwrap } from '../db.js';
-import { requireRole } from '../guards.js';
+import { requirePermission } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
@@ -14,7 +14,6 @@ import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatDate, formatTime, statusBadgeClass } from '../format.js';
-import { ROLE_ADMIN } from '../session.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -103,7 +102,7 @@ async function bookingsPageBody({ dateFrom, dateTo, statusFilter, deptFilter, cs
 
 export function registerAdminBookingsRoutes(router) {
     router.get('/admin/bookings', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'booking.view_all', { pageTitle: 'All Bookings' });
         if (auth.response) return auth.response;
         const url = new URL(request.url);
         const body = await bookingsPageBody({
@@ -117,7 +116,7 @@ export function registerAdminBookingsRoutes(router) {
     });
 
     router.post('/admin/bookings', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'booking.admin_override', { pageTitle: 'All Bookings' });
         if (auth.response) return auth.response;
         const { user } = auth;
         const form = await readFormBody(request);

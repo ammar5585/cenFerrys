@@ -2,14 +2,13 @@
 // combined into one module since each is a handful of fields.
 
 import { db, unwrap } from '../db.js';
-import { requireRole } from '../guards.js';
+import { requirePermission } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatDate } from '../format.js';
-import { ROLE_ADMIN } from '../session.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -106,14 +105,14 @@ async function holidaysPageBody(csrfToken) {
 
 export function registerAdminConfigRoutes(router) {
     router.get('/admin/routes', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'schedule_management.manage_routes', { pageTitle: 'Ferry Routes' });
         if (auth.response) return auth.response;
         const body = await routesPageBody(auth.user.csrf);
         return renderShellForRequest({ request, auth, pageTitle: 'Ferry Routes', path: '/admin/routes', bodyHtml: body });
     });
 
     router.post('/admin/routes', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'schedule_management.manage_routes', { pageTitle: 'Ferry Routes' });
         if (auth.response) return auth.response;
         const form = await readFormBody(request);
         if (!verifyCsrf(auth.user.csrf, form.csrf_token)) return notFound();
@@ -156,14 +155,14 @@ export function registerAdminConfigRoutes(router) {
     });
 
     router.get('/admin/holidays', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'schedule_management.manage_holidays', { pageTitle: 'Holidays' });
         if (auth.response) return auth.response;
         const body = await holidaysPageBody(auth.user.csrf);
         return renderShellForRequest({ request, auth, pageTitle: 'Holidays', path: '/admin/holidays', bodyHtml: body });
     });
 
     router.post('/admin/holidays', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'schedule_management.manage_holidays', { pageTitle: 'Holidays' });
         if (auth.response) return auth.response;
         const form = await readFormBody(request);
         if (!verifyCsrf(auth.user.csrf, form.csrf_token)) return notFound();

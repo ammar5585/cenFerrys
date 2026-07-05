@@ -3,7 +3,9 @@
 // settings.js, activity_logs.js, reports.js, bookings.js land in Phase 3).
 
 import { db, unwrap } from '../db.js';
-import { requireRole } from '../guards.js';
+import { requirePermission } from '../guards.js';
+import { hasPermission } from '../permissions.js';
+import { accessDeniedResponse } from '../accessDenied.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
@@ -14,7 +16,6 @@ import { uploadProfilePicture } from '../uploads.js';
 import { redirectTo, notFound, csvResponse } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatTime, timeAgo, greeting } from '../format.js';
-import { ROLE_ADMIN } from '../session.js';
 
 const WEEKDAY_OPTIONS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -385,6 +386,7 @@ async function usersPageBody({ search, deptFilter, roleFilter, resortFilter, sta
             <td><span class="badge ${u.status === 'active' ? 'bg-success' : 'bg-secondary'}">${u.status === 'active' ? 'Active' : 'Archived'}</span></td>
             <td class="text-nowrap">
                 <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editUserModal${u.user_id}"><i class="bi bi-pencil"></i></button>
+                <a href="/admin/users/permissions?user_id=${u.user_id}" class="btn btn-sm btn-outline-dark"><i class="bi bi-shield-lock"></i></a>
                 <form method="post" class="d-inline" data-confirm="Generate a new temporary password for this user?">
                     ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="reset_password"><input type="hidden" name="user_id" value="${u.user_id}">
                     <button class="btn btn-sm btn-outline-warning"><i class="bi bi-key"></i></button>
@@ -641,14 +643,14 @@ async function managerAvailabilityBody(csrfToken) {
 // ---------------------------------------------------------------------
 export function registerAdminRoutes(router) {
     router.get('/admin/dashboard', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'dashboard.view_admin', { pageTitle: 'Administrator Dashboard' });
         if (auth.response) return auth.response;
         const body = await adminDashboardBody(auth.user.full_name);
         return renderShellForRequest({ request, auth, pageTitle: 'Administrator Dashboard', path: '/admin/dashboard', bodyHtml: body });
     });
 
     router.get('/admin/users', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'user_management.view', { pageTitle: 'User Management' });
         if (auth.response) return auth.response;
         const url = new URL(request.url);
         const filters = {
@@ -662,6 +664,9 @@ export function registerAdminRoutes(router) {
         };
 
         if (url.searchParams.get('format') === 'csv') {
+            if (!hasPermission(auth.user.perms, 'user_management.export')) {
+                return accessDeniedResponse({ request, auth, pageTitle: 'User Management' });
+            }
             const users = await fetchFilteredUsers(filters);
             const filename = `ferry_portal_users_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.csv`;
             return csvResponse(usersToCsv(users), filename);
@@ -671,14 +676,32 @@ export function registerAdminRoutes(router) {
         return renderShellForRequest({ request, auth, pageTitle: 'User Management', path: '/admin/users', bodyHtml: body });
     });
 
+    // Each action on this multi-action endpoint has its own fine-grained
+    // permission (matching the User Management category's distinct
+    // Create/Edit/Deactivate/Delete/Reset Password sub-permissions) - a
+    // single top-level guard isn't granular enough here, unlike every
+    // other multi-action admin route in this app, which only ever
+    // seeded one coarse "manage" permission for the whole route.
+    const USERS_ACTION_PERMISSIONS = {
+        add: 'user_management.create',
+        edit: 'user_management.edit',
+        delete: 'user_management.delete',
+        toggle_status: 'user_management.deactivate',
+        reset_password: 'user_management.reset_password',
+    };
+
     router.post('/admin/users', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'user_management.access', { pageTitle: 'User Management' });
         if (auth.response) return auth.response;
         const { user } = auth;
         const form = await readFormBody(request);
         if (!verifyCsrf(user.csrf, form.csrf_token)) return notFound();
 
         const action = form.action;
+        const requiredPermission = USERS_ACTION_PERMISSIONS[action];
+        if (requiredPermission && !hasPermission(user.perms, requiredPermission)) {
+            return accessDeniedResponse({ request, auth, pageTitle: 'User Management' });
+        }
 
         if (action === 'add' || action === 'edit') {
             const employeeId = (form.employee_id || '').trim();
@@ -780,14 +803,14 @@ export function registerAdminRoutes(router) {
     });
 
     router.get('/admin/schedules', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'schedule_management.view', { pageTitle: 'Ferry Schedules' });
         if (auth.response) return auth.response;
         const body = await schedulesPageBody(auth.user.csrf);
         return renderShellForRequest({ request, auth, pageTitle: 'Ferry Schedules', path: '/admin/schedules', bodyHtml: body });
     });
 
     router.post('/admin/schedules', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'schedule_management.manage_schedules', { pageTitle: 'Ferry Schedules' });
         if (auth.response) return auth.response;
         const { user } = auth;
         const form = await readFormBody(request);
@@ -850,14 +873,14 @@ export function registerAdminRoutes(router) {
     });
 
     router.get('/admin/manager_availability', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'approval_workflow.manage_manager_availability', { pageTitle: 'Manager Availability' });
         if (auth.response) return auth.response;
         const body = await managerAvailabilityBody(auth.user.csrf);
         return renderShellForRequest({ request, auth, pageTitle: 'Manager Availability', path: '/admin/manager_availability', bodyHtml: body });
     });
 
     router.post('/admin/manager_availability', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'approval_workflow.manage_manager_availability', { pageTitle: 'Manager Availability' });
         if (auth.response) return auth.response;
         const { user } = auth;
         const form = await readFormBody(request);

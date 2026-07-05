@@ -10,7 +10,7 @@
 // stays /hr/overview for backward compatibility with existing links.
 
 import { db, unwrap, eqOrNull } from '../db.js';
-import { requireRole } from '../guards.js';
+import { requirePermission } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
@@ -20,9 +20,6 @@ import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatDate, formatDateTime, formatTime, statusBadgeClass } from '../format.js';
-import { ROLE_GM, ROLE_RM, ROLE_HR, ROLE_ADMIN } from '../session.js';
-
-const PAGE_ACCESS_ROLES = [ROLE_GM, ROLE_RM, ROLE_HR, ROLE_ADMIN];
 
 /** Same level-label mapping used in manager.js's audit trail - duplicated here
  *  deliberately (small, static lookup) rather than importing across route
@@ -173,14 +170,14 @@ async function recentOverridesHtml() {
 
 export function registerHrOverviewRoutes(router) {
     router.get('/hr/overview', async (request) => {
-        const auth = await requireRole(request, PAGE_ACCESS_ROLES);
+        const auth = await requirePermission(request, 'approval_workflow.executive_override', { pageTitle: 'Executive Overview' });
         if (auth.response) return auth.response;
         const body = await overviewPageBody(auth.user.csrf);
         return renderShellForRequest({ request, auth, pageTitle: 'Executive Overview', path: '/hr/overview', bodyHtml: body });
     });
 
     router.post('/hr/overview', async (request) => {
-        const auth = await requireRole(request, PAGE_ACCESS_ROLES);
+        const auth = await requirePermission(request, 'approval_workflow.executive_override', { pageTitle: 'Executive Overview' });
         if (auth.response) return auth.response;
         const { user } = auth;
         const form = await readFormBody(request);

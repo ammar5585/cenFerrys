@@ -7,7 +7,7 @@
 
 import { parse } from 'csv-parse/sync';
 import { db, unwrap } from '../db.js';
-import { requireRole } from '../guards.js';
+import { requirePermission } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
@@ -16,7 +16,6 @@ import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound, csvResponse } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatDateTime } from '../format.js';
-import { ROLE_ADMIN } from '../session.js';
 
 const MAX_ROWS = 1500;
 const MAX_BYTES = 1.5 * 1024 * 1024;
@@ -346,27 +345,27 @@ async function historyPageBody() {
 
 export function registerAdminUserImportRoutes(router) {
     router.get('/admin/users/import', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'user_management.import', { pageTitle: 'Bulk Import Users' });
         if (auth.response) return auth.response;
         const body = uploadPageBody(auth.user.csrf);
         return renderShellForRequest({ request, auth, pageTitle: 'Bulk Import Users', path: '/admin/users/import', bodyHtml: body });
     });
 
     router.get('/admin/users/import/template', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'user_management.import', { pageTitle: 'Bulk Import Users' });
         if (auth.response) return auth.response;
         return csvResponse(CSV_TEMPLATE, 'user_import_template.csv');
     });
 
     router.get('/admin/users/import/history', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'user_management.view_import_history', { pageTitle: 'Import History' });
         if (auth.response) return auth.response;
         const body = await historyPageBody();
         return renderShellForRequest({ request, auth, pageTitle: 'Import History', path: '/admin/users/import/history', bodyHtml: body });
     });
 
     router.get('/admin/users/import/history/errors', async (request, ctx, url) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'user_management.view_import_history', { pageTitle: 'Import History' });
         if (auth.response) return auth.response;
         const importId = Number(url.searchParams.get('import_id'));
         const rows = unwrap(await db().from('user_import_history').select('failed_rows').eq('import_id', importId).limit(1));
@@ -380,7 +379,7 @@ export function registerAdminUserImportRoutes(router) {
     });
 
     router.post('/admin/users/import', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'user_management.import', { pageTitle: 'Bulk Import Users' });
         if (auth.response) return auth.response;
         const { user } = auth;
 
@@ -404,7 +403,7 @@ export function registerAdminUserImportRoutes(router) {
     });
 
     router.post('/admin/users/import/confirm', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'user_management.import', { pageTitle: 'Bulk Import Users' });
         if (auth.response) return auth.response;
         const { user } = auth;
         const form = await readFormBody(request);

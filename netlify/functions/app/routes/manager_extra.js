@@ -1,7 +1,7 @@
 // Port of manager/history.php, manager/availability.php, manager/department_requests.php.
 
 import { db, unwrap } from '../db.js';
-import { requireRole } from '../guards.js';
+import { requirePermission } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
@@ -9,7 +9,6 @@ import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatDate, formatDateTime, formatTime, statusBadgeClass } from '../format.js';
-import { ROLE_GM, ROLE_RM, ROLE_HR, ROLE_DEPT_MGR } from '../session.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -116,21 +115,21 @@ async function departmentRequestsBody(userId) {
 
 export function registerManagerExtraRoutes(router) {
     router.get('/manager/history', async (request) => {
-        const auth = await requireRole(request, [ROLE_GM, ROLE_RM, ROLE_HR]);
+        const auth = await requirePermission(request, 'approval_workflow.view_history', { pageTitle: 'Approval History' });
         if (auth.response) return auth.response;
         const body = await historyBody(auth.user.user_id);
         return renderShellForRequest({ request, auth, pageTitle: 'Approval History', path: '/manager/history', bodyHtml: body });
     });
 
     router.get('/manager/availability', async (request) => {
-        const auth = await requireRole(request, [ROLE_GM, ROLE_RM, ROLE_HR]);
+        const auth = await requirePermission(request, 'approval_workflow.manage_own_availability', { pageTitle: 'My Availability' });
         if (auth.response) return auth.response;
         const body = await availabilityBody(auth.user.user_id, auth.user.csrf);
         return renderShellForRequest({ request, auth, pageTitle: 'My Availability', path: '/manager/availability', bodyHtml: body });
     });
 
     router.post('/manager/availability', async (request) => {
-        const auth = await requireRole(request, [ROLE_GM, ROLE_RM, ROLE_HR]);
+        const auth = await requirePermission(request, 'approval_workflow.manage_own_availability', { pageTitle: 'My Availability' });
         if (auth.response) return auth.response;
         const { user } = auth;
         const form = await readFormBody(request);
@@ -148,7 +147,7 @@ export function registerManagerExtraRoutes(router) {
     });
 
     router.get('/manager/department_requests', async (request) => {
-        const auth = await requireRole(request, [ROLE_DEPT_MGR]);
+        const auth = await requirePermission(request, 'approval_workflow.view_department_requests', { pageTitle: 'Department Requests' });
         if (auth.response) return auth.response;
         const body = await departmentRequestsBody(auth.user.user_id);
         return renderShellForRequest({ request, auth, pageTitle: 'Department Requests', path: '/manager/department_requests', bodyHtml: body });

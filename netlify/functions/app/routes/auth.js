@@ -14,6 +14,7 @@ import { publicShell } from '../templates/layout.js';
 import { html, raw } from '../templates/html.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { ROLE_ADMIN, getSession, checkIsDepartmentApprover } from '../session.js';
+import { getEffectivePermissions, bitmaskToHex } from '../permissions.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -165,7 +166,10 @@ export function registerAuthRoutes(router) {
 
         const timeoutMinutes = Number(await getSetting('session_timeout_minutes', 30));
         const csrfToken = newCsrfToken();
-        const isDeptApprover = await checkIsDepartmentApprover(user.user_id);
+        const [isDeptApprover, permsBitmask] = await Promise.all([
+            checkIsDepartmentApprover(user.user_id),
+            getEffectivePermissions(user.user_id, user.role_id),
+        ]);
         const sessionToken = signSessionToken(
             {
                 user_id: user.user_id,
@@ -176,6 +180,7 @@ export function registerAuthRoutes(router) {
                 role_name: roleName,
                 department_name: user.departments?.department_name ?? null,
                 is_dept_approver: isDeptApprover,
+                perms: bitmaskToHex(permsBitmask),
             },
             csrfToken,
             timeoutMinutes

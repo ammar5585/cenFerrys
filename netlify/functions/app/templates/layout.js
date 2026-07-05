@@ -117,7 +117,7 @@ export function shell({
     extraScripts = '',
 }) {
     const navbarHtml = renderNavbar({ user, pageTitle, unreadCount, notifications });
-    const sidebarHtml = renderSidebar(user.role_name, currentPath, user.is_dept_approver, companyName, siteLogo);
+    const sidebarHtml = renderSidebar(user.perms, currentPath, user.is_dept_approver, companyName, siteLogo);
     const { styleBlock, fontLink } = themeAssets({ sidebarColor, headerColor, primaryColor, secondaryColor, fontFamily, fontSize });
 
     const flashScript = flashMessages

@@ -4,7 +4,7 @@
 // existed only because every PHP page was its own file).
 
 import { html, raw } from '../html.js';
-import { ROLE_ADMIN, ROLE_STAFF, ROLE_GM, ROLE_RM, ROLE_HR, ROLE_DEPT_MGR, ROLE_TRANSPORT, ROLE_SECURITY } from '../../session.js';
+import { hasPermission } from '../../permissions.js';
 
 function navLink(path, icon, label, currentPath) {
     const active = currentPath === path ? 'active' : '';
@@ -13,31 +13,39 @@ function navLink(path, icon, label, currentPath) {
           </a>`;
 }
 
-export function renderSidebar(roleName, currentPath, isDeptApprover = false, companyName = 'Ferry Portal', siteLogo = '') {
+/**
+ * `permsHex` is the user's effective permission bitmask (session.js's
+ * `user.perms`, a hex string) - each link is gated by its own
+ * permission, not by a coarse per-role block, so a custom role or
+ * per-user override that grants only some of what a built-in role has
+ * today actually hides the rest.
+ */
+export function renderSidebar(permsHex, currentPath, isDeptApprover = false, companyName = 'Ferry Portal', siteLogo = '') {
+    const can = (key) => hasPermission(permsHex, key);
     const links = [navLink('/dashboard', 'bi-speedometer2', 'Dashboard', currentPath)];
 
-    if (roleName === ROLE_ADMIN) {
-        links.push(
-            html`<div class="nav-heading">Administration</div>`,
-            navLink('/admin/users', 'bi-people', 'User Management', currentPath),
-            navLink('/admin/users/import', 'bi-file-earmark-arrow-up', 'Bulk Import Users', currentPath),
-            navLink('/admin/departments', 'bi-diagram-2', 'Departments', currentPath),
-            navLink('/admin/schedules', 'bi-calendar3', 'Ferry Schedules', currentPath),
-            navLink('/admin/routes', 'bi-signpost-split', 'Routes', currentPath),
-            navLink('/admin/directions', 'bi-arrow-left-right', 'Direction Management', currentPath),
-            navLink('/admin/holidays', 'bi-calendar-x', 'Holidays', currentPath),
-            navLink('/admin/manager_availability', 'bi-person-check', 'Manager Availability', currentPath),
-            navLink('/admin/department_approval', 'bi-diagram-3', 'Department Approval Config', currentPath),
-            navLink('/hr/overview', 'bi-globe', 'Executive Overview', currentPath),
-            navLink('/admin/bookings', 'bi-journal-check', 'All Bookings', currentPath),
-            navLink('/admin/reports', 'bi-graph-up', 'Reports', currentPath),
-            navLink('/admin/activity_logs', 'bi-clock-history', 'Activity Logs', currentPath),
-            navLink('/admin/branding', 'bi-palette', 'Website Branding', currentPath),
-            navLink('/admin/settings', 'bi-gear', 'Settings', currentPath)
-        );
+    if (can('user_management.access') || can('schedule_management.access') || can('approval_workflow.configure_hierarchy')
+        || can('booking.view_all') || can('reports.view_admin') || can('audit_logs.access') || can('branding.access') || can('settings.access')) {
+        links.push(html`<div class="nav-heading">Administration</div>`);
+        if (can('user_management.view')) links.push(navLink('/admin/users', 'bi-people', 'User Management', currentPath));
+        if (can('user_management.import')) links.push(navLink('/admin/users/import', 'bi-file-earmark-arrow-up', 'Bulk Import Users', currentPath));
+        if (can('user_management.manage_departments')) links.push(navLink('/admin/departments', 'bi-diagram-2', 'Departments', currentPath));
+        if (can('user_management.manage_roles')) links.push(navLink('/admin/roles', 'bi-shield-lock', 'Roles & Permissions', currentPath));
+        if (can('schedule_management.view')) links.push(navLink('/admin/schedules', 'bi-calendar3', 'Ferry Schedules', currentPath));
+        if (can('schedule_management.manage_routes')) links.push(navLink('/admin/routes', 'bi-signpost-split', 'Routes', currentPath));
+        if (can('schedule_management.manage_directions')) links.push(navLink('/admin/directions', 'bi-arrow-left-right', 'Direction Management', currentPath));
+        if (can('schedule_management.manage_holidays')) links.push(navLink('/admin/holidays', 'bi-calendar-x', 'Holidays', currentPath));
+        if (can('approval_workflow.manage_manager_availability')) links.push(navLink('/admin/manager_availability', 'bi-person-check', 'Manager Availability', currentPath));
+        if (can('approval_workflow.configure_hierarchy')) links.push(navLink('/admin/department_approval', 'bi-diagram-3', 'Department Approval Config', currentPath));
+        if (can('approval_workflow.executive_override')) links.push(navLink('/hr/overview', 'bi-globe', 'Executive Overview', currentPath));
+        if (can('booking.view_all')) links.push(navLink('/admin/bookings', 'bi-journal-check', 'All Bookings', currentPath));
+        if (can('reports.view_admin')) links.push(navLink('/admin/reports', 'bi-graph-up', 'Reports', currentPath));
+        if (can('audit_logs.view_activity')) links.push(navLink('/admin/activity_logs', 'bi-clock-history', 'Activity Logs', currentPath));
+        if (can('branding.manage')) links.push(navLink('/admin/branding', 'bi-palette', 'Website Branding', currentPath));
+        if (can('settings.manage')) links.push(navLink('/admin/settings', 'bi-gear', 'Settings', currentPath));
     }
 
-    if (roleName === ROLE_STAFF) {
+    if (can('booking.create_own')) {
         links.push(
             html`<div class="nav-heading">My Bookings</div>`,
             navLink('/staff/book', 'bi-plus-circle', 'New Booking', currentPath),
@@ -46,56 +54,49 @@ export function renderSidebar(roleName, currentPath, isDeptApprover = false, com
         );
     }
 
-    const isLegacyApproverRole = [ROLE_GM, ROLE_RM, ROLE_HR].includes(roleName);
+    const isLegacyApproverRole = can('approval_workflow.view_history') || can('approval_workflow.manage_own_availability');
     if (isLegacyApproverRole) {
-        links.push(
-            html`<div class="nav-heading">Approvals</div>`,
-            navLink('/manager/approvals', 'bi-check2-square', 'Pending Approvals', currentPath),
-            navLink('/manager/history', 'bi-clock-history', 'Approval History', currentPath),
-            navLink('/manager/availability', 'bi-person-check', 'My Availability', currentPath),
-            navLink('/manager/reports', 'bi-graph-up', 'Reports', currentPath)
-        );
+        links.push(html`<div class="nav-heading">Approvals</div>`, navLink('/manager/approvals', 'bi-check2-square', 'Pending Approvals', currentPath));
+        if (can('approval_workflow.view_history')) links.push(navLink('/manager/history', 'bi-clock-history', 'Approval History', currentPath));
+        if (can('approval_workflow.manage_own_availability')) links.push(navLink('/manager/availability', 'bi-person-check', 'My Availability', currentPath));
+        if (can('reports.view_manager')) links.push(navLink('/manager/reports', 'bi-graph-up', 'Reports', currentPath));
         // Executive Overview / override authority extends to GM and RM too,
-        // not just HR - see routes/hr_overview.js's widened role guard.
-        links.push(navLink('/hr/overview', 'bi-globe', 'Executive Overview', currentPath));
+        // not just HR - see routes/hr_overview.js's widened permission guard.
+        if (can('approval_workflow.executive_override')) links.push(navLink('/hr/overview', 'bi-globe', 'Executive Overview', currentPath));
     } else if (isDeptApprover) {
         // A user assigned as a department's Primary/Secondary Approver
         // tier, but holding some other RBAC role
-        // (e.g. Staff) - only /manager/approvals is role-open to them
+        // (e.g. Staff) - only /manager/approvals is login-open to them
         // today, so only link that (History/Availability/Reports stay
-        // GM/RM/HR-gated and would 403 otherwise).
+        // permission-gated and would 403 otherwise).
         links.push(
             html`<div class="nav-heading">Approvals</div>`,
             navLink('/manager/approvals', 'bi-check2-square', 'Pending Approvals', currentPath)
         );
     }
 
-    if (roleName === ROLE_DEPT_MGR) {
+    if (can('approval_workflow.view_department_requests')) {
         links.push(
             html`<div class="nav-heading">Department</div>`,
             navLink('/manager/department_requests', 'bi-people', 'Department Requests', currentPath)
         );
     }
 
-    if (roleName === ROLE_TRANSPORT) {
-        links.push(
-            html`<div class="nav-heading">Transport</div>`,
-            navLink('/transport/passenger_list', 'bi-list-check', "Today's Passengers", currentPath),
-            navLink('/transport/schedules_view', 'bi-calendar3', 'Ferry Schedules', currentPath),
-            navLink('/transport/manifest_print', 'bi-printer', 'Print Manifest', currentPath)
-        );
+    if (can('dashboard.view_transport')) {
+        links.push(html`<div class="nav-heading">Transport</div>`);
+        if (can('booking.view_manifest')) links.push(navLink('/transport/passenger_list', 'bi-list-check', "Today's Passengers", currentPath));
+        if (can('booking.view_transport_schedules')) links.push(navLink('/transport/schedules_view', 'bi-calendar3', 'Ferry Schedules', currentPath));
+        if (can('booking.print_manifest')) links.push(navLink('/transport/manifest_print', 'bi-printer', 'Print Manifest', currentPath));
     }
 
-    if (roleName === ROLE_SECURITY) {
-        links.push(
-            html`<div class="nav-heading">Security</div>`,
-            navLink('/security/manifest', 'bi-clipboard-check', 'Passenger Manifest', currentPath),
-            navLink('/security/waiting_list', 'bi-hourglass-split', 'Waiting List', currentPath)
-        );
+    if (can('security.access')) {
+        links.push(html`<div class="nav-heading">Security</div>`);
+        if (can('security.manage_manifest')) links.push(navLink('/security/manifest', 'bi-clipboard-check', 'Passenger Manifest', currentPath));
+        if (can('security.manage_waiting_list')) links.push(navLink('/security/waiting_list', 'bi-hourglass-split', 'Waiting List', currentPath));
     }
 
     links.push(html`<div class="nav-heading">Account</div>`);
-    if (roleName !== ROLE_STAFF) {
+    if (!can('booking.create_own')) {
         links.push(navLink('/staff/profile', 'bi-person-circle', 'My Profile', currentPath));
     }
     links.push(

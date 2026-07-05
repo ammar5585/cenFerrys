@@ -12,14 +12,13 @@
 // change for existing reads to reflect an edit.
 
 import { db, unwrap } from '../db.js';
-import { requireRole } from '../guards.js';
+import { requirePermission } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
-import { ROLE_ADMIN } from '../session.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -116,7 +115,7 @@ ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `
 
 export function registerAdminDirectionsRoutes(router) {
     router.get('/admin/directions', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'schedule_management.manage_directions', { pageTitle: 'Direction Management' });
         if (auth.response) return auth.response;
         const url = new URL(request.url);
         const body = await directionsPageBody({
@@ -130,7 +129,7 @@ export function registerAdminDirectionsRoutes(router) {
     });
 
     router.post('/admin/directions', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'schedule_management.manage_directions', { pageTitle: 'Direction Management' });
         if (auth.response) return auth.response;
         const { user } = auth;
         const form = await readFormBody(request);

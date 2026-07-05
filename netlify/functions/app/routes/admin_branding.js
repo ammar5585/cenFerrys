@@ -14,7 +14,7 @@
 // server-side handleUpload() in uploads.js never changes and never sees
 // an oversized original.
 
-import { requireRole } from '../guards.js';
+import { requirePermission } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
@@ -279,14 +279,14 @@ async function ferryHandleBrandingFile(input, previewId, targetFormat) {
 
 export function registerAdminBrandingRoutes(router) {
     router.get('/admin/branding', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'branding.manage', { pageTitle: 'Website Branding' });
         if (auth.response) return auth.response;
         const body = await brandingPageBody({ errors: [], csrfToken: auth.user.csrf });
         return renderShellForRequest({ request, auth, pageTitle: 'Website Branding', path: '/admin/branding', bodyHtml: body });
     });
 
     router.post('/admin/branding', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'branding.manage', { pageTitle: 'Website Branding' });
         if (auth.response) return auth.response;
         const { user } = auth;
 

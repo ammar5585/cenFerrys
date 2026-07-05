@@ -2,18 +2,17 @@
 // utilization view (schedule CRUD stays admin-only).
 
 import { db, unwrap } from '../db.js';
-import { requireRole } from '../guards.js';
+import { requirePermission } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw } from '../templates/html.js';
 import { getRemainingSeats } from '../seats.js';
 import { formatTime } from '../format.js';
-import { ROLE_TRANSPORT } from '../session.js';
 
 const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export function registerTransportSchedulesViewRoutes(router) {
     router.get('/transport/schedules_view', async (request) => {
-        const auth = await requireRole(request, [ROLE_TRANSPORT]);
+        const auth = await requirePermission(request, 'booking.view_transport_schedules', { pageTitle: 'Ferry Schedules' });
         if (auth.response) return auth.response;
 
         const url = new URL(request.url);

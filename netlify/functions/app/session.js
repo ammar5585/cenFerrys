@@ -6,6 +6,7 @@
 import { db, unwrap } from './db.js';
 import { readSessionCookie, verifySessionTokenDetailed, buildSessionCookie, signSessionToken } from './auth.js';
 import { getSetting } from './settings.js';
+import { getEffectivePermissions, bitmaskToHex } from './permissions.js';
 
 /**
  * Resolves the current session for a request.
@@ -34,7 +35,10 @@ export async function getSession(request) {
     }
 
     const timeoutMinutes = Number(await getSetting('session_timeout_minutes', 30));
-    const isDeptApprover = await checkIsDepartmentApprover(payload.user_id);
+    const [isDeptApprover, permsBitmask] = await Promise.all([
+        checkIsDepartmentApprover(payload.user_id),
+        getEffectivePermissions(payload.user_id, payload.role_id),
+    ]);
     const freshToken = signSessionToken(
         {
             user_id: payload.user_id,
@@ -45,6 +49,7 @@ export async function getSession(request) {
             role_name: payload.role_name,
             department_name: payload.department,
             is_dept_approver: isDeptApprover,
+            perms: bitmaskToHex(permsBitmask),
         },
         payload.csrf,
         timeoutMinutes

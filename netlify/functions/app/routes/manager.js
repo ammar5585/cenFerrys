@@ -2,7 +2,7 @@
 // department_requests.js, reports.js land in Phase 3).
 
 import { db, unwrap } from '../db.js';
-import { requireRole, requireLogin } from '../guards.js';
+import { requirePermission, requireLogin } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
@@ -170,7 +170,7 @@ async function pendingApprovalsBody(userId, csrfToken) {
 
 export function registerManagerRoutes(router) {
     router.get('/manager/dashboard', async (request) => {
-        const auth = await requireRole(request, [ROLE_GM, ROLE_RM, ROLE_HR, ROLE_DEPT_MGR]);
+        const auth = await requirePermission(request, 'dashboard.view_manager', { pageTitle: 'Manager Dashboard' });
         if (auth.response) return auth.response;
         const body = await managerDashboardBody(auth.user);
         return renderShellForRequest({ request, auth, pageTitle: 'Manager Dashboard', path: '/manager/dashboard', bodyHtml: body });

@@ -4,7 +4,7 @@
 // following the same route-file convention as transport.js/manager.js.
 
 import { db, unwrap } from '../db.js';
-import { requireRole } from '../guards.js';
+import { requirePermission } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
@@ -14,10 +14,9 @@ import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatDate, formatTime, formatDateTime, statusBadgeClass, greeting } from '../format.js';
-import { ROLE_SECURITY, ROLE_ADMIN, ROLE_HR } from '../session.js';
+import { ROLE_ADMIN, ROLE_HR } from '../session.js';
 
 const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const SECURITY_ROLES = [ROLE_SECURITY, ROLE_ADMIN];
 const MANIFEST_STATUSES = ['Approved', 'Checked-In', 'Departed', 'Arrived', 'Completed'];
 
 async function readFormBody(request) {
@@ -308,7 +307,7 @@ ${scheduleId
 
 export function registerSecurityRoutes(router) {
     router.get('/security/dashboard', async (request) => {
-        const auth = await requireRole(request, SECURITY_ROLES);
+        const auth = await requirePermission(request, 'dashboard.view_security', { pageTitle: 'Security Dashboard' });
         if (auth.response) return auth.response;
         const url = new URL(request.url);
         const search = url.searchParams.get('search') || '';
@@ -317,7 +316,7 @@ export function registerSecurityRoutes(router) {
     });
 
     router.get('/security/manifest', async (request) => {
-        const auth = await requireRole(request, SECURITY_ROLES);
+        const auth = await requirePermission(request, 'security.manage_manifest', { pageTitle: 'Passenger Manifest' });
         if (auth.response) return auth.response;
         const url = new URL(request.url);
         const date = url.searchParams.get('date') || new Date().toISOString().slice(0, 10);
@@ -328,7 +327,7 @@ export function registerSecurityRoutes(router) {
     });
 
     router.post('/security/manifest', async (request) => {
-        const auth = await requireRole(request, SECURITY_ROLES);
+        const auth = await requirePermission(request, 'security.manage_manifest', { pageTitle: 'Passenger Manifest' });
         if (auth.response) return auth.response;
         const { user } = auth;
         const form = await readFormBody(request);
@@ -349,7 +348,7 @@ export function registerSecurityRoutes(router) {
     });
 
     router.get('/security/waiting_list', async (request) => {
-        const auth = await requireRole(request, SECURITY_ROLES);
+        const auth = await requirePermission(request, 'security.manage_waiting_list', { pageTitle: 'Waiting List' });
         if (auth.response) return auth.response;
         const url = new URL(request.url);
         const date = url.searchParams.get('date') || new Date().toISOString().slice(0, 10);
@@ -361,7 +360,7 @@ export function registerSecurityRoutes(router) {
     });
 
     router.post('/security/waiting_list', async (request) => {
-        const auth = await requireRole(request, [...SECURITY_ROLES, ROLE_HR]);
+        const auth = await requirePermission(request, 'security.manage_waiting_list', { pageTitle: 'Waiting List' });
         if (auth.response) return auth.response;
         const { user } = auth;
         const form = await readFormBody(request);

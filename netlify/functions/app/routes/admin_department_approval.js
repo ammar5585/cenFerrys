@@ -9,14 +9,13 @@
 // live data depended on it at removal time.
 
 import { db, unwrap } from '../db.js';
-import { requireRole } from '../guards.js';
+import { requirePermission } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
-import { ROLE_ADMIN } from '../session.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -124,14 +123,14 @@ ${raw(resortSections)}`;
 
 export function registerAdminDepartmentApprovalRoutes(router) {
     router.get('/admin/department_approval', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'approval_workflow.configure_hierarchy', { pageTitle: 'Department Approval Configuration' });
         if (auth.response) return auth.response;
         const body = await departmentApprovalPageBody(auth.user.csrf);
         return renderShellForRequest({ request, auth, pageTitle: 'Department Approval Configuration', path: '/admin/department_approval', bodyHtml: body });
     });
 
     router.post('/admin/department_approval', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN]);
+        const auth = await requirePermission(request, 'approval_workflow.configure_hierarchy', { pageTitle: 'Department Approval Configuration' });
         if (auth.response) return auth.response;
         const { user } = auth;
         const form = await readFormBody(request);

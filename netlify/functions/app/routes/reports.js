@@ -12,13 +12,12 @@
 // The manager scope (GM/RM/HR, limited filters) is untouched.
 
 import { db, unwrap } from '../db.js';
-import { requireRole } from '../guards.js';
+import { requirePermission } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csvResponse } from '../response.js';
 import { getSetting } from '../settings.js';
 import { formatDate, formatTime, formatDateTime } from '../format.js';
-import { ROLE_ADMIN, ROLE_GM, ROLE_RM, ROLE_HR } from '../session.js';
 
 async function fetchReportRows({ dateFrom, dateTo, deptFilter, resortFilter, empFilter, routeFilter, statusFilter, purpose }) {
     let query = db()
@@ -381,13 +380,13 @@ function toCsv(rows, includeApprover) {
 
 export function registerReportsRoutes(router) {
     router.get('/admin/reports', async (request) => {
-        const auth = await requireRole(request, [ROLE_ADMIN, ROLE_HR]);
+        const auth = await requirePermission(request, 'reports.view_admin', { pageTitle: 'Reports' });
         if (auth.response) return auth.response;
         return handleReport(request, auth, 'admin', '/admin/reports');
     });
 
     router.get('/manager/reports', async (request) => {
-        const auth = await requireRole(request, [ROLE_GM, ROLE_RM, ROLE_HR]);
+        const auth = await requirePermission(request, 'reports.view_manager', { pageTitle: 'Reports' });
         if (auth.response) return auth.response;
         return handleReport(request, auth, 'manager', '/manager/reports');
     });
