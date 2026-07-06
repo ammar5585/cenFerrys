@@ -11,7 +11,6 @@ import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
 import { getStatusId, routeDepartmentApproval } from '../approval.js';
 import { bookFerrySeat } from '../seats.js';
-import { getSetting } from '../settings.js';
 import { createNotification } from '../notifications.js';
 import { notifySecurityIfWaitingList } from '../security.js';
 import { logActivity, clientIp } from '../activity.js';
@@ -44,7 +43,6 @@ async function bookingsPageBody({ dateFrom, dateTo, statusFilter, deptFilter, cs
     const departments = unwrap(await db().from('departments').select('*').order('department_name'));
     const canAdminOverride = hasPermission(perms, 'booking.admin_override');
     const canHrManualBook = hasPermission(perms, 'booking.hr_manual_booking');
-    const canOverrideCutoff = canHrManualBook && hasPermission(perms, 'booking.override_cutoff');
     const canOverrideCapacity = canHrManualBook && hasPermission(perms, 'booking.override_capacity');
     const canOverrideApproval = canHrManualBook && hasPermission(perms, 'booking.override_approval');
 
@@ -104,7 +102,6 @@ async function bookingsPageBody({ dateFrom, dateTo, statusFilter, deptFilter, cs
         <div class="mb-3"><label class="form-label">Seats</label><input type="number" name="seats" class="form-control" min="1" value="1" required></div>
         <div class="mb-3"><label class="form-label">Purpose</label><input type="text" name="purpose" class="form-control" required></div>
         <div class="mb-3"><label class="form-label">Remarks (Optional)</label><textarea name="remarks" class="form-control" rows="2"></textarea></div>
-        ${canOverrideCutoff ? `<div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="override_cutoff" value="1" id="hrOverrideCutoff"><label class="form-check-label" for="hrOverrideCutoff">Override booking cut-off time</label></div>` : ''}
         ${canOverrideCapacity ? `<div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="override_capacity" value="1" id="hrOverrideCapacity"><label class="form-check-label" for="hrOverrideCapacity">Override seat availability (if ferry is full, otherwise adds to waiting list)</label></div>` : ''}
         ${canOverrideApproval ? `<div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="override_approval" value="1" id="hrOverrideApproval"><label class="form-check-label" for="hrOverrideApproval">Override approval workflow (approve immediately)</label></div>` : ''}
     </div>
@@ -272,7 +269,6 @@ export function registerAdminBookingsRoutes(router) {
             // Never trust the checkboxes alone - re-check each override
             // against the actual permission server-side, same discipline
             // as every other form re-validation in this codebase.
-            const overrideCutoff = !!form.override_cutoff && hasPermission(user.perms, 'booking.override_cutoff');
             const overrideCapacity = !!form.override_capacity && hasPermission(user.perms, 'booking.override_capacity');
             const overrideApproval = !!form.override_approval && hasPermission(user.perms, 'booking.override_approval');
 
@@ -292,16 +288,6 @@ export function registerAdminBookingsRoutes(router) {
             }
             const schedule = scheduleRows[0];
             const direction = schedule.ferry_routes.direction;
-
-            if (!overrideCutoff) {
-                const cutoffHours = Number(await getSetting('booking_cutoff_hours', 2));
-                const departureDateTime = new Date(`${travelDate}T${schedule.departure_time}`);
-                if ((departureDateTime.getTime() - Date.now()) / 1000 < cutoffHours * 3600) {
-                    return redirectTo('/admin/bookings', {
-                        cookies: [auth.setCookie, flashSetCookie('error', `Bookings must be made at least ${cutoffHours} hour(s) before departure. Check "Override booking cut-off time" to bypass.`)].filter(Boolean),
-                    });
-                }
-            }
 
             const waitingListStatusId = await getStatusId('Waiting List');
             let booking;
@@ -350,7 +336,6 @@ export function registerAdminBookingsRoutes(router) {
                     resort_id: employee.resort_id,
                     travel_date: travelDate,
                     created_by_user_id: user.user_id,
-                    cutoff_overridden: overrideCutoff,
                     capacity_overridden: overrideCapacity,
                     approval_overridden: overrideApproval,
                     remarks,

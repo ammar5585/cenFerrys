@@ -144,7 +144,7 @@ function approvalWorkflowInfoHtml(workflowInfo) {
 <ul class="ps-3">${raw(execListHtml || '<li class="text-muted">No General Manager, Resident Manager, or HR Manager is currently active.</li>')}</ul>`;
 }
 
-function bookingFormBody({ errors, maxSeats, cutoffHours, routes, workflowInfo, csrfToken }) {
+function bookingFormBody({ errors, maxSeats, routes, workflowInfo, csrfToken }) {
     return html`
 <h5 class="mb-3"><i class="bi bi-plus-circle"></i> New Ferry Booking</h5>
 
@@ -199,7 +199,7 @@ ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `
         <div class="card shadow-sm">
             <div class="card-body small text-muted">
                 ${approvalWorkflowInfoHtml(workflowInfo)}
-                <p class="mb-0">Bookings must be made at least ${cutoffHours} hour(s) before departure. Maximum ${maxSeats} seat(s) per booking.</p>
+                <p class="mb-0">Maximum ${maxSeats} seat(s) per booking.</p>
             </div>
         </div>
     </div>
@@ -251,13 +251,12 @@ const BOOKING_PAGE_SCRIPT = `
                     var col = document.createElement('div');
                     col.className = 'col-md-4';
                     col.innerHTML =
-                        '<div class="form-check border rounded p-2 ' + (full ? 'opacity-50' : '') + '">' +
-                        '<input class="form-check-input" type="radio" name="schedule_radio" value="' + s.schedule_id + '" id="sch' + s.schedule_id + '" ' + (full ? 'disabled' : '') + '>' +
-                        '<label class="form-check-label w-100" for="sch' + s.schedule_id + '">' +
-                        '<strong>' + s.time_label + '</strong><br>' +
-                        '<span class="' + (full ? 'seat-full' : 'seat-ok') + '">' + (full ? 'FULL' : s.remaining + ' seats left') + '</span>' +
-                        '<br><small class="text-muted">' + s.booked + ' / ' + s.capacity + ' booked</small>' +
-                        '</label></div>';
+                        '<label class="schedule-card' + (full ? ' schedule-card-disabled' : '') + '" for="sch' + s.schedule_id + '">' +
+                        '<input type="radio" name="schedule_radio" value="' + s.schedule_id + '" id="sch' + s.schedule_id + '" ' + (full ? 'disabled' : '') + '>' +
+                        '<span class="schedule-card-time">' + s.time_label + '</span>' +
+                        '<span class="' + (full ? 'schedule-card-seats-full' : 'schedule-card-seats-ok') + '">' + (full ? 'FULL' : s.remaining + ' seats left') + '</span>' +
+                        '<span class="schedule-card-booked">' + s.booked + ' / ' + s.capacity + ' booked</span>' +
+                        '</label>';
                     container.appendChild(col);
                 });
                 container.querySelectorAll('input[name="schedule_radio"]').forEach(function (radio) {
@@ -416,12 +415,11 @@ export function registerStaffRoutes(router) {
         if (auth.response) return auth.response;
 
         const maxSeats = Number(await getSetting('max_seats_per_booking', 4));
-        const cutoffHours = Number(await getSetting('booking_cutoff_hours', 2));
         const routes = unwrap(await db().from('ferry_routes').select('direction').eq('status', 'active').order('direction'));
         const bookerRows = unwrap(await db().from('users').select('department_id, resort_id').eq('user_id', auth.user.user_id).limit(1));
         const workflowInfo = await getApprovalWorkflowInfo(bookerRows[0]?.resort_id ?? null, bookerRows[0]?.department_id ?? null);
 
-        const body = bookingFormBody({ errors: [], maxSeats, cutoffHours, routes, workflowInfo, csrfToken: auth.user.csrf });
+        const body = bookingFormBody({ errors: [], maxSeats, routes, workflowInfo, csrfToken: auth.user.csrf });
         return renderShellForRequest({
             request,
             auth,
@@ -441,7 +439,6 @@ export function registerStaffRoutes(router) {
         if (!verifyCsrf(user.csrf, form.csrf_token)) return notFound();
 
         const maxSeats = Number(await getSetting('max_seats_per_booking', 4));
-        const cutoffHours = Number(await getSetting('booking_cutoff_hours', 2));
         const scheduleId = Number(form.schedule_id || 0);
         const travelDate = form.travel_date || '';
         const seats = Math.max(1, Math.min(maxSeats, Number(form.seats || 1)));
@@ -473,10 +470,6 @@ export function registerStaffRoutes(router) {
             const weekdayAbbr = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(`${travelDate}T00:00:00Z`).getUTCDay()];
             if (!schedule.weekdays.includes(weekdayAbbr)) {
                 errors.push('The selected ferry does not operate on that day.');
-            }
-            const departureDateTime = new Date(`${travelDate}T${schedule.departure_time}`);
-            if ((departureDateTime.getTime() - Date.now()) / 1000 < cutoffHours * 3600) {
-                errors.push(`Bookings must be made at least ${cutoffHours} hour(s) before departure.`);
             }
         }
 
@@ -534,7 +527,7 @@ export function registerStaffRoutes(router) {
         const routes = unwrap(await db().from('ferry_routes').select('direction').eq('status', 'active').order('direction'));
         const errorPathBookerRows = unwrap(await db().from('users').select('department_id, resort_id').eq('user_id', user.user_id).limit(1));
         const workflowInfo = await getApprovalWorkflowInfo(errorPathBookerRows[0]?.resort_id ?? null, errorPathBookerRows[0]?.department_id ?? null);
-        const body = bookingFormBody({ errors, maxSeats, cutoffHours, routes, workflowInfo, csrfToken: user.csrf });
+        const body = bookingFormBody({ errors, maxSeats, routes, workflowInfo, csrfToken: user.csrf });
         return renderShellForRequest({
             request,
             auth,

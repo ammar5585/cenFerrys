@@ -19,7 +19,7 @@ export const DEFAULT_ROLE_PERMISSIONS = {
         'schedule_management.access', 'schedule_management.view', 'schedule_management.manage_schedules',
         'schedule_management.manage_routes', 'schedule_management.manage_directions', 'schedule_management.manage_holidays',
         'booking.access', 'booking.view_all', 'booking.admin_override', 'booking.print_manifest',
-        'booking.hr_manual_booking', 'booking.override_cutoff', 'booking.override_capacity', 'booking.override_approval',
+        'booking.hr_manual_booking', 'booking.override_capacity', 'booking.override_approval',
         'approval_workflow.access', 'approval_workflow.manage_manager_availability',
         'approval_workflow.configure_hierarchy', 'approval_workflow.executive_override',
         'security.access', 'security.manage_manifest', 'security.manage_waiting_list',
@@ -47,7 +47,7 @@ export const DEFAULT_ROLE_PERMISSIONS = {
         'security.access', 'security.manage_waiting_list',
         'reports.access', 'reports.view_admin', 'reports.view_manager',
         'booking.access', 'booking.view_all',
-        'booking.hr_manual_booking', 'booking.override_cutoff', 'booking.override_capacity', 'booking.override_approval',
+        'booking.hr_manual_booking', 'booking.override_capacity', 'booking.override_approval',
         'audit_logs.access', 'audit_logs.view_hr_manual_bookings',
     ],
     'Transport Coordinator': [

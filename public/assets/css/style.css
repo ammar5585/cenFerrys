@@ -307,6 +307,38 @@ body {
 .seat-full { color: #dc3545; font-weight: 700; }
 .seat-ok { color: #198754; font-weight: 600; }
 
+/* Ferry-time picker cards (staff/book's live schedule widget) - the
+   whole card is the clickable label, the radio itself is visually
+   hidden; selection is shown via a red glow border rather than an
+   exposed radio button. */
+.schedule-card {
+    position: relative;
+    display: block;
+    width: 100%;
+    border: 1px solid #e2e5ea;
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    cursor: pointer;
+    background: #fff;
+    transition: border-color .15s ease, box-shadow .15s ease;
+}
+[data-bs-theme="dark"] .schedule-card { background: #232c3b; border-color: #2c3543; }
+.schedule-card:hover { border-color: #c8ccd2; }
+.schedule-card input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+.schedule-card:has(input:checked) {
+    border-color: #dc3545;
+    box-shadow: 0 0 0 3px rgba(220, 53, 69, 0.2), 0 0 14px rgba(220, 53, 69, 0.35);
+}
+.schedule-card-disabled { opacity: .5; cursor: not-allowed; }
+.schedule-card-time { display: block; font-size: 1.1rem; font-weight: 700; }
+.schedule-card-seats-ok { display: block; margin-top: .35rem; color: #198754; font-weight: 700; }
+.schedule-card-seats-full { display: block; margin-top: .35rem; color: #dc3545; font-weight: 700; }
+.schedule-card-booked { display: block; margin-top: .15rem; font-size: .85rem; color: #7c8aa5; }
+
 .login-wrapper {
     min-height: 100vh;
     display: flex;

@@ -16,7 +16,6 @@ const WEEKDAY_OPTIONS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 async function settingsBody({ errors, csrfToken }) {
     const maxSeats = await getSetting('max_seats_per_booking', 4);
-    const cutoffHours = await getSetting('booking_cutoff_hours', 2);
     const workingDaysStr = await getSetting('working_days', 'Mon,Tue,Wed,Thu,Fri,Sat,Sun');
     const passwordMinLength = await getSetting('password_min_length', 8);
     const sessionTimeout = await getSetting('session_timeout_minutes', 30);
@@ -32,9 +31,8 @@ ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `
     <form method="post" enctype="multipart/form-data">
         ${raw(csrfField(csrfToken))}
         <div class="row g-3">
-            <div class="col-md-4"><label class="form-label">Max Seats Per Booking</label><input type="number" min="1" name="max_seats_per_booking" class="form-control" value="${maxSeats}"></div>
-            <div class="col-md-4"><label class="form-label">Booking Cut-Off Time (hours before departure)</label><input type="number" min="0" name="booking_cutoff_hours" class="form-control" value="${cutoffHours}"></div>
-            <div class="col-md-4"><label class="form-label">Session Timeout (minutes)</label><input type="number" min="5" name="session_timeout_minutes" class="form-control" value="${sessionTimeout}"></div>
+            <div class="col-md-6"><label class="form-label">Max Seats Per Booking</label><input type="number" min="1" name="max_seats_per_booking" class="form-control" value="${maxSeats}"></div>
+            <div class="col-md-6"><label class="form-label">Session Timeout (minutes)</label><input type="number" min="5" name="session_timeout_minutes" class="form-control" value="${sessionTimeout}"></div>
             <div class="col-12"><label class="form-label">Working Days</label><div class="d-flex flex-wrap gap-3">
                 ${raw(WEEKDAY_OPTIONS.map((day) => `<div class="form-check"><input class="form-check-input" type="checkbox" name="working_days" value="${day}" id="wd${day}" ${workingDays.includes(day) ? 'checked' : ''}><label class="form-check-label" for="wd${day}">${day}</label></div>`).join(''))}
             </div></div>
@@ -65,7 +63,6 @@ export function registerAdminSettingsRoutes(router) {
         if (!verifyCsrf(user.csrf, form.get('csrf_token'))) return notFound();
 
         await setSetting('max_seats_per_booking', Math.max(1, Number(form.get('max_seats_per_booking')) || 4));
-        await setSetting('booking_cutoff_hours', Math.max(0, Number(form.get('booking_cutoff_hours')) || 2));
         await setSetting('working_days', form.getAll('working_days').join(','));
         await setSetting('password_min_length', Math.max(6, Number(form.get('password_min_length')) || 8));
         await setSetting('session_timeout_minutes', Math.max(5, Number(form.get('session_timeout_minutes')) || 30));
