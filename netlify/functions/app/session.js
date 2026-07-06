@@ -56,7 +56,13 @@ export async function getSession(request) {
     );
 
     return {
-        user: payload,
+        // Freshly-computed is_dept_approver/perms, not the possibly-stale
+        // values from the incoming cookie - otherwise a permission or
+        // department-approver-assignment change wouldn't take effect
+        // until the request AFTER next (the incoming cookie's claims
+        // would still gate this request; only the reissued cookie would
+        // carry the update, for whatever request comes after this one).
+        user: { ...payload, is_dept_approver: isDeptApprover, perms: bitmaskToHex(permsBitmask) },
         setCookie: buildSessionCookie(freshToken),
         expired: false,
     };
