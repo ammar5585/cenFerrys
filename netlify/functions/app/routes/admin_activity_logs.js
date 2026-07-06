@@ -7,7 +7,7 @@ import { accessDeniedResponse } from '../accessDenied.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { redirectTo } from '../response.js';
 import { html, raw } from '../templates/html.js';
-import { formatDateTime } from '../format.js';
+import { formatDateTime, formatDate, formatTime } from '../format.js';
 
 const PER_PAGE = 25;
 
@@ -103,7 +103,7 @@ async function hrManualBookingsBody(page, canViewPermissionChanges, canViewHrMan
             return html`<tr>
                 <td>${formatDateTime(r.created_at)}</td>
                 <td>${r.employee_name_snapshot} <small class="text-muted">${r.employee_id_snapshot}</small></td>
-                <td>${r.direction ?? '-'}${r.ferry_schedule ? html` - ${formatDateTime(r.travel_date + 'T' + r.ferry_schedule.departure_time)}` : ''}</td>
+                <td>${r.direction ?? '-'}${r.ferry_schedule ? html` - ${formatDate(r.travel_date)}, ${formatTime(r.ferry_schedule.departure_time)}` : ''}</td>
                 <td>${r.resorts?.resort_name ?? '-'}</td>
                 <td>${r.created_by?.full_name ?? 'Unknown'}</td>
                 <td>${overrides.length ? overrides.join(', ') : 'None'}</td>
