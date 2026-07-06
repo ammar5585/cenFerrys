@@ -28,6 +28,8 @@ import { registerAdminBrandingRoutes } from '../netlify/functions/app/routes/adm
 import { registerAdminActivityLogRoutes } from '../netlify/functions/app/routes/admin_activity_logs.js';
 import { registerAdminDepartmentApprovalRoutes } from '../netlify/functions/app/routes/admin_department_approval.js';
 import { registerAdminDepartmentsRoutes } from '../netlify/functions/app/routes/admin_departments.js';
+import { registerAdminPermissionsRoutes } from '../netlify/functions/app/routes/admin_permissions.js';
+import { registerAdminUserPermissionsRoutes } from '../netlify/functions/app/routes/admin_user_permissions.js';
 import { registerAdminUserImportRoutes } from '../netlify/functions/app/routes/admin_user_import.js';
 import { registerReportsRoutes } from '../netlify/functions/app/routes/reports.js';
 import { registerHrOverviewRoutes } from '../netlify/functions/app/routes/hr_overview.js';
@@ -53,6 +55,8 @@ registerAdminBrandingRoutes(router);
 registerAdminActivityLogRoutes(router);
 registerAdminDepartmentApprovalRoutes(router);
 registerAdminDepartmentsRoutes(router);
+registerAdminPermissionsRoutes(router);
+registerAdminUserPermissionsRoutes(router);
 registerAdminUserImportRoutes(router);
 registerReportsRoutes(router);
 registerHrOverviewRoutes(router);
