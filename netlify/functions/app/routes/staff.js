@@ -256,6 +256,7 @@ const BOOKING_PAGE_SCRIPT = `
                         '<span class="schedule-card-time">' + s.time_label + '</span>' +
                         '<span class="' + (full ? 'schedule-card-seats-full' : 'schedule-card-seats-ok') + '">' + (full ? 'FULL' : s.remaining + ' seats left') + '</span>' +
                         '<span class="schedule-card-booked">' + s.booked + ' / ' + s.capacity + ' booked</span>' +
+                        (s.reserved > 0 ? '<span class="schedule-card-reserved">' + s.reserved + ' reserved</span>' : '') +
                         '</label>';
                     container.appendChild(col);
                 });

@@ -11,6 +11,11 @@ export default async () => {
     if (error) {
         console.error('expire_old_bookings failed:', error.message);
     }
+
+    const { error: reservationError } = await db().rpc('expire_old_seat_reservations');
+    if (reservationError) {
+        console.error('expire_old_seat_reservations failed:', reservationError.message);
+    }
 };
 
 export const config = {

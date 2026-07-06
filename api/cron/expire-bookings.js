@@ -17,6 +17,12 @@ async function handleRequest(request) {
         return Response.json({ ok: false, error: error.message }, { status: 500 });
     }
 
+    const { error: reservationError } = await db().rpc('expire_old_seat_reservations');
+    if (reservationError) {
+        console.error('expire_old_seat_reservations failed:', reservationError.message);
+        return Response.json({ ok: false, error: reservationError.message }, { status: 500 });
+    }
+
     return Response.json({ ok: true });
 }
 

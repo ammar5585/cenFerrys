@@ -53,12 +53,13 @@ export function registerAjaxRoutes(router) {
 
             const result = [];
             for (const s of matching) {
-                const { capacity, booked, remaining } = await getRemainingSeats(s.schedule_id, date);
+                const { capacity, booked, reserved, remaining } = await getRemainingSeats(s.schedule_id, date);
                 result.push({
                     schedule_id: s.schedule_id,
                     time_label: formatTime(s.departure_time),
                     capacity,
                     booked,
+                    reserved,
                     remaining,
                 });
             }
