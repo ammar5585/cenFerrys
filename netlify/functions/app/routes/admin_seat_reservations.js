@@ -1,9 +1,12 @@
 // HR Seat Reservation Management: hold ferry seats out of general
 // circulation for a specific employee, a department, VIP/Executive
 // use, general operational buffer, or an emergency hold, over a date
-// range with an optional weekday pattern. Capacity enforcement itself
-// lives entirely in the redefined get_remaining_seats()/book_ferry_seat()
-// Postgres functions (supabase/migrations/0016_seat_reservations.sql) -
+// range - applies every day within that range (no per-weekday picker
+// in the UI, per user request), though the underlying weekdays column
+// still exists and is always stored as all 7 days, since
+// reserved_seats_for_schedule_date() (0016_seat_reservations.sql)
+// checks it. Capacity enforcement itself lives entirely in the
+// redefined get_remaining_seats()/book_ferry_seat() Postgres functions -
 // this file is purely CRUD + audit, mirroring admin_directions.js's/
 // admin_bookings.js's established shape.
 
@@ -42,11 +45,6 @@ async function readFormBody(request) {
         }
     }
     return out;
-}
-
-function asArray(value) {
-    if (value == null) return [];
-    return Array.isArray(value) ? value : [value];
 }
 
 async function recordReservationAudit({ reservation, action, actorUserId, reason }) {
@@ -104,7 +102,7 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken }) {
             <td>${who}</td>
             <td>${r.contact_name ?? ''}</td>
             <td>${r.seats}</td>
-            <td>${r.start_date} &rarr; ${r.end_date}<br><small class="text-muted">${(r.weekdays || []).join(', ')}</small></td>
+            <td>${r.start_date} &rarr; ${r.end_date}</td>
             <td><span class="badge ${statusBadge}">${r.status.charAt(0).toUpperCase() + r.status.slice(1)}</span></td>
             <td class="text-nowrap">
                 ${r.status === 'active'
@@ -132,11 +130,6 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken }) {
     const editModalsHtml = reservations
         .filter((r) => r.status === 'active')
         .map((r) => {
-            const weekdaySet = new Set(r.weekdays || []);
-            const weekdayCheckboxes = WEEKDAY_OPTIONS.map(
-                (day) =>
-                    `<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="weekdays" value="${day}" id="ewd${r.reservation_id}${day}" ${weekdaySet.has(day) ? 'checked' : ''}><label class="form-check-label" for="ewd${r.reservation_id}${day}">${day}</label></div>`
-            ).join('');
             return `<div class="modal fade" id="editReservationModal${r.reservation_id}" tabindex="-1"><div class="modal-dialog"><form method="post" class="modal-content">
     ${csrfField(csrfToken)}<input type="hidden" name="action" value="edit"><input type="hidden" name="reservation_id" value="${r.reservation_id}">
     <div class="modal-header"><h5 class="modal-title">Edit Reservation</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
@@ -149,7 +142,6 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken }) {
             <div class="col-6"><label class="form-label">Start Date</label><input type="date" name="start_date" class="form-control" value="${r.start_date}" required></div>
             <div class="col-6"><label class="form-label">End Date</label><input type="date" name="end_date" class="form-control" value="${r.end_date}" required></div>
         </div>
-        <div class="mb-3"><label class="form-label d-block">Applies On</label>${weekdayCheckboxes}</div>
         <div class="mb-3"><label class="form-label">Reason</label><textarea name="reason" class="form-control" rows="2" required>${h(r.reason)}</textarea></div>
     </div>
     <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Save Changes</button></div>
@@ -163,9 +155,6 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken }) {
     const scheduleOptionsHtml = schedules
         .map((s) => `<option value="${s.schedule_id}">${h(s.ferry_routes.route_name)} - ${h(s.ferry_routes.direction)} - ${h(formatTime(s.departure_time))}</option>`)
         .join('');
-    const weekdayCheckboxesHtml = WEEKDAY_OPTIONS.map(
-        (day) => `<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="weekdays" value="${day}" id="wd${day}" checked><label class="form-check-label" for="wd${day}">${day}</label></div>`
-    ).join('');
 
     const createModalHtml = `<div class="modal fade" id="createReservationModal" tabindex="-1"><div class="modal-dialog modal-lg"><form method="post" class="modal-content">
     ${csrfField(csrfToken)}<input type="hidden" name="action" value="create">
@@ -187,7 +176,6 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken }) {
             <div class="col-md-4"><label class="form-label">Seats</label><input type="number" name="seats" class="form-control" min="1" value="1" required></div>
             <div class="col-md-6"><label class="form-label">Start Date</label><input type="date" name="start_date" class="form-control" required value="${new Date().toISOString().slice(0, 10)}"></div>
             <div class="col-md-6"><label class="form-label">End Date</label><input type="date" name="end_date" class="form-control" required value="${new Date().toISOString().slice(0, 10)}"></div>
-            <div class="col-12"><label class="form-label d-block">Applies On</label>${weekdayCheckboxesHtml}</div>
             <div class="col-12"><label class="form-label">Reason for Reservation</label><textarea name="reason" class="form-control" rows="2" required></textarea></div>
         </div>
     </div>
@@ -272,13 +260,18 @@ export function registerAdminSeatReservationsRoutes(router) {
             const startDate = form.start_date;
             const endDate = form.end_date;
             const reason = (form.reason || '').trim();
-            const weekdays = asArray(form.weekdays).filter((d) => WEEKDAY_OPTIONS.includes(d));
+            // Every reservation applies to all 7 days of its date range -
+            // no per-weekday restriction (removed per user request); still
+            // stored as the full weekdays array since
+            // reserved_seats_for_schedule_date() (0016_seat_reservations.sql)
+            // checks it, so this keeps that function unchanged.
+            const weekdays = WEEKDAY_OPTIONS;
             const employeeUserId = reservationType === 'employee_specific' && form.employee_user_id ? Number(form.employee_user_id) : null;
             const departmentId = DEPARTMENT_SCOPED_TYPES.includes(reservationType) && form.department_id ? Number(form.department_id) : null;
             const contactName = DEPARTMENT_SCOPED_TYPES.includes(reservationType) ? (form.contact_name || '').trim() || null : null;
 
-            if (!scheduleId || !startDate || !endDate || !reason || !weekdays.length) {
-                return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'All fields are required, including at least one weekday.')].filter(Boolean) });
+            if (!scheduleId || !startDate || !endDate || !reason) {
+                return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'All fields are required.')].filter(Boolean) });
             }
             if (endDate < startDate) {
                 return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'End date must be on or after the start date.')].filter(Boolean) });
@@ -320,10 +313,10 @@ export function registerAdminSeatReservationsRoutes(router) {
             const startDate = form.start_date;
             const endDate = form.end_date;
             const reason = (form.reason || '').trim();
-            const weekdays = asArray(form.weekdays).filter((d) => WEEKDAY_OPTIONS.includes(d));
+            const weekdays = WEEKDAY_OPTIONS;
 
-            if (!startDate || !endDate || !reason || !weekdays.length) {
-                return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'All fields are required, including at least one weekday.')].filter(Boolean) });
+            if (!startDate || !endDate || !reason) {
+                return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'All fields are required.')].filter(Boolean) });
             }
             if (endDate < startDate) {
                 return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'End date must be on or after the start date.')].filter(Boolean) });
