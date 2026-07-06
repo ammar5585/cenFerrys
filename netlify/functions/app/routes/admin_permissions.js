@@ -235,9 +235,13 @@ export function registerAdminPermissionsRoutes(router) {
             if (userCountRows.length) {
                 return redirectTo('/admin/roles', { cookies: [auth.setCookie, flashSetCookie('error', 'Cannot delete - users are still assigned to this role.')].filter(Boolean) });
             }
-            unwrap(await db().from('roles').delete().eq('role_id', roleId));
+            try {
+                unwrap(await db().from('roles').delete().eq('role_id', roleId));
+            } catch (err) {
+                return redirectTo('/admin/roles', { cookies: [auth.setCookie, flashSetCookie('error', `Could not delete role: ${err.message}`)].filter(Boolean) });
+            }
             await recordPermissionAudit({
-                actorUserId: user.user_id, targetType: 'role', targetRoleId: roleId,
+                actorUserId: user.user_id, targetType: 'role', targetRoleId: null,
                 action: 'role_deleted', previousValue: rows[0].role_name, ipAddress: ip,
             });
             return redirectTo('/admin/roles', { cookies: [auth.setCookie, flashSetCookie('success', 'Role deleted.')].filter(Boolean) });
