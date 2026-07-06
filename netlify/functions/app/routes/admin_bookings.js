@@ -12,6 +12,7 @@ import { csrfField, verifyCsrf } from '../csrf.js';
 import { getStatusId, routeDepartmentApproval } from '../approval.js';
 import { bookFerrySeat } from '../seats.js';
 import { createNotification } from '../notifications.js';
+import { getAllDepartments, getActiveResorts } from '../refData.js';
 import { notifySecurityIfWaitingList } from '../security.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
@@ -40,7 +41,7 @@ async function bookingsPageBody({ dateFrom, dateTo, statusFilter, deptFilter, cs
     if (deptFilter) bookings = bookings.filter((b) => b.users.department_id === deptFilter);
 
     const statuses = unwrap(await db().from('booking_status').select('*').order('status_id'));
-    const departments = unwrap(await db().from('departments').select('*').order('department_name'));
+    const departments = await getAllDepartments();
     const canAdminOverride = hasPermission(perms, 'booking.admin_override');
     const canHrManualBook = hasPermission(perms, 'booking.hr_manual_booking');
     const canOverrideCapacity = canHrManualBook && hasPermission(perms, 'booking.override_capacity');
@@ -76,7 +77,7 @@ async function bookingsPageBody({ dateFrom, dateTo, statusFilter, deptFilter, cs
 
     let hrModalHtml = '';
     if (canHrManualBook) {
-        const resorts = unwrap(await db().from('resorts').select('*').eq('status', 'active').order('resort_name'));
+        const resorts = await getActiveResorts();
         const activeUsersWithResort = unwrap(
             await db().from('users').select('user_id, full_name, employee_id, resort_id').eq('status', 'active').order('full_name')
         );

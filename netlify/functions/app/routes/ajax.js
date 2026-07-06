@@ -1,7 +1,7 @@
 // Port of ajax/get_schedule_seats.php and ajax/mark_notifications_read.php.
 
 import { db, unwrap } from '../db.js';
-import { getRemainingSeats } from '../seats.js';
+import { getRemainingSeatsBatch } from '../seats.js';
 import { formatTime } from '../format.js';
 import { getSession } from '../session.js';
 import { verifyCsrf } from '../csrf.js';
@@ -51,18 +51,20 @@ export function registerAjaxRoutes(router) {
             );
             const matching = schedules.filter((s) => Array.isArray(s.weekdays) && s.weekdays.includes(weekday));
 
-            const result = [];
-            for (const s of matching) {
-                const { capacity, booked, reserved, remaining } = await getRemainingSeats(s.schedule_id, date);
-                result.push({
+            // One batched RPC call instead of one per schedule - see
+            // getRemainingSeatsBatch()'s header comment.
+            const seatInfoById = await getRemainingSeatsBatch(matching.map((s) => s.schedule_id), date);
+            const result = matching.map((s) => {
+                const info = seatInfoById.get(s.schedule_id) ?? { capacity: s.capacity, booked: 0, reserved: 0, remaining: s.capacity };
+                return {
                     schedule_id: s.schedule_id,
                     time_label: formatTime(s.departure_time),
-                    capacity,
-                    booked,
-                    reserved,
-                    remaining,
-                });
-            }
+                    capacity: info.capacity,
+                    booked: info.booked,
+                    reserved: info.reserved,
+                    remaining: info.remaining,
+                };
+            });
 
             return jsonResponse({ success: true, schedules: result });
         } catch (err) {

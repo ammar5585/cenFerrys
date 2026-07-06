@@ -34,6 +34,19 @@ export function unwrap({ data, error }) {
 }
 
 /**
+ * Like unwrap(), but for a query built with `.select(..., { count: 'exact' })`
+ * and `.range(from, to)` - real DB-side pagination, where the total
+ * matching-row count and the current page's rows both come back from
+ * the same single request (no separate COUNT(*) round-trip needed).
+ */
+export function unwrapPage({ data, count, error }) {
+    if (error) {
+        throw new Error(error.message || 'Database error');
+    }
+    return { rows: data, total: count ?? data.length };
+}
+
+/**
  * PostgREST's .eq(column, value) has no null special-casing - passing a
  * JS `null` emits the literal filter `column=eq.null`, which is NOT a
  * safe stand-in for "IS NULL" and is not guaranteed to match. Use this

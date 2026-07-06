@@ -16,6 +16,7 @@ import { csrfField, verifyCsrf } from '../csrf.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
+import { getAllResorts, getActiveDepartments } from '../refData.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -25,8 +26,8 @@ async function readFormBody(request) {
 }
 
 async function departmentApprovalPageBody(csrfToken) {
-    const resorts = unwrap(await db().from('resorts').select('*').order('resort_name'));
-    const departments = unwrap(await db().from('departments').select('*').eq('status', 'active').order('department_name'));
+    const resorts = await getAllResorts();
+    const departments = await getActiveDepartments();
     const configs = unwrap(await db().from('department_approval_config').select('*'));
     const configByKey = new Map(configs.map((c) => [`${c.resort_id}:${c.department_id}`, c]));
     const activeUsers = unwrap(

@@ -17,6 +17,25 @@ export async function getRemainingSeats(scheduleId, travelDate) {
 }
 
 /**
+ * Same as calling getRemainingSeats() once per schedule, but as one
+ * network round-trip instead of N - the Postgres function
+ * (get_remaining_seats_batch, 0018_performance_indexes.sql) just calls
+ * the existing get_remaining_seats() once per id server-side, so this
+ * returns identical numbers to the per-schedule loop it replaces.
+ * Returns a Map keyed by schedule_id for easy per-row lookup.
+ */
+export async function getRemainingSeatsBatch(scheduleIds, travelDate) {
+    if (!scheduleIds.length) return new Map();
+    const rows = unwrap(
+        await db().rpc('get_remaining_seats_batch', {
+            p_schedule_ids: scheduleIds,
+            p_travel_date: travelDate,
+        })
+    );
+    return new Map(rows.map((r) => [r.schedule_id, r]));
+}
+
+/**
  * Throws an Error with message 'CAPACITY_EXCEEDED' or
  * 'SCHEDULE_NOT_FOUND' (matching the RPC's RAISE EXCEPTION) if the
  * booking can't be placed; otherwise returns the inserted booking row.

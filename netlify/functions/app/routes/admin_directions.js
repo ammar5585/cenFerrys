@@ -19,6 +19,7 @@ import { csrfField, verifyCsrf } from '../csrf.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
+import { getAllResorts } from '../refData.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -44,7 +45,7 @@ async function fetchFilteredDirections({ search, resortFilter, statusFilter }) {
 
 async function directionsPageBody({ search, resortFilter, statusFilter, csrfToken, errors }) {
     const directions = await fetchFilteredDirections({ search, resortFilter, statusFilter });
-    const resorts = unwrap(await db().from('resorts').select('*').order('resort_name'));
+    const resorts = await getAllResorts();
 
     const resortOptions = (selectedId) =>
         `<option value="">-- Both Resorts --</option>` +

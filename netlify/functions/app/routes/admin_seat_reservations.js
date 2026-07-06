@@ -15,6 +15,7 @@ import { csrfField, verifyCsrf } from '../csrf.js';
 import { formatTime } from '../format.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
+import { getActiveResorts, getAllDepartments } from '../refData.js';
 
 const WEEKDAY_OPTIONS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const RESERVATION_TYPES = [
@@ -83,8 +84,8 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken }) {
     if (resortFilter) query = query.eq('resort_id', resortFilter);
     const reservations = unwrap(await query);
 
-    const resorts = unwrap(await db().from('resorts').select('*').eq('status', 'active').order('resort_name'));
-    const departments = unwrap(await db().from('departments').select('*').order('department_name'));
+    const resorts = await getActiveResorts();
+    const departments = await getAllDepartments();
     const activeUsers = unwrap(await db().from('users').select('user_id, full_name, employee_id').eq('status', 'active').order('full_name'));
     const schedules = unwrap(
         await db().from('ferry_schedule').select('schedule_id, departure_time, ferry_routes(route_name, direction)').eq('status', 'active').order('departure_time')

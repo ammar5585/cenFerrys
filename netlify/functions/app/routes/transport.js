@@ -16,20 +16,28 @@ async function transportDashboardBody(fullName) {
     const schedules = await activeSchedulesForDate(today);
 
     let totalPassengers = 0;
-    const tripRows = [];
-    for (const s of schedules) {
-        const rows = unwrap(
-            await db()
-                .from('bookings')
-                .select('seats, booking_status!inner(status_name)')
-                .eq('schedule_id', s.schedule_id)
-                .eq('travel_date', today)
-                .in('booking_status.status_name', ['Approved', 'Completed'])
-        );
-        const passengers = rows.reduce((sum, b) => sum + b.seats, 0);
-        totalPassengers += passengers;
-        tripRows.push({ ...s, passengers });
+    // One query for every schedule's bookings today, instead of one
+    // query per schedule - grouped/summed in JS below (same aggregation
+    // as before, just batched into a single round-trip).
+    const allBookings = schedules.length
+        ? unwrap(
+              await db()
+                  .from('bookings')
+                  .select('schedule_id, seats, booking_status!inner(status_name)')
+                  .in('schedule_id', schedules.map((s) => s.schedule_id))
+                  .eq('travel_date', today)
+                  .in('booking_status.status_name', ['Approved', 'Completed'])
+          )
+        : [];
+    const passengersBySchedule = new Map();
+    for (const b of allBookings) {
+        passengersBySchedule.set(b.schedule_id, (passengersBySchedule.get(b.schedule_id) || 0) + b.seats);
     }
+    const tripRows = schedules.map((s) => {
+        const passengers = passengersBySchedule.get(s.schedule_id) || 0;
+        totalPassengers += passengers;
+        return { ...s, passengers };
+    });
 
     const tripsHtml = tripRows
         .map(

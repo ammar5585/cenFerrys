@@ -10,7 +10,8 @@ import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
 import { hashPassword, generateTempPassword } from '../auth.js';
-import { getRemainingSeats } from '../seats.js';
+import { getRemainingSeatsBatch } from '../seats.js';
+import { getAllDepartments, getAllResorts } from '../refData.js';
 import { logActivity, clientIp } from '../activity.js';
 import { uploadProfilePicture } from '../uploads.js';
 import { redirectTo, notFound, csvResponse } from '../response.js';
@@ -72,13 +73,13 @@ async function adminDashboardBody(fullName) {
     const todaysTrips = schedules.filter((s) => s.weekdays.includes(weekday));
     let availableSeatsTotal = 0;
     let fullyBookedCount = 0;
-    const tripRows = [];
-    for (const t of todaysTrips) {
-        const { booked, remaining } = await getRemainingSeats(t.schedule_id, today);
-        availableSeatsTotal += remaining;
-        if (remaining <= 0) fullyBookedCount++;
-        tripRows.push({ ...t, booked, remaining });
-    }
+    const seatInfoById = await getRemainingSeatsBatch(todaysTrips.map((t) => t.schedule_id), today);
+    const tripRows = todaysTrips.map((t) => {
+        const info = seatInfoById.get(t.schedule_id) ?? { booked: 0, remaining: t.capacity };
+        availableSeatsTotal += info.remaining;
+        if (info.remaining <= 0) fullyBookedCount++;
+        return { ...t, booked: info.booked, remaining: info.remaining };
+    });
 
     // Requests currently unassigned (no viable department-hierarchy
     // approver at any tier) - these are exactly the ones an executive
@@ -215,6 +216,7 @@ async function adminDashboardBody(fullName) {
         </div>
     </div>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
 (function () {
     var ctx = document.getElementById('bookingsTrendChart');
@@ -347,9 +349,9 @@ async function fetchFilteredUsers({ search, deptFilter, roleFilter, resortFilter
 async function usersPageBody({ search, deptFilter, roleFilter, resortFilter, statusFilter, sortKey, sortDir, csrfToken, errors, reopen }) {
     const users = await fetchFilteredUsers({ search, deptFilter, roleFilter, resortFilter, statusFilter, sortKey, sortDir });
 
-    const departments = unwrap(await db().from('departments').select('*').order('department_name'));
+    const departments = await getAllDepartments();
     const roles = unwrap(await db().from('roles').select('*').order('role_id'));
-    const resorts = unwrap(await db().from('resorts').select('*').order('resort_name'));
+    const resorts = await getAllResorts();
     const managers = unwrap(await db().from('users').select('user_id, full_name, employee_id').eq('status', 'active').order('full_name'));
 
     // "Approval Role" isn't a column on users - it's derived from whether

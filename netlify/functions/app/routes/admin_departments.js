@@ -15,6 +15,7 @@ import { csrfField, verifyCsrf } from '../csrf.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
+import { getAllDepartments, resetDepartmentsCache } from '../refData.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -24,7 +25,7 @@ async function readFormBody(request) {
 }
 
 async function departmentsPageBody(csrfToken) {
-    const departments = unwrap(await db().from('departments').select('*').order('department_name'));
+    const departments = await getAllDepartments();
 
     const rowsHtml = departments
         .map(
@@ -92,6 +93,7 @@ export function registerAdminDepartmentsRoutes(router) {
             }
             try {
                 unwrap(await db().from('departments').insert({ department_name: name }));
+                resetDepartmentsCache();
                 await logActivity(user.user_id, 'Added department', `department_name=${name}`, clientIp(request));
                 return redirectTo('/admin/departments', { cookies: [auth.setCookie, flashSetCookie('success', 'Department added.')].filter(Boolean) });
             } catch (err) {
@@ -107,6 +109,7 @@ export function registerAdminDepartmentsRoutes(router) {
             }
             try {
                 unwrap(await db().from('departments').update({ department_name: name }).eq('department_id', departmentId));
+                resetDepartmentsCache();
                 await logActivity(user.user_id, 'Renamed department', `department_id=${departmentId}, department_name=${name}`, clientIp(request));
                 return redirectTo('/admin/departments', { cookies: [auth.setCookie, flashSetCookie('success', 'Department renamed.')].filter(Boolean) });
             } catch (err) {
@@ -120,6 +123,7 @@ export function registerAdminDepartmentsRoutes(router) {
             if (rows.length) {
                 const newStatus = rows[0].status === 'active' ? 'inactive' : 'active';
                 unwrap(await db().from('departments').update({ status: newStatus }).eq('department_id', departmentId));
+                resetDepartmentsCache();
                 await logActivity(user.user_id, 'Updated department status', `department_id=${departmentId}, status=${newStatus}`, clientIp(request));
             }
             return redirectTo('/admin/departments', { cookies: [auth.setCookie, flashSetCookie('success', 'Department status updated.')].filter(Boolean) });

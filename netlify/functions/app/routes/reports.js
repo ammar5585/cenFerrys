@@ -18,6 +18,7 @@ import { html, raw, h } from '../templates/html.js';
 import { csvResponse } from '../response.js';
 import { getSetting } from '../settings.js';
 import { formatDate, formatTime, formatDateTime } from '../format.js';
+import { getAllDepartments, getAllResorts } from '../refData.js';
 
 async function fetchReportRows({ dateFrom, dateTo, deptFilter, resortFilter, empFilter, routeFilter, statusFilter, purpose }) {
     let query = db()
@@ -87,21 +88,29 @@ async function fetchFerryOccupancy({ dateFrom, dateTo, routeFilter }) {
     const from = dateFrom || new Date().toISOString().slice(0, 10);
     const to = dateTo || from;
     const rows = [];
+    // One query for every schedule's bookings across the whole date
+    // range, instead of one query per schedule - grouped in JS below
+    // (same per-schedule/per-date aggregation as before, just batched).
+    const excluded = ['Rejected', 'Cancelled', 'Expired', 'Waiting List'];
+    const allBookingRows = schedules.length
+        ? unwrap(
+              await db()
+                  .from('bookings')
+                  .select('schedule_id, travel_date, seats, booking_status(status_name)')
+                  .in('schedule_id', schedules.map((s) => s.schedule_id))
+                  .gte('travel_date', from)
+                  .lte('travel_date', to)
+          )
+        : [];
+    const byScheduleId = new Map();
+    for (const b of allBookingRows) {
+        if (excluded.includes(b.booking_status.status_name)) continue;
+        if (!byScheduleId.has(b.schedule_id)) byScheduleId.set(b.schedule_id, new Map());
+        const byDate = byScheduleId.get(b.schedule_id);
+        byDate.set(b.travel_date, (byDate.get(b.travel_date) || 0) + b.seats);
+    }
     for (const s of schedules) {
-        const bookingRows = unwrap(
-            await db()
-                .from('bookings')
-                .select('travel_date, seats, booking_status(status_name)')
-                .eq('schedule_id', s.schedule_id)
-                .gte('travel_date', from)
-                .lte('travel_date', to)
-        );
-        const excluded = ['Rejected', 'Cancelled', 'Expired', 'Waiting List'];
-        const byDate = new Map();
-        for (const b of bookingRows) {
-            if (excluded.includes(b.booking_status.status_name)) continue;
-            byDate.set(b.travel_date, (byDate.get(b.travel_date) || 0) + b.seats);
-        }
+        const byDate = byScheduleId.get(s.schedule_id) || new Map();
         for (const [travelDate, booked] of byDate.entries()) {
             rows.push({ schedule: s, travelDate, booked, capacity: s.capacity, occupancyPct: Math.round((booked / s.capacity) * 100) });
         }
@@ -354,8 +363,8 @@ ${showFullFilters ? reportTypeSelector('booking') : ''}
 
 async function loadFilterOptions() {
     return {
-        departments: unwrap(await db().from('departments').select('*').order('department_name')),
-        resorts: unwrap(await db().from('resorts').select('*').order('resort_name')),
+        departments: await getAllDepartments(),
+        resorts: await getAllResorts(),
         employees: unwrap(await db().from('users').select('user_id, full_name').order('full_name')),
         routes: unwrap(await db().from('ferry_routes').select('*').order('route_name')),
         statuses: unwrap(await db().from('booking_status').select('*').order('status_id')),

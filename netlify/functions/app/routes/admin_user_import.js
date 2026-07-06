@@ -16,6 +16,7 @@ import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound, csvResponse } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatDateTime } from '../format.js';
+import { getAllResorts, getActiveDepartments } from '../refData.js';
 
 const MAX_ROWS = 1500;
 const MAX_BYTES = 1.5 * 1024 * 1024;
@@ -67,10 +68,10 @@ async function parseAndValidateCsv(rawText) {
         return { fileError: `File has ${records.length} rows, which exceeds the ${MAX_ROWS}-row limit per import.` };
     }
 
-    const resorts = unwrap(await db().from('resorts').select('resort_id, resort_name'));
+    const resorts = await getAllResorts();
     const resortByName = new Map(resorts.map((r) => [r.resort_name.toLowerCase(), r.resort_id]));
 
-    const departments = unwrap(await db().from('departments').select('department_id, department_name').eq('status', 'active'));
+    const departments = await getActiveDepartments();
     const departmentByName = new Map(departments.map((d) => [d.department_name.toLowerCase(), d.department_id]));
 
     const roles = unwrap(await db().from('roles').select('role_id, role_name').in('role_name', ALLOWED_ROLES));

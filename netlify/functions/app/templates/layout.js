@@ -20,6 +20,13 @@ const DEFAULT_THEME = {
     secondaryColor: '#6c757d',
 };
 
+// Bumped by hand whenever public/assets/css/style.css or
+// public/assets/js/main.js actually change - paired with the long
+// immutable Cache-Control header on /assets/* in vercel.json, this
+// query string is what forces browsers to fetch the new file instead
+// of serving a year-old cached copy after a deploy.
+const ASSET_VERSION = '1';
+
 /**
  * Builds the per-request <style> override block + optional Google Fonts
  * <link>, both driven entirely by admin-configured settings. Color values
@@ -134,7 +141,7 @@ export function shell({
 
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-<link href="/assets/css/style.css" rel="stylesheet">
+<link href="/assets/css/style.css?v=${ASSET_VERSION}" rel="stylesheet">
 ${raw(fontLink)}
 <style>${raw(styleBlock)}</style>
 </head>
@@ -159,12 +166,11 @@ ${footerHtml({ companyName, footerText, copyrightText })}
 <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toastContainer" style="z-index: 1080;"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
     window.BASE_URL = "/";
     window.CSRF_TOKEN = ${raw(JSON.stringify(csrfToken))};
 </script>
-<script src="/assets/js/main.js"></script>
+<script src="/assets/js/main.js?v=${ASSET_VERSION}"></script>
 <script>
 ${raw(flashScript)}
 ${raw(extraScripts)}
@@ -199,7 +205,7 @@ export function publicShell({
 <link rel="icon" href="${favicon || DEFAULT_FAVICON}">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-<link href="/assets/css/style.css" rel="stylesheet">
+<link href="/assets/css/style.css?v=${ASSET_VERSION}" rel="stylesheet">
 ${raw(fontLink)}
 <style>${raw(styleBlock)}</style>
 </head>

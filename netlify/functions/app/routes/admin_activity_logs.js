@@ -1,6 +1,6 @@
 // Port of admin/activity_logs.php - paginated audit log viewer with search.
 
-import { db, unwrap } from '../db.js';
+import { db, unwrap, unwrapPage } from '../db.js';
 import { requireLogin } from '../guards.js';
 import { hasPermission } from '../permissions.js';
 import { accessDeniedResponse } from '../accessDenied.js';
@@ -27,19 +27,19 @@ function tabsHtml(activeTab, canViewPermissionChanges, canViewHrManualBookings, 
 }
 
 async function seatReservationsLogBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations) {
-    const rows = unwrap(
+    const { rows: pageRows, total } = unwrapPage(
         await db()
             .from('seat_reservation_log')
             .select(
                 'log_id, reservation_type, employee_name_snapshot, department_name_snapshot, contact_name_snapshot, seats, start_date, end_date, direction, action, reason, created_at, ' +
-                    'resorts(resort_name), actor:users!seat_reservation_log_actor_user_id_fkey(full_name)'
+                    'resorts(resort_name), actor:users!seat_reservation_log_actor_user_id_fkey(full_name)',
+                { count: 'exact' }
             )
             .order('created_at', { ascending: false })
+            .range((page - 1) * PER_PAGE, page * PER_PAGE - 1)
     );
 
-    const total = rows.length;
     const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
-    const pageRows = rows.slice((page - 1) * PER_PAGE, page * PER_PAGE);
 
     const rowsHtml = pageRows
         .map((r) => {
@@ -79,19 +79,19 @@ ${raw(pagination)}`;
 }
 
 async function hrManualBookingsBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations) {
-    const rows = unwrap(
+    const { rows: pageRows, total } = unwrapPage(
         await db()
             .from('hr_manual_booking_log')
             .select(
                 'log_id, employee_id_snapshot, employee_name_snapshot, direction, travel_date, cutoff_overridden, capacity_overridden, approval_overridden, remarks, created_at, ' +
-                    'resorts(resort_name), created_by:users!hr_manual_booking_log_created_by_user_id_fkey(full_name), ferry_schedule(departure_time)'
+                    'resorts(resort_name), created_by:users!hr_manual_booking_log_created_by_user_id_fkey(full_name), ferry_schedule(departure_time)',
+                { count: 'exact' }
             )
             .order('created_at', { ascending: false })
+            .range((page - 1) * PER_PAGE, page * PER_PAGE - 1)
     );
 
-    const total = rows.length;
     const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
-    const pageRows = rows.slice((page - 1) * PER_PAGE, page * PER_PAGE);
 
     const rowsHtml = pageRows
         .map((r) => {
@@ -131,20 +131,20 @@ ${raw(pagination)}`;
 }
 
 async function permissionChangesBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations) {
-    const rows = unwrap(
+    const { rows: pageRows, total } = unwrapPage(
         await db()
             .from('permission_audit_log')
             .select(
                 'audit_id, target_type, action, previous_value, new_value, before_snapshot, after_snapshot, created_at, ' +
                     'actor:users!permission_audit_log_actor_user_id_fkey(full_name), ' +
-                    'target_role:roles(role_name), target_user:users!permission_audit_log_target_user_id_fkey(full_name)'
+                    'target_role:roles(role_name), target_user:users!permission_audit_log_target_user_id_fkey(full_name)',
+                { count: 'exact' }
             )
             .order('created_at', { ascending: false })
+            .range((page - 1) * PER_PAGE, page * PER_PAGE - 1)
     );
 
-    const total = rows.length;
     const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
-    const pageRows = rows.slice((page - 1) * PER_PAGE, page * PER_PAGE);
 
     const rowsHtml = pageRows
         .map((r) => {
@@ -223,15 +223,21 @@ export function registerAdminActivityLogRoutes(router) {
         const search = url.searchParams.get('search') || '';
         const page = Math.max(1, Number(url.searchParams.get('page') || 1));
 
-        // Filtered in JS (not a raw .or() filter string - see the same fix
-        // applied to admin/users.php's search and auth/forgot_password.php).
-        let logs = unwrap(
-            await db()
-                .from('activity_logs')
-                .select('log_id, action, details, ip_address, created_at, users(full_name)')
-                .order('created_at', { ascending: false })
-        );
+        let pageLogs, total;
         if (search) {
+            // Multi-column search stays fetch-all + JS-filter, unchanged -
+            // a true DB-side OR-across-columns search would need PostgREST's
+            // .or() with an escaped ilike filter string, which this codebase
+            // deliberately avoids elsewhere (see auth.js's forgot-password
+            // lookup) since it's a raw filter-string-injection risk with
+            // untrusted input. Search is not the unbounded-growth case in
+            // normal use - most visits to this page have no search term.
+            let logs = unwrap(
+                await db()
+                    .from('activity_logs')
+                    .select('log_id, action, details, ip_address, created_at, users(full_name)')
+                    .order('created_at', { ascending: false })
+            );
             const needle = search.toLowerCase();
             logs = logs.filter(
                 (l) =>
@@ -239,11 +245,25 @@ export function registerAdminActivityLogRoutes(router) {
                     (l.details ?? '').toLowerCase().includes(needle) ||
                     (l.users?.full_name ?? '').toLowerCase().includes(needle)
             );
+            total = logs.length;
+            pageLogs = logs.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+        } else {
+            // The common case (no search term) gets real DB-side
+            // pagination - activity_logs is insert-only and never purged,
+            // so fetching the whole table on every visit was the one
+            // genuinely unbounded-growth query in this app.
+            const result = unwrapPage(
+                await db()
+                    .from('activity_logs')
+                    .select('log_id, action, details, ip_address, created_at, users(full_name)', { count: 'exact' })
+                    .order('created_at', { ascending: false })
+                    .range((page - 1) * PER_PAGE, page * PER_PAGE - 1)
+            );
+            pageLogs = result.rows;
+            total = result.total;
         }
 
-        const total = logs.length;
         const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
-        const pageLogs = logs.slice((page - 1) * PER_PAGE, page * PER_PAGE);
 
         const rowsHtml = pageLogs
             .map(
