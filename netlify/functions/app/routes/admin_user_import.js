@@ -12,6 +12,8 @@ import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
 import { hashPassword } from '../auth.js';
+import { sendTemplatedEmail } from '../mailer.js';
+import { deferBestEffort } from '../deferred.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound, csvResponse } from '../response.js';
 import { flashSetCookie } from '../flash.js';
@@ -462,6 +464,16 @@ export function registerAdminUserImportRoutes(router) {
                         })
                     );
                     createdRows.push({ employeeId: r.employeeId, username: r.username });
+                    if (r.email) {
+                        deferBestEffort(
+                            sendTemplatedEmail('user_creation', r.email, {
+                                full_name: r.fullName,
+                                username: r.username,
+                                temp_password: DEFAULT_IMPORT_PASSWORD,
+                            }),
+                            'sendTemplatedEmail:user_creation'
+                        );
+                    }
                 } else {
                     // Update: never touch password.
                     unwrap(

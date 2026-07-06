@@ -16,6 +16,8 @@ import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
 import { getDepartmentApprovalConfig, getStatusId } from '../approval.js';
 import { createNotification } from '../notifications.js';
+import { sendTemplatedEmail } from '../mailer.js';
+import { deferBestEffort } from '../deferred.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
@@ -190,7 +192,11 @@ export function registerHrOverviewRoutes(router) {
         const bookingRows = unwrap(
             await db()
                 .from('bookings')
-                .select('user_id, current_approver_id, status_id, booking_status(status_name), users!bookings_user_id_fkey(department_id, resort_id)')
+                .select(
+                    'user_id, current_approver_id, status_id, travel_date, booking_status(status_name), ' +
+                        'users!bookings_user_id_fkey(department_id, resort_id, full_name, email), ' +
+                        'ferry_schedule(departure_time, ferry_routes(route_name, direction))'
+                )
                 .eq('booking_id', bookingId)
                 .limit(1)
         );
@@ -242,6 +248,23 @@ export function registerHrOverviewRoutes(router) {
                         ? `Your ferry booking has been approved by HR (${user.full_name}).`
                         : `Your ferry booking has been rejected by HR (${user.full_name})${comments ? ' - ' + comments : ''}.`;
                 await createNotification(booking.user_id, message, 'booking', bookingId);
+                deferBestEffort(
+                    sendTemplatedEmail(
+                        action === 'approve' ? 'booking_approval' : 'booking_rejection',
+                        booking.users?.email,
+                        {
+                            full_name: booking.users?.full_name ?? '',
+                            route_name: booking.ferry_schedule?.ferry_routes?.route_name ?? '',
+                            direction: booking.ferry_schedule?.ferry_routes?.direction ?? '',
+                            travel_date: formatDate(booking.travel_date),
+                            departure_time: booking.ferry_schedule ? formatTime(booking.ferry_schedule.departure_time) : '',
+                            booking_id: bookingId,
+                            reason: comments || '',
+                        },
+                        { relatedBookingId: bookingId }
+                    ),
+                    `sendTemplatedEmail:booking_${action}`
+                );
 
                 if (action === 'approve') {
                     const coordinators = unwrap(

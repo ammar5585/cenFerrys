@@ -11,6 +11,8 @@ import { getStatusId, routeDepartmentApproval, getApprovalWorkflowInfo } from '.
 import { bookFerrySeat } from '../seats.js';
 import { notifySecurityIfWaitingList } from '../security.js';
 import { createNotification } from '../notifications.js';
+import { sendTemplatedEmail } from '../mailer.js';
+import { deferBestEffort } from '../deferred.js';
 import { logActivity, clientIp } from '../activity.js';
 import { uploadProfilePicture } from '../uploads.js';
 import { redirectTo, htmlResponse, notFound } from '../response.js';
@@ -463,7 +465,7 @@ export function registerStaffRoutes(router) {
             const rows = unwrap(
                 await db()
                     .from('ferry_schedule')
-                    .select('schedule_id, departure_time, weekdays, ferry_routes(direction)')
+                    .select('schedule_id, departure_time, weekdays, ferry_routes(direction, route_name)')
                     .eq('schedule_id', scheduleId)
                     .eq('status', 'active')
                     .limit(1)
@@ -513,10 +515,26 @@ export function registerStaffRoutes(router) {
                 // in; routeDepartmentApproval delegates to the untouched legacy
                 // GM->RM->HR chain otherwise (departmentId null also falls through
                 // to legacy - nothing to look up).
-                const bookerRows = unwrap(await db().from('users').select('department_id, resort_id').eq('user_id', user.user_id).limit(1));
+                const bookerRows = unwrap(await db().from('users').select('department_id, resort_id, full_name, email').eq('user_id', user.user_id).limit(1));
                 await routeDepartmentApproval(booking.booking_id, bookerRows[0]?.resort_id ?? null, bookerRows[0]?.department_id ?? null);
                 await createNotification(user.user_id, 'Your ferry booking request has been submitted and is awaiting approval.', 'booking', booking.booking_id);
                 await logActivity(user.user_id, 'Submitted ferry booking', `booking_id=${booking.booking_id}`, clientIp(request));
+                deferBestEffort(
+                    sendTemplatedEmail(
+                        'booking_confirmation',
+                        bookerRows[0]?.email,
+                        {
+                            full_name: bookerRows[0]?.full_name ?? '',
+                            route_name: schedule.ferry_routes.route_name ?? '',
+                            direction: schedule.ferry_routes.direction ?? '',
+                            travel_date: formatDate(travelDate),
+                            departure_time: formatTime(schedule.departure_time),
+                            booking_id: booking.booking_id,
+                        },
+                        { relatedBookingId: booking.booking_id }
+                    ),
+                    'sendTemplatedEmail:booking_confirmation'
+                );
 
                 return redirectTo('/staff/my_bookings', {
                     cookies: [auth.setCookie, flashSetCookie('success', 'Booking submitted successfully and routed for approval.')].filter(Boolean),

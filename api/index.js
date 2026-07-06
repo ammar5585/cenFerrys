@@ -32,6 +32,7 @@ import { registerAdminPermissionsRoutes } from '../netlify/functions/app/routes/
 import { registerAdminUserPermissionsRoutes } from '../netlify/functions/app/routes/admin_user_permissions.js';
 import { registerAdminSeatReservationsRoutes } from '../netlify/functions/app/routes/admin_seat_reservations.js';
 import { registerAdminUserImportRoutes } from '../netlify/functions/app/routes/admin_user_import.js';
+import { registerAdminEmailSettingsRoutes } from '../netlify/functions/app/routes/admin_email_settings.js';
 import { registerReportsRoutes } from '../netlify/functions/app/routes/reports.js';
 import { registerHrOverviewRoutes } from '../netlify/functions/app/routes/hr_overview.js';
 import { registerManagerExtraRoutes } from '../netlify/functions/app/routes/manager_extra.js';
@@ -60,6 +61,7 @@ registerAdminPermissionsRoutes(router);
 registerAdminUserPermissionsRoutes(router);
 registerAdminSeatReservationsRoutes(router);
 registerAdminUserImportRoutes(router);
+registerAdminEmailSettingsRoutes(router);
 registerReportsRoutes(router);
 registerHrOverviewRoutes(router);
 registerManagerExtraRoutes(router);

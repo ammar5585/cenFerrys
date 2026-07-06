@@ -23,6 +23,7 @@ import { registerAdminPermissionsRoutes } from './app/routes/admin_permissions.j
 import { registerAdminUserPermissionsRoutes } from './app/routes/admin_user_permissions.js';
 import { registerAdminSeatReservationsRoutes } from './app/routes/admin_seat_reservations.js';
 import { registerAdminUserImportRoutes } from './app/routes/admin_user_import.js';
+import { registerAdminEmailSettingsRoutes } from './app/routes/admin_email_settings.js';
 import { registerReportsRoutes } from './app/routes/reports.js';
 import { registerHrOverviewRoutes } from './app/routes/hr_overview.js';
 import { registerManagerExtraRoutes } from './app/routes/manager_extra.js';
@@ -51,6 +52,7 @@ registerAdminPermissionsRoutes(router);
 registerAdminUserPermissionsRoutes(router);
 registerAdminSeatReservationsRoutes(router);
 registerAdminUserImportRoutes(router);
+registerAdminEmailSettingsRoutes(router);
 registerReportsRoutes(router);
 registerHrOverviewRoutes(router);
 registerManagerExtraRoutes(router);

@@ -16,7 +16,8 @@
     "cookie": "^0.6.0",
     "csv-parse": "^7.0.1",
     "file-type": "^19.5.0",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^9.0.3"
   },
   "devDependencies": {
     "netlify-cli": "^17.38.0",

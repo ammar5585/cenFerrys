@@ -12,6 +12,8 @@ import { csrfField, verifyCsrf } from '../csrf.js';
 import { hashPassword, generateTempPassword } from '../auth.js';
 import { getRemainingSeatsBatch } from '../seats.js';
 import { getAllDepartments, getAllResorts } from '../refData.js';
+import { sendTemplatedEmail } from '../mailer.js';
+import { deferBestEffort } from '../deferred.js';
 import { logActivity, clientIp } from '../activity.js';
 import { uploadProfilePicture } from '../uploads.js';
 import { redirectTo, notFound, csvResponse } from '../response.js';
@@ -747,6 +749,12 @@ export function registerAdminRoutes(router) {
                             const url = await uploadProfilePicture(photoFile, newUserId);
                             unwrap(await db().from('users').update({ profile_picture: url }).eq('user_id', newUserId));
                         }
+                        if (email) {
+                            deferBestEffort(
+                                sendTemplatedEmail('user_creation', email, { full_name: fullName, username, temp_password: password }),
+                                'sendTemplatedEmail:user_creation'
+                            );
+                        }
                         await logActivity(user.user_id, 'Created user', username, clientIp(request));
                         return redirectTo('/admin/users', { cookies: [auth.setCookie, flashSetCookie('success', `User '${fullName}' created successfully.`)].filter(Boolean) });
                     }
@@ -797,6 +805,17 @@ export function registerAdminRoutes(router) {
             const temp = generateTempPassword();
             const hash = await hashPassword(temp);
             unwrap(await db().from('users').update({ password: hash, must_change_password: true }).eq('user_id', userId));
+            const targetRows = unwrap(await db().from('users').select('full_name, username, email').eq('user_id', userId).limit(1));
+            if (targetRows[0]?.email) {
+                deferBestEffort(
+                    sendTemplatedEmail('password_reset', targetRows[0].email, {
+                        full_name: targetRows[0].full_name ?? '',
+                        username: targetRows[0].username ?? '',
+                        temp_password: temp,
+                    }),
+                    'sendTemplatedEmail:password_reset'
+                );
+            }
             await logActivity(user.user_id, 'Reset user password', `user_id=${userId}`, clientIp(request));
             return redirectTo('/admin/users', { cookies: [auth.setCookie, flashSetCookie('success', `Temporary password generated: ${temp} (user must change it at next login).`)].filter(Boolean) });
         }

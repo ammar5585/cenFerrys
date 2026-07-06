@@ -8,6 +8,9 @@ import { db, unwrap } from './db.js';
 import { getStatusId } from './approval.js';
 import { getRemainingSeats } from './seats.js';
 import { createNotification } from './notifications.js';
+import { sendTemplatedEmail } from './mailer.js';
+import { deferBestEffort } from './deferred.js';
+import { formatDate, formatTime } from './format.js';
 import { ROLE_SECURITY } from './session.js';
 
 /** Every active Security user - used to notify when a seat frees up or a trip completes. */
@@ -55,7 +58,10 @@ export async function promoteWaitingListBooking(bookingId, { promotedByUserId, m
     const rows = unwrap(
         await db()
             .from('bookings')
-            .select('user_id, schedule_id, travel_date, status_id, users!bookings_user_id_fkey(department_id, resort_id)')
+            .select(
+                'user_id, schedule_id, travel_date, status_id, users!bookings_user_id_fkey(department_id, resort_id, full_name, email), ' +
+                    'ferry_schedule(departure_time, ferry_routes(route_name, direction))'
+            )
             .eq('booking_id', bookingId)
             .limit(1)
     );
@@ -96,6 +102,22 @@ export async function promoteWaitingListBooking(bookingId, { promotedByUserId, m
         'A seat has become available - your waitlisted ferry booking has been approved.',
         'booking',
         bookingId
+    );
+    deferBestEffort(
+        sendTemplatedEmail(
+            'waiting_list_promotion',
+            booking.users?.email,
+            {
+                full_name: booking.users?.full_name ?? '',
+                route_name: booking.ferry_schedule?.ferry_routes?.route_name ?? '',
+                direction: booking.ferry_schedule?.ferry_routes?.direction ?? '',
+                travel_date: formatDate(booking.travel_date),
+                departure_time: booking.ferry_schedule ? formatTime(booking.ferry_schedule.departure_time) : '',
+                booking_id: bookingId,
+            },
+            { relatedBookingId: bookingId }
+        ),
+        'sendTemplatedEmail:waiting_list_promotion'
     );
 
     return { promoted: true };

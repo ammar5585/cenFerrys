@@ -4,6 +4,7 @@ on:
   schedule:
     - cron: '*/15 * * * *'
     - cron: '*/30 * * * *'
+    - cron: '0 8 * * *'
   workflow_dispatch:
 
 jobs:
@@ -23,4 +24,13 @@ jobs:
       - name: Call expire-bookings endpoint
         run: |
           curl -sf -X GET "https://cenferrys.vercel.app/api/cron/expire-bookings" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+
+  ferry-reminder:
+    if: github.event.schedule == '0 8 * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call ferry-reminder endpoint
+        run: |
+          curl -sf -X GET "https://cenferrys.vercel.app/api/cron/ferry-reminder" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"

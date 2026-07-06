@@ -25,8 +25,8 @@ export const DEFAULT_ROLE_PERMISSIONS = {
         'security.access', 'security.manage_manifest', 'security.manage_waiting_list',
         'reports.access', 'reports.view_admin',
         'branding.access', 'branding.manage',
-        'settings.access', 'settings.manage', 'settings.manage_notifications',
-        'audit_logs.access', 'audit_logs.view_activity', 'audit_logs.view_permission_changes', 'audit_logs.view_hr_manual_bookings', 'audit_logs.view_seat_reservations',
+        'settings.access', 'settings.manage', 'settings.manage_notifications', 'settings.manage_email',
+        'audit_logs.access', 'audit_logs.view_activity', 'audit_logs.view_permission_changes', 'audit_logs.view_hr_manual_bookings', 'audit_logs.view_seat_reservations', 'audit_logs.view_email_log',
     ],
     'General Manager': [
         'dashboard.access', 'dashboard.view_manager',

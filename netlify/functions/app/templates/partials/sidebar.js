@@ -25,7 +25,7 @@ export function renderSidebar(permsHex, currentPath, isDeptApprover = false, com
     const links = [navLink('/dashboard', 'bi-speedometer2', 'Dashboard', currentPath)];
 
     if (can('user_management.access') || can('schedule_management.access') || can('approval_workflow.configure_hierarchy')
-        || can('booking.view_all') || can('reports.view_admin') || can('audit_logs.access') || can('branding.access') || can('settings.access')) {
+        || can('booking.view_all') || can('reports.view_admin') || can('audit_logs.access') || can('branding.access') || can('settings.access') || can('settings.manage_email')) {
         links.push(html`<div class="nav-heading">Administration</div>`);
         if (can('user_management.view')) links.push(navLink('/admin/users', 'bi-people', 'User Management', currentPath));
         if (can('user_management.import')) links.push(navLink('/admin/users/import', 'bi-file-earmark-arrow-up', 'Bulk Import Users', currentPath));
@@ -41,11 +41,12 @@ export function renderSidebar(permsHex, currentPath, isDeptApprover = false, com
         if (can('approval_workflow.executive_override')) links.push(navLink('/hr/overview', 'bi-globe', 'Executive Overview', currentPath));
         if (can('booking.view_all')) links.push(navLink('/admin/bookings', 'bi-journal-check', 'All Bookings', currentPath));
         if (can('reports.view_admin')) links.push(navLink('/admin/reports', 'bi-graph-up', 'Reports', currentPath));
-        if (can('audit_logs.view_activity') || can('audit_logs.view_permission_changes') || can('audit_logs.view_hr_manual_bookings') || can('audit_logs.view_seat_reservations')) {
+        if (can('audit_logs.view_activity') || can('audit_logs.view_permission_changes') || can('audit_logs.view_hr_manual_bookings') || can('audit_logs.view_seat_reservations') || can('audit_logs.view_email_log')) {
             links.push(navLink('/admin/activity_logs', 'bi-clock-history', 'Activity Logs', currentPath));
         }
         if (can('branding.manage')) links.push(navLink('/admin/branding', 'bi-palette', 'Website Branding', currentPath));
         if (can('settings.manage')) links.push(navLink('/admin/settings', 'bi-gear', 'Settings', currentPath));
+        if (can('settings.manage_email')) links.push(navLink('/admin/email_settings', 'bi-envelope-at', 'Email Settings', currentPath));
     }
 
     if (can('booking.create_own')) {
