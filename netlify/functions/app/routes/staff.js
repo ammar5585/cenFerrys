@@ -247,14 +247,18 @@ const BOOKING_PAGE_SCRIPT = `
                 }
                 container.innerHTML = '';
                 res.schedules.forEach(function (s) {
+                    // A full schedule is still selectable - book_ferry_seat()
+                    // auto-waitlists rather than rejecting, so blocking
+                    // selection here would make the waiting list
+                    // unreachable from self-service booking entirely.
                     var full = s.remaining <= 0;
                     var col = document.createElement('div');
                     col.className = 'col-md-4';
                     col.innerHTML =
-                        '<label class="schedule-card' + (full ? ' schedule-card-disabled' : '') + '" for="sch' + s.schedule_id + '">' +
-                        '<input type="radio" name="schedule_radio" value="' + s.schedule_id + '" id="sch' + s.schedule_id + '" ' + (full ? 'disabled' : '') + '>' +
+                        '<label class="schedule-card" for="sch' + s.schedule_id + '">' +
+                        '<input type="radio" name="schedule_radio" value="' + s.schedule_id + '" id="sch' + s.schedule_id + '" data-full="' + full + '">' +
                         '<span class="schedule-card-time">' + s.time_label + '</span>' +
-                        '<span class="' + (full ? 'schedule-card-seats-full' : 'schedule-card-seats-ok') + '">' + (full ? 'FULL' : s.remaining + ' seats left') + '</span>' +
+                        '<span class="' + (full ? 'schedule-card-seats-waitlist' : 'schedule-card-seats-ok') + '">' + (full ? 'Full - Join Waiting List' : s.remaining + ' seats left') + '</span>' +
                         '<span class="schedule-card-booked">' + s.booked + ' / ' + s.capacity + ' booked</span>' +
                         (s.reserved > 0 ? '<span class="schedule-card-reserved">' + s.reserved + ' reserved</span>' : '') +
                         '</label>';
@@ -263,6 +267,7 @@ const BOOKING_PAGE_SCRIPT = `
                 container.querySelectorAll('input[name="schedule_radio"]').forEach(function (radio) {
                     radio.addEventListener('change', function () {
                         scheduleIdInput.value = this.value;
+                        submitBtn.textContent = this.getAttribute('data-full') === 'true' ? 'Join Waiting List' : 'Submit Booking Request';
                         submitBtn.disabled = false;
                     });
                 });

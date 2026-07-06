@@ -314,10 +314,10 @@ body {
 .schedule-card {
     position: relative;
     display: block;
-    width: 100%;
+    width: 90%;
     border: 1px solid #e2e5ea;
     border-radius: 12px;
-    padding: 1rem 1.25rem;
+    padding: 1rem 1rem;
     cursor: pointer;
     background: #fff;
     transition: border-color .15s ease, box-shadow .15s ease;
@@ -337,6 +337,7 @@ body {
 .schedule-card-time { display: block; font-size: 1.1rem; font-weight: 700; }
 .schedule-card-seats-ok { display: block; margin-top: .35rem; color: #198754; font-weight: 700; }
 .schedule-card-seats-full { display: block; margin-top: .35rem; color: #dc3545; font-weight: 700; }
+.schedule-card-seats-waitlist { display: block; margin-top: .35rem; color: #fd7e14; font-weight: 700; }
 .schedule-card-booked { display: block; margin-top: .15rem; font-size: .85rem; color: #7c8aa5; }
 .schedule-card-reserved { display: block; margin-top: .15rem; font-size: .8rem; color: #0d6efd; font-weight: 600; }
 
