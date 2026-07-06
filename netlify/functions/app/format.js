@@ -10,12 +10,6 @@ function pad2(n) {
     return String(n).padStart(2, '0');
 }
 
-function to12Hour(hours) {
-    const h = hours % 12 === 0 ? 12 : hours % 12;
-    const ampm = hours < 12 ? 'AM' : 'PM';
-    return { h, ampm };
-}
-
 /** Time-of-day greeting for dashboard headers, based on the server's local hour. */
 export function greeting() {
     const hour = new Date().getHours();
@@ -33,11 +27,10 @@ export function formatDate(dateValue) {
 export function formatDateTime(datetimeValue) {
     if (!datetimeValue) return '';
     const d = new Date(datetimeValue);
-    const { h, ampm } = to12Hour(d.getHours());
-    return `${pad2(d.getDate())} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${pad2(h)}:${pad2(d.getMinutes())} ${ampm}`;
+    return `${pad2(d.getDate())} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
-/** Accepts either a plain "HH:MM:SS" TIME string or a full timestamp. */
+/** Accepts either a plain "HH:MM:SS" TIME string or a full timestamp. 24-hour format (HH:MM), per user request. */
 export function formatTime(timeValue) {
     if (!timeValue) return '';
     let hours, minutes;
@@ -48,8 +41,7 @@ export function formatTime(timeValue) {
         hours = d.getHours();
         minutes = d.getMinutes();
     }
-    const { h, ampm } = to12Hour(hours);
-    return `${pad2(h)}:${pad2(minutes)} ${ampm}`;
+    return `${pad2(hours)}:${pad2(minutes)}`;
 }
 
 export function timeAgo(datetimeValue) {

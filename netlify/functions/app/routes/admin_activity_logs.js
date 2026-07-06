@@ -31,7 +31,7 @@ async function seatReservationsLogBody(page, canViewPermissionChanges, canViewHr
         await db()
             .from('seat_reservation_log')
             .select(
-                'log_id, reservation_type, employee_name_snapshot, department_name_snapshot, seats, start_date, end_date, direction, action, reason, created_at, ' +
+                'log_id, reservation_type, employee_name_snapshot, department_name_snapshot, contact_name_snapshot, seats, start_date, end_date, direction, action, reason, created_at, ' +
                     'resorts(resort_name), actor:users!seat_reservation_log_actor_user_id_fkey(full_name)'
             )
             .order('created_at', { ascending: false })
@@ -49,6 +49,7 @@ async function seatReservationsLogBody(page, canViewPermissionChanges, canViewHr
                 <td>${r.action}</td>
                 <td>${(r.reservation_type ?? '').replace(/_/g, ' ')}</td>
                 <td>${who}</td>
+                <td>${r.contact_name_snapshot ?? ''}</td>
                 <td>${r.direction ?? '-'}</td>
                 <td>${r.resorts?.resort_name ?? '-'}</td>
                 <td>${r.seats ?? ''}</td>
@@ -71,8 +72,8 @@ async function seatReservationsLogBody(page, canViewPermissionChanges, canViewHr
 <h5 class="mb-3"><i class="bi bi-bookmark-star"></i> Seat Reservation Log</h5>
 ${raw(tabsHtml('seat_reservations', canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations))}
 <div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover mb-0 align-middle">
-    <thead><tr><th>Date/Time</th><th>Action</th><th>Type</th><th>Employee / Department</th><th>Direction</th><th>Resort</th><th>Seats</th><th>Period</th><th>By</th><th>Reason</th></tr></thead>
-    <tbody>${raw(rowsHtml || '<tr><td colspan="10" class="text-center text-muted py-4">No seat reservation actions recorded.</td></tr>')}</tbody>
+    <thead><tr><th>Date/Time</th><th>Action</th><th>Type</th><th>Employee / Department</th><th>Name</th><th>Direction</th><th>Resort</th><th>Seats</th><th>Period</th><th>By</th><th>Reason</th></tr></thead>
+    <tbody>${raw(rowsHtml || '<tr><td colspan="11" class="text-center text-muted py-4">No seat reservation actions recorded.</td></tr>')}</tbody>
 </table></div></div>
 ${raw(pagination)}`;
 }
