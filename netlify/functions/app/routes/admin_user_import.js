@@ -11,7 +11,7 @@ import { requirePermission } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
-import { hashPassword, generateTempPassword } from '../auth.js';
+import { hashPassword } from '../auth.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound, csvResponse } from '../response.js';
 import { flashSetCookie } from '../flash.js';
@@ -20,6 +20,10 @@ import { getAllResorts, getActiveDepartments } from '../refData.js';
 
 const MAX_ROWS = 1500;
 const MAX_BYTES = 1.5 * 1024 * 1024;
+
+// Fixed default password for every bulk-imported user (per user request) -
+// must_change_password: true forces a change at their first login.
+const DEFAULT_IMPORT_PASSWORD = 'Welcome@123';
 
 // Never let a CSV grant Administrator/GM/RM/HR Manager - only these
 // three, matching how Role is otherwise treated as an explicit
@@ -263,9 +267,7 @@ function previewPageBody({ rows, rawText, duplicateMode, csrfToken }) {
 
 function resultsPageBody({ createdRows, updatedCount, failedRows, totalCount }) {
     const createdRowsHtml = createdRows
-        .map(
-            (r) => html`<tr><td>${r.employeeId}</td><td>${r.username}</td><td><code>${r.tempPassword}</code></td></tr>`
-        )
+        .map((r) => html`<tr><td>${r.employeeId}</td><td>${r.username}</td></tr>`)
         .map((r) => r.toString())
         .join('');
 
@@ -279,9 +281,9 @@ function resultsPageBody({ createdRows, updatedCount, failedRows, totalCount }) 
 <p>${createdRows.length + updatedCount} of ${totalCount} row(s) succeeded (${createdRows.length} created, ${updatedCount} updated), ${failedRows.length} failed/skipped.</p>
 ${createdRows.length
     ? html`
-<div class="alert alert-warning"><i class="bi bi-exclamation-triangle"></i> Record these temporary passwords now - they are shown only this once and are not recoverable afterward. Each new user must change their password at first login.</div>
-<div class="card shadow-sm mb-3"><div class="card-header bg-white">New Users &amp; Temporary Passwords</div><div class="table-responsive"><table class="table table-hover mb-0 align-middle">
-    <thead><tr><th>Employee ID</th><th>Username</th><th>Temporary Password</th></tr></thead>
+<div class="alert alert-warning"><i class="bi bi-exclamation-triangle"></i> Every new user has been given the default password <code>${DEFAULT_IMPORT_PASSWORD}</code>. Share it with them - each user is forced to change it at first login.</div>
+<div class="card shadow-sm mb-3"><div class="card-header bg-white">New Users</div><div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+    <thead><tr><th>Employee ID</th><th>Username</th></tr></thead>
     <tbody>${raw(createdRowsHtml)}</tbody>
 </table></div></div>`
     : ''}
@@ -421,9 +423,10 @@ export function registerAdminUserImportRoutes(router) {
 
         let successCount = 0;
         const failedRows = [];
-        // Temp passwords are shown exactly once, on the results page below -
-        // never persisted anywhere (same one-shot-display principle as the
-        // single-user reset_password action's flash message).
+        // Every bulk-imported user gets the same fixed default password
+        // (not a per-user random one) - must_change_password forces them
+        // off it at first login, same as the single-user reset_password
+        // action's forced-change behavior.
         const createdRows = [];
         let updatedCount = 0;
 
@@ -440,8 +443,7 @@ export function registerAdminUserImportRoutes(router) {
 
             try {
                 if (r.mode === 'create') {
-                    const tempPassword = generateTempPassword();
-                    const hash = await hashPassword(tempPassword);
+                    const hash = await hashPassword(DEFAULT_IMPORT_PASSWORD);
                     unwrap(
                         await db().from('users').insert({
                             employee_id: r.employeeId,
@@ -459,7 +461,7 @@ export function registerAdminUserImportRoutes(router) {
                             status: 'active',
                         })
                     );
-                    createdRows.push({ employeeId: r.employeeId, username: r.username, tempPassword });
+                    createdRows.push({ employeeId: r.employeeId, username: r.username });
                 } else {
                     // Update: never touch password.
                     unwrap(
