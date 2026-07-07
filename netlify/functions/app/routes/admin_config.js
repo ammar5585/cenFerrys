@@ -43,7 +43,7 @@ async function routesPageBody(csrfToken) {
             </td>
             <td><span class="badge ${r.status === 'active' ? 'bg-success' : 'bg-secondary'}">${r.status.charAt(0).toUpperCase() + r.status.slice(1)}</span></td>
             <td class="text-nowrap">
-                <form method="post" class="d-inline">${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="toggle_status"><input type="hidden" name="route_id" value="${r.route_id}"><button class="btn btn-sm btn-outline-secondary"><i class="bi bi-toggle2-on"></i></button></form>
+                <form method="post" class="d-inline">${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="toggle_status"><input type="hidden" name="route_id" value="${r.route_id}"><button class="btn btn-sm btn-outline-secondary" title="${r.status === 'active' ? 'Deactivate' : 'Activate'}"><i class="bi ${r.status === 'active' ? 'bi-toggle2-on' : 'bi-toggle2-off'}"></i></button></form>
                 <form method="post" class="d-inline" data-confirm="Delete this route? Related schedules will also be removed.">${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="delete"><input type="hidden" name="route_id" value="${r.route_id}"><button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
             </td>
         </tr>`

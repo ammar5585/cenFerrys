@@ -397,7 +397,7 @@ async function usersPageBody({ search, deptFilter, roleFilter, resortFilter, sta
                 </form>
                 <form method="post" class="d-inline" data-confirm="${u.status === 'active' ? 'Archive (deactivate) this user?' : 'Restore (reactivate) this user?'}">
                     ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="toggle_status"><input type="hidden" name="user_id" value="${u.user_id}">
-                    <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-toggle2-on"></i></button>
+                    <button class="btn btn-sm btn-outline-secondary" title="${u.status === 'active' ? 'Archive' : 'Restore'}"><i class="bi ${u.status === 'active' ? 'bi-toggle2-on' : 'bi-toggle2-off'}"></i></button>
                 </form>
                 <form method="post" class="d-inline" data-confirm="Permanently delete this user? This cannot be undone.">
                     ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="delete"><input type="hidden" name="user_id" value="${u.user_id}">
@@ -563,7 +563,7 @@ async function schedulesPageBody(csrfToken) {
             <td class="text-nowrap">
                 <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editScheduleModal${s.schedule_id}"><i class="bi bi-pencil"></i></button>
                 <form method="post" class="d-inline">${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="duplicate"><input type="hidden" name="schedule_id" value="${s.schedule_id}"><button class="btn btn-sm btn-outline-info"><i class="bi bi-files"></i></button></form>
-                <form method="post" class="d-inline">${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="toggle_status"><input type="hidden" name="schedule_id" value="${s.schedule_id}"><button class="btn btn-sm btn-outline-secondary"><i class="bi bi-toggle2-on"></i></button></form>
+                <form method="post" class="d-inline">${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="toggle_status"><input type="hidden" name="schedule_id" value="${s.schedule_id}"><button class="btn btn-sm btn-outline-secondary" title="${s.status === 'active' ? 'Deactivate' : 'Activate'}"><i class="bi ${s.status === 'active' ? 'bi-toggle2-on' : 'bi-toggle2-off'}"></i></button></form>
                 <form method="post" class="d-inline" data-confirm="Delete this schedule?">${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="delete"><input type="hidden" name="schedule_id" value="${s.schedule_id}"><button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
             </td>
         </tr>`
