@@ -319,7 +319,7 @@ async function fetchFilteredUsers({ search, deptFilter, roleFilter, resortFilter
     let query = db()
         .from('users')
         .select(
-            'user_id, employee_id, full_name, username, designation, status, department_id, role_id, resort_id, reporting_manager_id, profile_picture, roles(role_name), departments(department_name), resorts(resort_name), reporting_manager:reporting_manager_id(full_name)'
+            'user_id, employee_id, full_name, username, designation, status, department_id, role_id, resort_id, reporting_manager_id, profile_picture, email, phone, roles(role_name), departments(department_name), resorts(resort_name), reporting_manager:reporting_manager_id(full_name)'
         );
     if (deptFilter) query = query.eq('department_id', deptFilter);
     if (roleFilter) query = query.eq('role_id', roleFilter);
