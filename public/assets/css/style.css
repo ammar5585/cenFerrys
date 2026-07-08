@@ -366,6 +366,17 @@ body {
     .sidebar { transform: translateX(-100%); }
     .sidebar.show { transform: translateX(0); }
     .main-content, .topbar, .portal-banner { margin-left: 0; }
+    /* Mobile-only touch-target enlargement (44x44 minimum) - desktop's
+       40x40 .btn-icon sizing above is untouched; this only affects the
+       hamburger toggle/dark-mode/notifications/user-menu buttons in the
+       topbar at narrow widths, without changing their visual appearance
+       (padding grows the tappable box, not the icon/button styling).
+       The .btn-icon.btn-user-menu override further down the stylesheet
+       has higher specificity (compound selector) than a plain .btn-icon
+       rule, so it needs its own matching override here or its 40px
+       min-height would keep winning the cascade even inside this query. */
+    .btn-icon { min-width: 44px; min-height: 44px; }
+    .btn-icon.btn-user-menu { min-height: 44px; }
 }
 
 .table-responsive-card .table td { vertical-align: middle; }

@@ -20,12 +20,42 @@ const DEFAULT_THEME = {
     secondaryColor: '#6c757d',
 };
 
-// Bumped by hand whenever public/assets/css/style.css or
-// public/assets/js/main.js actually change - paired with the long
-// immutable Cache-Control header on /assets/* in vercel.json, this
+// Bumped by hand whenever public/assets/css/style.css, public/assets/js/main.js,
+// or the vendored public/assets/vendor/* files actually change - paired with
+// the long immutable Cache-Control header on /assets/* in vercel.json, this
 // query string is what forces browsers to fetch the new file instead
 // of serving a year-old cached copy after a deploy.
-const ASSET_VERSION = '1';
+const ASSET_VERSION = '2';
+
+const DEFAULT_META_DESCRIPTION = 'Staff ferry transfer booking, approvals, and administration portal.';
+
+/**
+ * Bootstrap/Bootstrap Icons are vendored locally (public/assets/vendor/)
+ * rather than loaded from a CDN - removes 2-3 render-blocking
+ * cross-origin connections on every page load and rides this app's
+ * existing long-term immutable /assets/* caching. Modern browsers
+ * partition their HTTP cache per top-level site (since ~2020, for
+ * privacy), so the old "a public CDN URL is probably already cached
+ * from some other site" argument for using a shared CDN no longer
+ * holds - self-hosting the exact same pinned files is a strict win now.
+ * The Bootstrap Icons webfont is explicitly preloaded since it's
+ * otherwise only discovered after the browser downloads and parses
+ * bootstrap-icons.css's @font-face rule, and icons render immediately
+ * (sidebar/topbar) on every authenticated page.
+ */
+function headAssetsHtml({ fontLink, styleBlock }) {
+    const preconnect = fontLink
+        ? '<link rel="preconnect" href="https://fonts.googleapis.com">\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+        : '';
+    return `
+<link rel="preload" as="font" type="font/woff2" href="/assets/vendor/bootstrap-icons/fonts/bootstrap-icons.woff2?v=${ASSET_VERSION}" crossorigin>
+${preconnect}
+<link href="/assets/vendor/bootstrap/bootstrap.min.css?v=${ASSET_VERSION}" rel="stylesheet">
+<link rel="stylesheet" href="/assets/vendor/bootstrap-icons/bootstrap-icons.css?v=${ASSET_VERSION}">
+<link href="/assets/css/style.css?v=${ASSET_VERSION}" rel="stylesheet">
+${fontLink}
+<style>${styleBlock}</style>`;
+}
 
 /**
  * Builds the per-request <style> override block + optional Google Fonts
@@ -136,14 +166,10 @@ export function shell({
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="${DEFAULT_META_DESCRIPTION}">
 <title>${pageTitle ? pageTitle + ' - ' : ''}${portalTitle || companyName}</title>
 <link rel="icon" href="${favicon || DEFAULT_FAVICON}">
-
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-<link href="/assets/css/style.css?v=${ASSET_VERSION}" rel="stylesheet">
-${raw(fontLink)}
-<style>${raw(styleBlock)}</style>
+${raw(headAssetsHtml({ fontLink, styleBlock }))}
 </head>
 <body>
 <script>
@@ -165,7 +191,7 @@ ${footerHtml({ companyName, footerText, copyrightText })}
 
 <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toastContainer" style="z-index: 1080;"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="/assets/vendor/bootstrap/bootstrap.bundle.min.js?v=${ASSET_VERSION}"></script>
 <script>
     window.BASE_URL = "/";
     window.CSRF_TOKEN = ${raw(JSON.stringify(csrfToken))};
@@ -201,18 +227,15 @@ export function publicShell({
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="${DEFAULT_META_DESCRIPTION}">
 <title>${pageTitle ? pageTitle + ' - ' : ''}${portalTitle || companyName}</title>
 <link rel="icon" href="${favicon || DEFAULT_FAVICON}">
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-<link href="/assets/css/style.css?v=${ASSET_VERSION}" rel="stylesheet">
-${raw(fontLink)}
-<style>${raw(styleBlock)}</style>
+${raw(headAssetsHtml({ fontLink, styleBlock }))}
 </head>
 <body>
 ${raw(bodyHtml)}
 ${footerHtml({ companyName, footerText, copyrightText })}
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="/assets/vendor/bootstrap/bootstrap.bundle.min.js?v=${ASSET_VERSION}"></script>
 </body>
 </html>`;
 }

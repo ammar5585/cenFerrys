@@ -677,7 +677,7 @@ export function registerStaffRoutes(router) {
         const siteLogo = await getSetting('site_logo', '');
         const body = html`<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><title>Booking Confirmation #${booking.booking_id}</title>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"></head>
+<link href="/assets/vendor/bootstrap/bootstrap.min.css" rel="stylesheet"></head>
 <body class="p-4"><div class="container" style="max-width: 600px;">
     <div class="text-center mb-4">${siteLogo ? html`<img src="${siteLogo}" alt="" style="max-height:60px;" class="mb-2 d-block mx-auto">` : ''}<h4>${companyName}</h4><p class="text-muted">Ferry Booking Confirmation</p></div>
     <table class="table table-bordered">
@@ -693,7 +693,7 @@ export function registerStaffRoutes(router) {
     <div class="text-center no-print mt-3"><button class="btn btn-primary" onclick="window.print()">Print</button></div>
 </div>
 <style>@media print { .no-print { display: none; } }</style>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="/assets/vendor/bootstrap/bootstrap.bundle.min.js"></script>
 </body></html>`;
         return htmlResponse(body.toString());
     });

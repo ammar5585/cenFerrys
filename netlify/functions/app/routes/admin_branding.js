@@ -92,7 +92,7 @@ function imageFieldCard(f, currentUrl) {
         <div class="card-body">
             <label class="form-label fw-semibold">${f.label}</label>
             <div class="form-text mb-2">${f.help}</div>
-            <img id="preview_${f.key}" src="${currentUrl}" alt="Current ${f.label}" class="mb-2 d-block border rounded" style="max-height:80px;max-width:100%;${currentUrl ? '' : 'display:none;'}">
+            <img id="preview_${f.key}" src="${currentUrl}" alt="Current ${f.label}" class="mb-2 d-block border rounded" style="max-height:80px;max-width:100%;${currentUrl ? '' : 'display:none;'}" loading="lazy">
             <input type="file" name="${f.key}" class="form-control form-control-sm mb-2" accept="${f.accept}" onchange="ferryHandleBrandingFile(this, 'preview_${f.key}', '${f.targetFormat}')">
             <div class="form-text text-danger" id="error_${f.key}"></div>
         </div>
