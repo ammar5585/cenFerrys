@@ -370,7 +370,7 @@ ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `
         <div class="card shadow-sm text-center">
             <div class="card-body">
                 ${profile.profile_picture
-                    ? html`<img src="${profile.profile_picture}" class="rounded-circle mb-2" width="100" height="100" style="object-fit:cover;">`
+                    ? html`<img src="${profile.profile_picture}" class="rounded-circle mb-2" width="100" height="100" style="object-fit:cover;" alt="Profile photo">`
                     : html`<div class="avatar-circle mx-auto mb-2" style="width:80px;height:80px;font-size:2rem;">${profile.full_name.charAt(0).toUpperCase()}</div>`}
                 <h6>${profile.full_name}</h6>
                 <p class="text-muted small mb-0">${profile.roles?.role_name ?? ''}</p>

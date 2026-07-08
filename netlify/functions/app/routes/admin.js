@@ -331,7 +331,7 @@ function userFormFields({ u, departments, roles, managers, resorts, values, isAp
     </div>` : ''}
     <div class="col-md-6">
         <label class="form-label">Profile Photo</label>
-        ${u?.profile_picture ? html`<img src="${u.profile_picture}" class="rounded-circle d-block mb-2" width="56" height="56" style="object-fit:cover;" loading="lazy">` : ''}
+        ${u?.profile_picture ? html`<img src="${u.profile_picture}" class="rounded-circle d-block mb-2" width="56" height="56" style="object-fit:cover;" loading="lazy" alt="Profile photo">` : ''}
         <input type="file" name="profile_picture" class="form-control" accept=".jpg,.jpeg,.png,.webp">
     </div>
 </div>`;
