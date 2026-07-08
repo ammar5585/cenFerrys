@@ -1,0 +1,22 @@
+-- =====================================================================
+-- Corporate Users - Multi-Resort Access: adds a single additive flag
+-- rather than restructuring users.resort_id (which stays NOT NULL and
+-- keeps meaning "home resort" for display/default-filter purposes).
+-- Confirmed via a full-codebase read before writing this migration:
+-- almost nothing in this app actually restricts query results by a
+-- user's OWN resort_id today (ferry_schedule/departments have no
+-- resort_id column at all; every existing resort filter dropdown is an
+-- optional convenience filter defaulting to "All Resorts", not access
+-- control) - so a boolean flag is sufficient; no resort join table, no
+-- RLS, no schema disruption to the many unrelated .eq('resort_id', ...)
+-- call sites (inserts, denormalized display, routing inputs).
+--
+-- Only Administrators can set this to true (enforced in
+-- routes/admin.js, not here) - "Corporate access does not automatically
+-- grant Administrator privileges" per the spec is satisfied
+-- structurally: this column never participates in hasPermission()
+-- checks, only in the two resort-scoping call sites that actually
+-- consult it (see routes/admin.js and routes/manager_extra.js).
+-- =====================================================================
+
+ALTER TABLE users ADD COLUMN is_corporate_user BOOLEAN NOT NULL DEFAULT false;

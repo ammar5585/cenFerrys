@@ -79,19 +79,23 @@ async function availabilityBody(userId, csrfToken) {
 // Department requests (Department Manager, read-only)
 // ---------------------------------------------------------------------
 async function departmentRequestsBody(userId) {
-    const selfRows = unwrap(await db().from('users').select('department_id, resort_id').eq('user_id', userId).limit(1));
+    const selfRows = unwrap(await db().from('users').select('department_id, resort_id, is_corporate_user').eq('user_id', userId).limit(1));
     const departmentId = selfRows[0]?.department_id;
     const resortId = selfRows[0]?.resort_id;
+    const isCorporateUser = !!selfRows[0]?.is_corporate_user;
 
     let rows = [];
-    if (departmentId && resortId) {
+    if (departmentId && (resortId || isCorporateUser)) {
         rows = unwrap(
             await db()
                 .from('bookings')
                 .select('booking_id, travel_date, direction, purpose, users!bookings_user_id_fkey(full_name, employee_id, department_id, resort_id), ferry_schedule(departure_time), booking_status(status_name, badge_color)')
                 .order('travel_date', { ascending: false })
         );
-        rows = rows.filter((r) => r.users.department_id === departmentId && r.users.resort_id === resortId);
+        // A Corporate User (see admin.js's Resort Scope field) sees this
+        // department's requests from BOTH resorts, not just their own -
+        // everyone else stays restricted to their own resort, unchanged.
+        rows = rows.filter((r) => r.users.department_id === departmentId && (isCorporateUser || r.users.resort_id === resortId));
     }
 
     const rowsHtml = rows

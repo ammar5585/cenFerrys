@@ -26,11 +26,11 @@ async function readFormBody(request) {
     return out;
 }
 
-async function bookingsPageBody({ dateFrom, dateTo, statusFilter, deptFilter, csrfToken, perms }) {
+async function bookingsPageBody({ dateFrom, dateTo, statusFilter, deptFilter, resortFilter, csrfToken, perms }) {
     let query = db()
         .from('bookings')
         .select(
-            'booking_id, travel_date, direction, purpose, seats, admin_override, booking_method, status_id, users!bookings_user_id_fkey(full_name, employee_id, department_id, departments(department_name)), booking_status(status_name, badge_color), ferry_schedule(departure_time)'
+            'booking_id, travel_date, direction, purpose, seats, admin_override, booking_method, status_id, users!bookings_user_id_fkey(full_name, employee_id, department_id, resort_id, departments(department_name)), booking_status(status_name, badge_color), ferry_schedule(departure_time)'
         )
         .order('travel_date', { ascending: false })
         .limit(300);
@@ -39,9 +39,11 @@ async function bookingsPageBody({ dateFrom, dateTo, statusFilter, deptFilter, cs
     if (statusFilter) query = query.eq('status_id', statusFilter);
     let bookings = unwrap(await query);
     if (deptFilter) bookings = bookings.filter((b) => b.users.department_id === deptFilter);
+    if (resortFilter) bookings = bookings.filter((b) => b.users.resort_id === resortFilter);
 
     const statuses = unwrap(await db().from('booking_status').select('*').order('status_id'));
     const departments = await getAllDepartments();
+    const resorts = await getActiveResorts();
     const canAdminOverride = hasPermission(perms, 'booking.admin_override');
     const canHrManualBook = hasPermission(perms, 'booking.hr_manual_booking');
     const canOverrideCapacity = canHrManualBook && hasPermission(perms, 'booking.override_capacity');
@@ -141,6 +143,7 @@ async function bookingsPageBody({ dateFrom, dateTo, statusFilter, deptFilter, cs
         <div class="col-md-3"><input type="date" name="date_to" class="form-control" value="${dateTo}"></div>
         <div class="col-md-3"><select name="status" class="form-select"><option value="0">All Status</option>${raw(statuses.map((s) => `<option value="${s.status_id}" ${statusFilter == s.status_id ? 'selected' : ''}>${h(s.status_name)}</option>`).join(''))}</select></div>
         <div class="col-md-3"><select name="department" class="form-select"><option value="0">All Departments</option>${raw(departments.map((d) => `<option value="${d.department_id}" ${deptFilter == d.department_id ? 'selected' : ''}>${h(d.department_name)}</option>`).join(''))}</select></div>
+        <div class="col-md-3"><select name="resort" class="form-select"><option value="0">All Resorts</option>${raw(resorts.map((r) => `<option value="${r.resort_id}" ${resortFilter == r.resort_id ? 'selected' : ''}>${h(r.resort_name)}</option>`).join(''))}</select></div>
         <div class="col-12"><button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-search"></i> Filter</button> <a href="/admin/bookings" class="btn btn-sm btn-outline-secondary">Reset</a></div>
     </form>
 </div></div>
@@ -185,6 +188,7 @@ export function registerAdminBookingsRoutes(router) {
             dateTo: url.searchParams.get('date_to') || '',
             statusFilter: Number(url.searchParams.get('status') || 0),
             deptFilter: Number(url.searchParams.get('department') || 0),
+            resortFilter: Number(url.searchParams.get('resort') || 0),
             csrfToken: auth.user.csrf,
             perms: auth.user.perms,
         });

@@ -19,6 +19,7 @@ import { uploadProfilePicture } from '../uploads.js';
 import { redirectTo, notFound, csvResponse } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatTime, timeAgo, greeting } from '../format.js';
+import { ROLE_ADMIN } from '../session.js';
 
 const WEEKDAY_OPTIONS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -249,21 +250,31 @@ async function adminDashboardBody(fullName) {
 // ---------------------------------------------------------------------
 // Users CRUD
 // ---------------------------------------------------------------------
-function userFormFields({ u, departments, roles, managers, resorts, values, isApprover }) {
+function userFormFields({ u, departments, roles, managers, resorts, values, isApprover, isAdminActor }) {
     // `values` (optional): the raw submitted form values from a rejected
     // save, redisplayed in place of `u`'s stored DB values so the admin
     // doesn't lose what they typed when validation/duplicate-key fails.
     const v = (key, fallback = '') => (values && values[key] !== undefined ? values[key] : (u?.[key] ?? fallback));
+    // Resort Scope: CGLM / CMLM behave exactly like the old plain Resort
+    // dropdown (value = resort_id); "Both Resorts (Corporate Access)" is
+    // a third literal option, only rendered for an Administrator actor -
+    // enforced again server-side in the POST handler, this is not the
+    // only guard. Pre-selects "both" when the stored/resubmitted value is
+    // is_corporate_user=true, regardless of which resort_id is on file
+    // (that value becomes just a "home resort" once corporate).
+    const isCorporate = values && values.resort_scope !== undefined ? values.resort_scope === 'both' : !!u?.is_corporate_user;
     return html`
 <div class="row g-3">
     <div class="col-md-6"><label class="form-label">Employee ID *</label><input type="text" name="employee_id" class="form-control" required value="${v('employee_id')}"></div>
     <div class="col-md-6"><label class="form-label">Full Name *</label><input type="text" name="full_name" class="form-control" required value="${v('full_name')}"></div>
     <div class="col-md-6"><label class="form-label">Username *</label><input type="text" name="username" class="form-control" required value="${v('username')}"></div>
     <div class="col-md-6"><label class="form-label">Password ${u ? '(leave blank to keep unchanged)' : '*'}</label><input type="password" name="password" class="form-control" ${u ? '' : 'required'}></div>
-    <div class="col-md-6"><label class="form-label">Resort *</label>
-        <select name="resort_id" class="form-select" required><option value="">-- Select Resort --</option>
-        ${raw(resorts.map((r) => `<option value="${r.resort_id}" ${v('resort_id') == r.resort_id ? 'selected' : ''}>${h(r.resort_name)}</option>`).join(''))}
+    <div class="col-md-6"><label class="form-label">Resort Scope *</label>
+        <select name="resort_scope" class="form-select" required><option value="">-- Select Resort Scope --</option>
+        ${raw(resorts.map((r) => `<option value="${r.resort_id}" ${!isCorporate && v('resort_id') == r.resort_id ? 'selected' : ''}>${h(r.resort_name)}</option>`).join(''))}
+        ${isAdminActor ? `<option value="both" ${isCorporate ? 'selected' : ''}>Both Resorts (Corporate Access)</option>` : ''}
         </select>
+        <div class="form-text">Corporate Access lets a user operate across both resorts - only an Administrator can grant it.</div>
     </div>
     <div class="col-md-6"><label class="form-label">Department *</label>
         <select name="department_id" class="form-select" required><option value="">-- Select Department --</option>
@@ -319,7 +330,7 @@ async function fetchFilteredUsers({ search, deptFilter, roleFilter, resortFilter
     let query = db()
         .from('users')
         .select(
-            'user_id, employee_id, full_name, username, designation, status, department_id, role_id, resort_id, reporting_manager_id, profile_picture, email, phone, roles(role_name), departments(department_name), resorts(resort_name), reporting_manager:reporting_manager_id(full_name)'
+            'user_id, employee_id, full_name, username, designation, status, department_id, role_id, resort_id, is_corporate_user, reporting_manager_id, profile_picture, email, phone, roles(role_name), departments(department_name), resorts(resort_name), reporting_manager:reporting_manager_id(full_name)'
         );
     if (deptFilter) query = query.eq('department_id', deptFilter);
     if (roleFilter) query = query.eq('role_id', roleFilter);
@@ -348,7 +359,7 @@ async function fetchFilteredUsers({ search, deptFilter, roleFilter, resortFilter
     return users;
 }
 
-async function usersPageBody({ search, deptFilter, roleFilter, resortFilter, statusFilter, sortKey, sortDir, csrfToken, errors, reopen }) {
+async function usersPageBody({ search, deptFilter, roleFilter, resortFilter, statusFilter, sortKey, sortDir, csrfToken, errors, reopen, isAdminActor }) {
     const users = await fetchFilteredUsers({ search, deptFilter, roleFilter, resortFilter, statusFilter, sortKey, sortDir });
 
     const departments = await getAllDepartments();
@@ -416,7 +427,7 @@ async function usersPageBody({ search, deptFilter, roleFilter, resortFilter, sta
             <div class="modal-header"><h5 class="modal-title">Edit User</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
             <div class="modal-body">
                 ${reopen && reopen.type === 'edit' && reopen.userId === u.user_id && reopen.errors?.length ? html`<div class="alert alert-danger py-2">${raw(reopen.errors.map((e) => `${e}<br>`).join(''))}</div>` : ''}
-                ${userFormFields({ u, departments, roles, managers, resorts, values: reopen && reopen.type === 'edit' && reopen.userId === u.user_id ? reopen.values : undefined, isApprover: approverIds.has(u.user_id) })}
+                ${userFormFields({ u, departments, roles, managers, resorts, values: reopen && reopen.type === 'edit' && reopen.userId === u.user_id ? reopen.values : undefined, isApprover: approverIds.has(u.user_id), isAdminActor })}
             </div>
             <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Save Changes</button></div>
         </form></div></div>`
@@ -488,7 +499,7 @@ ${raw(editModalsHtml)}
     <div class="modal-header"><h5 class="modal-title">Add User</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <div class="modal-body">
         ${reopen && reopen.type === 'add' && reopen.errors?.length ? html`<div class="alert alert-danger py-2">${raw(reopen.errors.map((e) => `${e}<br>`).join(''))}</div>` : ''}
-        ${userFormFields({ u: null, departments, roles, managers, resorts, values: reopen && reopen.type === 'add' ? reopen.values : undefined })}
+        ${userFormFields({ u: null, departments, roles, managers, resorts, values: reopen && reopen.type === 'add' ? reopen.values : undefined, isAdminActor })}
     </div>
     <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Create User</button></div>
 </form></div></div>
@@ -676,7 +687,7 @@ export function registerAdminRoutes(router) {
             return csvResponse(usersToCsv(users), filename);
         }
 
-        const body = await usersPageBody({ ...filters, csrfToken: auth.user.csrf, errors: [] });
+        const body = await usersPageBody({ ...filters, csrfToken: auth.user.csrf, errors: [], isAdminActor: auth.user.role_name === ROLE_ADMIN });
         return renderShellForRequest({ request, auth, pageTitle: 'User Management', path: '/admin/users', bodyHtml: body });
     });
 
@@ -712,7 +723,38 @@ export function registerAdminRoutes(router) {
             const fullName = (form.full_name || '').trim();
             const username = (form.username || '').trim();
             const password = form.password || '';
-            const resortId = Number(form.resort_id) || null;
+            const userId = Number(form.user_id) || 0;
+
+            // Resort Scope: only an Administrator may set or change
+            // "Both Resorts (Corporate Access)" - the dropdown doesn't
+            // even render that option for anyone else, but the server
+            // never trusts the client alone. A non-Administrator editing
+            // an ALREADY-corporate user has no way to see/change this
+            // field at all (it's locked to its current value), so simply
+            // saving some other field on their form can never silently
+            // downgrade an existing corporate user back to a single resort.
+            let resortId;
+            let isCorporateUser;
+            if (user.role_name === ROLE_ADMIN) {
+                const isCorporateSubmitted = form.resort_scope === 'both';
+                resortId = isCorporateSubmitted ? (await getAllResorts())[0]?.resort_id ?? null : Number(form.resort_scope) || null;
+                isCorporateUser = isCorporateSubmitted;
+            } else if (action === 'edit' && userId) {
+                const existingRows = unwrap(await db().from('users').select('resort_id, is_corporate_user').eq('user_id', userId).limit(1));
+                const existing = existingRows[0];
+                if (existing?.is_corporate_user) {
+                    resortId = existing.resort_id;
+                    isCorporateUser = true;
+                } else {
+                    resortId = Number(form.resort_scope) || null;
+                    isCorporateUser = false;
+                }
+            } else {
+                // action === 'add' by a non-Administrator - "both" is
+                // never rendered/honored for a brand-new user either.
+                resortId = Number(form.resort_scope) || null;
+                isCorporateUser = false;
+            }
             const departmentId = Number(form.department_id) || null;
             const designation = (form.designation || '').trim() || null;
             const roleId = Number(form.role_id) || 0;
@@ -720,7 +762,6 @@ export function registerAdminRoutes(router) {
             const email = (form.email || '').trim() || null;
             const phone = (form.phone || '').trim() || null;
             const status = form.status === 'inactive' ? 'inactive' : 'active';
-            const userId = Number(form.user_id) || 0;
             const photoFile = form.profile_picture;
             const hasPhoto = photoFile && typeof photoFile.arrayBuffer === 'function' && photoFile.size > 0;
 
@@ -739,7 +780,7 @@ export function registerAdminRoutes(router) {
                                 .from('users')
                                 .insert({
                                     employee_id: employeeId, full_name: fullName, username, password: hash,
-                                    resort_id: resortId, department_id: departmentId, designation, role_id: roleId, reporting_manager_id: managerId,
+                                    resort_id: resortId, is_corporate_user: isCorporateUser, department_id: departmentId, designation, role_id: roleId, reporting_manager_id: managerId,
                                     email, phone, status,
                                 })
                                 .select('user_id')
@@ -758,7 +799,7 @@ export function registerAdminRoutes(router) {
                         await logActivity(user.user_id, 'Created user', username, clientIp(request));
                         return redirectTo('/admin/users', { cookies: [auth.setCookie, flashSetCookie('success', `User '${fullName}' created successfully.`)].filter(Boolean) });
                     }
-                    const update = { employee_id: employeeId, full_name: fullName, username, resort_id: resortId, department_id: departmentId, designation, role_id: roleId, reporting_manager_id: managerId, email, phone, status };
+                    const update = { employee_id: employeeId, full_name: fullName, username, resort_id: resortId, is_corporate_user: isCorporateUser, department_id: departmentId, designation, role_id: roleId, reporting_manager_id: managerId, email, phone, status };
                     if (password) update.password = await hashPassword(password);
                     if (hasPhoto) update.profile_picture = await uploadProfilePicture(photoFile, userId);
                     unwrap(await db().from('users').update(update).eq('user_id', userId));
@@ -772,6 +813,7 @@ export function registerAdminRoutes(router) {
                 search: '', deptFilter: 0, roleFilter: 0, resortFilter: 0, statusFilter: '', sortKey: '', sortDir: '',
                 csrfToken: user.csrf, errors: [],
                 reopen: { type: action, userId, values: form, errors },
+                isAdminActor: user.role_name === ROLE_ADMIN,
             });
             return renderShellForRequest({ request, auth, pageTitle: 'User Management', path: '/admin/users', bodyHtml: body });
         }

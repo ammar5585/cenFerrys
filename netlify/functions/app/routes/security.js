@@ -10,6 +10,7 @@ import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
 import { getRemainingSeats } from '../seats.js';
 import { getWaitingList, promoteWaitingListBooking, recordMovement } from '../security.js';
+import { getActiveResorts } from '../refData.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
@@ -44,7 +45,7 @@ async function manifestFor(scheduleId, travelDate) {
         await db()
             .from('bookings')
             .select(
-                'booking_id, seats, checked_in_at, departed_at, arrived_at, users!bookings_user_id_fkey(full_name, employee_id, designation, departments(department_name), resorts(resort_name)), booking_status!inner(status_name, badge_color)'
+                'booking_id, seats, checked_in_at, departed_at, arrived_at, users!bookings_user_id_fkey(full_name, employee_id, designation, resort_id, departments(department_name), resorts(resort_name)), booking_status!inner(status_name, badge_color)'
             )
             .eq('schedule_id', scheduleId)
             .eq('travel_date', travelDate)
@@ -211,11 +212,14 @@ function manifestActionButtons({ booking, csrfToken, date, scheduleId }) {
     return raw('<span class="text-muted small">-</span>');
 }
 
-async function manifestPageBody({ date, scheduleId, schedules, csrfToken }) {
-    const manifest = scheduleId ? await manifestFor(scheduleId, date) : [];
+async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csrfToken }) {
+    let manifest = scheduleId ? await manifestFor(scheduleId, date) : [];
+    if (resortFilter) manifest = manifest.filter((p) => p.users.resort_id === resortFilter);
+    const resorts = await getActiveResorts();
     const scheduleOptions = schedules
         .map((s) => `<option value="${s.schedule_id}" ${scheduleId === s.schedule_id ? 'selected' : ''}>${h(s.ferry_routes.direction)} - ${h(formatTime(s.departure_time))}</option>`)
         .join('');
+    const resortOptions = resorts.map((r) => `<option value="${r.resort_id}" ${resortFilter === r.resort_id ? 'selected' : ''}>${h(r.resort_name)}</option>`).join('');
 
     const rowsHtml = manifest
         .map(
@@ -241,7 +245,8 @@ async function manifestPageBody({ date, scheduleId, schedules, csrfToken }) {
 <div class="card shadow-sm mb-3"><div class="card-body">
     <form method="get" class="row g-2">
         <div class="col-md-3"><label class="form-label">Date</label><input type="date" name="date" class="form-control" value="${date}"></div>
-        <div class="col-md-5"><label class="form-label">Ferry Schedule</label><select name="schedule_id" class="form-select"><option value="0">-- Select Departure --</option>${raw(scheduleOptions)}</select></div>
+        <div class="col-md-4"><label class="form-label">Ferry Schedule</label><select name="schedule_id" class="form-select"><option value="0">-- Select Departure --</option>${raw(scheduleOptions)}</select></div>
+        <div class="col-md-3"><label class="form-label">Resort</label><select name="resort" class="form-select"><option value="0">All Resorts</option>${raw(resortOptions)}</select></div>
         <div class="col-md-2 d-flex align-items-end"><button class="btn btn-outline-primary btn-sm w-100" type="submit">View</button></div>
     </form>
 </div></div>
@@ -253,11 +258,14 @@ ${scheduleId
     : ''}`;
 }
 
-async function waitingListPageBody({ date, scheduleId, schedules, csrfToken, canOverrideFifo }) {
-    const waitingList = scheduleId ? await getWaitingList(scheduleId, date) : [];
+async function waitingListPageBody({ date, scheduleId, schedules, resortFilter, csrfToken, canOverrideFifo }) {
+    let waitingList = scheduleId ? await getWaitingList(scheduleId, date) : [];
+    if (resortFilter) waitingList = waitingList.filter((b) => b.users.resort_id === resortFilter);
+    const resorts = await getActiveResorts();
     const scheduleOptions = schedules
         .map((s) => `<option value="${s.schedule_id}" ${scheduleId === s.schedule_id ? 'selected' : ''}>${h(s.ferry_routes.direction)} - ${h(formatTime(s.departure_time))}</option>`)
         .join('');
+    const resortOptions = resorts.map((r) => `<option value="${r.resort_id}" ${resortFilter === r.resort_id ? 'selected' : ''}>${h(r.resort_name)}</option>`).join('');
 
     const rowsHtml = waitingList
         .map(
@@ -284,7 +292,8 @@ async function waitingListPageBody({ date, scheduleId, schedules, csrfToken, can
 <div class="card shadow-sm mb-3"><div class="card-body">
     <form method="get" class="row g-2">
         <div class="col-md-3"><label class="form-label">Date</label><input type="date" name="date" class="form-control" value="${date}"></div>
-        <div class="col-md-5"><label class="form-label">Ferry Schedule</label><select name="schedule_id" class="form-select"><option value="0">-- Select Departure --</option>${raw(scheduleOptions)}</select></div>
+        <div class="col-md-4"><label class="form-label">Ferry Schedule</label><select name="schedule_id" class="form-select"><option value="0">-- Select Departure --</option>${raw(scheduleOptions)}</select></div>
+        <div class="col-md-3"><label class="form-label">Resort</label><select name="resort" class="form-select"><option value="0">All Resorts</option>${raw(resortOptions)}</select></div>
         <div class="col-md-2 d-flex align-items-end"><button class="btn btn-outline-primary btn-sm w-100" type="submit">View</button></div>
     </form>
 </div></div>
@@ -321,8 +330,9 @@ export function registerSecurityRoutes(router) {
         const url = new URL(request.url);
         const date = url.searchParams.get('date') || new Date().toISOString().slice(0, 10);
         const scheduleId = Number(url.searchParams.get('schedule_id') || 0);
+        const resortFilter = Number(url.searchParams.get('resort') || 0);
         const schedules = await activeSchedulesForDate(date);
-        const body = await manifestPageBody({ date, scheduleId, schedules, csrfToken: auth.user.csrf });
+        const body = await manifestPageBody({ date, scheduleId, schedules, resortFilter, csrfToken: auth.user.csrf });
         return renderShellForRequest({ request, auth, pageTitle: 'Passenger Manifest', path: '/security/manifest', bodyHtml: body });
     });
 
@@ -353,9 +363,10 @@ export function registerSecurityRoutes(router) {
         const url = new URL(request.url);
         const date = url.searchParams.get('date') || new Date().toISOString().slice(0, 10);
         const scheduleId = Number(url.searchParams.get('schedule_id') || 0);
+        const resortFilter = Number(url.searchParams.get('resort') || 0);
         const schedules = await activeSchedulesForDate(date);
         const canOverrideFifo = [ROLE_ADMIN, ROLE_HR].includes(auth.user.role_name);
-        const body = await waitingListPageBody({ date, scheduleId, schedules, csrfToken: auth.user.csrf, canOverrideFifo });
+        const body = await waitingListPageBody({ date, scheduleId, schedules, resortFilter, csrfToken: auth.user.csrf, canOverrideFifo });
         return renderShellForRequest({ request, auth, pageTitle: 'Waiting List', path: '/security/waiting_list', bodyHtml: body });
     });
 
