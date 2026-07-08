@@ -2,10 +2,24 @@
 // function (there's no PHP-style "include this file mid-response"
 // mechanism here, so the whole page is assembled in one call).
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { html, raw } from './html.js';
 import { renderNavbar } from './partials/navbar.js';
 import { renderSidebar } from './partials/sidebar.js';
 import { resolveFontFamily, resolveFontSize, safeHexColor } from '../branding.js';
+
+// Inlined at module load (once per cold start) rather than linked - it's
+// small (a few KB) and has no url() references of its own to break, so
+// inlining removes a whole render-blocking network round-trip from the
+// critical path with zero visual difference. Bootstrap's own CSS is
+// deliberately NOT inlined here: at 30-50x the size, inlining it would
+// mean paying that cost on every single page navigation (this app does
+// full page reloads, not SPA routing) instead of once via the existing
+// long-lived /assets/* cache.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const STYLE_CSS = readFileSync(path.join(__dirname, '../../../../public/assets/css/style.css'), 'utf8');
 
 // Zero-asset default favicon (nothing ships on disk today) - a simple
 // inline SVG data URI, computed once at module load via encodeURIComponent
@@ -47,12 +61,19 @@ function headAssetsHtml({ fontLink, styleBlock }) {
     const preconnect = fontLink
         ? '<link rel="preconnect" href="https://fonts.googleapis.com">\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
         : '';
+    // bootstrap-icons.css only controls decorative icon glyphs (never
+    // page layout/structure), so loading it non-render-blocking via the
+    // preload+swap technique is safe - icons simply pop in a beat later
+    // instead of the browser waiting on this file before first paint.
+    // The noscript fallback covers the (here, theoretical) no-JS case.
+    const iconsHref = `/assets/vendor/bootstrap-icons/bootstrap-icons.css?v=${ASSET_VERSION}`;
     return `
 <link rel="preload" as="font" type="font/woff2" href="/assets/vendor/bootstrap-icons/fonts/bootstrap-icons.woff2?v=${ASSET_VERSION}" crossorigin>
 ${preconnect}
 <link href="/assets/vendor/bootstrap/bootstrap.min.css?v=${ASSET_VERSION}" rel="stylesheet">
-<link rel="stylesheet" href="/assets/vendor/bootstrap-icons/bootstrap-icons.css?v=${ASSET_VERSION}">
-<link href="/assets/css/style.css?v=${ASSET_VERSION}" rel="stylesheet">
+<link rel="preload" as="style" href="${iconsHref}" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="${iconsHref}"></noscript>
+<style>${STYLE_CSS}</style>
 ${fontLink}
 <style>${styleBlock}</style>`;
 }
