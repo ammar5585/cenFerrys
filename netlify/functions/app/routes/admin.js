@@ -109,9 +109,12 @@ async function adminDashboardBody(fullName) {
     const statusIdByName = new Map(statusRows.map((r) => [r.status_name, r.status_id]));
 
     // Second wave: these DO depend on the status_id/waiting-id values
-    // just resolved above, but the 4 count queries are independent of
-    // each other, so they still run concurrently rather than in series.
-    const [approvedRes, rejectedRes, cancelledRes, pendingApprovalsRes] = await Promise.all([
+    // (or, for seat info, on `schedules`) resolved in the first wave,
+    // but are independent of EACH OTHER, so all 5 still run concurrently
+    // rather than in series - including the seat-availability batch RPC,
+    // which previously ran as its own third sequential stage.
+    const todaysTrips = schedules.filter((s) => s.weekdays.includes(weekday));
+    const [approvedRes, rejectedRes, cancelledRes, pendingApprovalsRes, seatInfoById] = await Promise.all([
         statusIdByName.has('Approved')
             ? db().from('bookings').select('*', { count: 'exact', head: true }).eq('status_id', statusIdByName.get('Approved'))
             : Promise.resolve({ count: 0 }),
@@ -124,14 +127,13 @@ async function adminDashboardBody(fullName) {
         waitingStatusIds.length
             ? db().from('bookings').select('*', { count: 'exact', head: true }).in('status_id', waitingStatusIds)
             : Promise.resolve({ count: 0 }),
+        getRemainingSeatsBatch(todaysTrips.map((t) => t.schedule_id), today),
     ]);
     const statusCounts = { Approved: approvedRes.count || 0, Rejected: rejectedRes.count || 0, Cancelled: cancelledRes.count || 0 };
     const pendingApprovals = pendingApprovalsRes.count || 0;
 
-    const todaysTrips = schedules.filter((s) => s.weekdays.includes(weekday));
     let availableSeatsTotal = 0;
     let fullyBookedCount = 0;
-    const seatInfoById = await getRemainingSeatsBatch(todaysTrips.map((t) => t.schedule_id), today);
     const tripRows = todaysTrips.map((t) => {
         const info = seatInfoById.get(t.schedule_id) ?? { booked: 0, remaining: t.capacity };
         availableSeatsTotal += info.remaining;
