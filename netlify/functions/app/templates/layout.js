@@ -235,7 +235,6 @@ ${raw(headAssetsHtml({ fontLink, styleBlock }))}
 <body>
 ${raw(bodyHtml)}
 ${footerHtml({ companyName, footerText, copyrightText })}
-<script src="/assets/vendor/bootstrap/bootstrap.bundle.min.js?v=${ASSET_VERSION}"></script>
 </body>
 </html>`;
 }

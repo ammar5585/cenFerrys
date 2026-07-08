@@ -7,9 +7,33 @@
 
 import crypto from 'node:crypto';
 import { fileTypeFromBuffer } from 'file-type';
+import { Jimp, JimpMime } from 'jimp';
 import { db } from './db.js';
 
 const MAX_BYTES = 2 * 1024 * 1024; // 2MB, matches the PHP app's cap
+
+// Only jpg/png go through Jimp: svg is vector (no raster resize needed),
+// and the bundled `jimp` package ships no webp encoder (that's a separate
+// wasm plugin) - webp uploads are passed through unresized rather than
+// pulling in that extra dependency for a format that's already efficient.
+const RESIZABLE_EXT = new Set(['jpg', 'jpeg', 'png']);
+
+/**
+ * Downscales an image to fit within maxWidth x maxHeight (preserving
+ * aspect ratio, never upscaling) before it's stored. Branding logos are
+ * commonly uploaded at their original multi-megapixel resolution despite
+ * rendering at a few dozen CSS pixels - this keeps the stored file close
+ * to what's actually served instead of shipping the original every load.
+ */
+async function resizeIfLarger(buffer, ext, maxWidth, maxHeight) {
+    if (!RESIZABLE_EXT.has(ext)) return buffer;
+    const img = await Jimp.fromBuffer(buffer);
+    const { width, height } = img.bitmap;
+    if (width <= maxWidth && height <= maxHeight) return buffer;
+    const scale = Math.min(maxWidth / width, maxHeight / height);
+    img.resize({ w: Math.round(width * scale), h: Math.round(height * scale) });
+    return img.getBuffer(ext === 'png' ? JimpMime.png : JimpMime.jpeg);
+}
 
 const PROFILE_PICTURE_TYPES = new Set(['jpg', 'jpeg', 'png', 'webp']);
 const LOGO_TYPES = new Set(['jpg', 'jpeg', 'png', 'svg', 'webp']);
@@ -25,7 +49,7 @@ const BACKGROUND_TYPES = new Set(['jpg', 'jpeg', 'png', 'webp']);
  * Supabase Storage bucket. Returns the public URL, or throws an Error
  * with a user-facing message on validation failure.
  */
-export async function handleUpload(file, { bucket, allowedExt, prefix }) {
+export async function handleUpload(file, { bucket, allowedExt, prefix, maxWidth, maxHeight }) {
     if (!file || typeof file.arrayBuffer !== 'function') {
         throw new Error('No file was uploaded.');
     }
@@ -38,7 +62,7 @@ export async function handleUpload(file, { bucket, allowedExt, prefix }) {
         throw new Error(`File type not allowed. Accepted: ${[...allowedExt].join(', ')}`);
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
+    let buffer = Buffer.from(await file.arrayBuffer());
 
     // SVGs have no reliable magic-byte signature (they're plain-text XML) -
     // file-type intentionally can't sniff them, so only enforce the
@@ -49,6 +73,10 @@ export async function handleUpload(file, { bucket, allowedExt, prefix }) {
         if (!sniffed || !allowedExt.has(sniffedExt)) {
             throw new Error('File content does not match an allowed image type.');
         }
+    }
+
+    if (maxWidth && maxHeight) {
+        buffer = await resizeIfLarger(buffer, ext, maxWidth, maxHeight);
     }
 
     const filename = `${prefix}_${crypto.randomBytes(8).toString('hex')}.${ext}`;
@@ -69,6 +97,10 @@ export function uploadProfilePicture(file, userId) {
         bucket: 'profile-pictures',
         allowedExt: PROFILE_PICTURE_TYPES,
         prefix: `user_${userId}`,
+        // Largest on-screen use is the 100x100 staff profile picture;
+        // doubled for retina, with headroom since object-fit:cover may crop.
+        maxWidth: 400,
+        maxHeight: 400,
     });
 }
 
@@ -77,6 +109,9 @@ export function uploadSiteLogo(file) {
         bucket: 'portal-assets',
         allowedExt: LOGO_TYPES,
         prefix: 'site_logo',
+        // .sidebar-brand-logo caps at 140x32 CSS px; doubled for retina.
+        maxWidth: 280,
+        maxHeight: 64,
     });
 }
 
@@ -85,6 +120,9 @@ export function uploadLoginLogo(file) {
         bucket: 'portal-assets',
         allowedExt: LOGO_TYPES,
         prefix: 'login_logo',
+        // .login-logo caps at 220x64 CSS px; doubled for retina.
+        maxWidth: 440,
+        maxHeight: 128,
     });
 }
 
