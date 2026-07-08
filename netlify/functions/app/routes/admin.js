@@ -272,7 +272,7 @@ function userFormFields({ u, departments, roles, managers, resorts, values, isAp
     <div class="col-md-6"><label class="form-label">Resort Scope *</label>
         <select name="resort_scope" class="form-select" required><option value="">-- Select Resort Scope --</option>
         ${raw(resorts.map((r) => `<option value="${r.resort_id}" ${!isCorporate && v('resort_id') == r.resort_id ? 'selected' : ''}>${h(r.resort_name)}</option>`).join(''))}
-        ${isAdminActor ? `<option value="both" ${isCorporate ? 'selected' : ''}>Both Resorts (Corporate Access)</option>` : ''}
+        ${isAdminActor ? raw(`<option value="both" ${isCorporate ? 'selected' : ''}>Both Resorts (Corporate Access)</option>`) : ''}
         </select>
         <div class="form-text">Corporate Access lets a user operate across both resorts - only an Administrator can grant it.</div>
     </div>
