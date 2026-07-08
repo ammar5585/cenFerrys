@@ -31,12 +31,19 @@ async function departmentApprovalPageBody(csrfToken) {
     const configs = unwrap(await db().from('department_approval_config').select('*'));
     const configByKey = new Map(configs.map((c) => [`${c.resort_id}:${c.department_id}`, c]));
     const activeUsers = unwrap(
-        await db().from('users').select('user_id, full_name, employee_id, resort_id').eq('status', 'active').order('full_name')
+        await db().from('users').select('user_id, full_name, employee_id, resort_id, is_corporate_user').eq('status', 'active').order('full_name')
     );
+    // A Corporate User (see admin.js's Resort Scope field) is a valid
+    // Primary/Secondary Approver candidate at EVERY resort, not just
+    // their home resort_id - added to every resort's candidate list below.
     const activeUsersByResort = new Map();
+    for (const r of resorts) activeUsersByResort.set(r.resort_id, []);
     for (const u of activeUsers) {
-        if (!activeUsersByResort.has(u.resort_id)) activeUsersByResort.set(u.resort_id, []);
-        activeUsersByResort.get(u.resort_id).push(u);
+        if (u.is_corporate_user) {
+            for (const list of activeUsersByResort.values()) list.push(u);
+        } else if (activeUsersByResort.has(u.resort_id)) {
+            activeUsersByResort.get(u.resort_id).push(u);
+        }
     }
 
     const userOptions = (resortId, selectedId) => {
@@ -147,17 +154,18 @@ export function registerAdminDepartmentApprovalRoutes(router) {
         const autoEscalationEnabled = !!form.auto_escalation_enabled;
 
         // Server-side re-validation that the chosen users are actually
-        // active AND belong to this same resort - never trust the dropdown
-        // alone (mirrors the same discipline used elsewhere in this
-        // codebase, e.g. admin/users.js).
+        // active AND (belong to this same resort OR are a Corporate User,
+        // eligible at every resort) - never trust the dropdown alone
+        // (mirrors the same discipline used elsewhere in this codebase,
+        // e.g. admin/users.js).
         const candidateIds = [managerUserId, assistantManagerUserId].filter(Boolean);
         if (candidateIds.length) {
             const activeRows = unwrap(
-                await db().from('users').select('user_id').eq('status', 'active').eq('resort_id', resortId).in('user_id', candidateIds)
+                await db().from('users').select('user_id, resort_id, is_corporate_user').eq('status', 'active').in('user_id', candidateIds)
             );
-            const activeIds = new Set(activeRows.map((r) => r.user_id));
+            const validIds = new Set(activeRows.filter((r) => r.is_corporate_user || r.resort_id === resortId).map((r) => r.user_id));
             for (const id of candidateIds) {
-                if (!activeIds.has(id)) {
+                if (!validIds.has(id)) {
                     return redirectTo('/admin/department_approval', {
                         cookies: [auth.setCookie, flashSetCookie('error', 'One or more selected users are no longer active at this resort. Please re-select.')].filter(Boolean),
                     });
