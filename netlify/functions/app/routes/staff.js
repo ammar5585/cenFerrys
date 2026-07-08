@@ -31,24 +31,25 @@ async function readFormBody(request) {
 // Dashboard
 // ---------------------------------------------------------------------
 async function staffDashboardBody(userId, fullName, csrfToken) {
-    const upcoming = unwrap(
-        await db()
+    // Independent of each other - fired concurrently rather than
+    // one-at-a-time (each round-trip to Supabase pays its own latency).
+    const [upcoming, history] = await Promise.all([
+        db()
             .from('bookings')
             .select('booking_id, travel_date, direction, purpose, seats, status_id, booking_status(status_name, badge_color), ferry_schedule(departure_time)')
             .eq('user_id', userId)
             .gte('travel_date', new Date().toISOString().slice(0, 10))
             .order('travel_date', { ascending: true })
-    );
-    const activeUpcoming = upcoming.filter((b) => !['Cancelled', 'Rejected', 'Expired'].includes(b.booking_status.status_name));
-
-    const history = unwrap(
-        await db()
+            .then(unwrap),
+        db()
             .from('bookings')
             .select('booking_id, travel_date, direction, booking_status(status_name, badge_color), ferry_schedule(departure_time)')
             .eq('user_id', userId)
             .order('created_at', { ascending: false })
             .limit(5)
-    );
+            .then(unwrap),
+    ]);
+    const activeUpcoming = upcoming.filter((b) => !['Cancelled', 'Rejected', 'Expired'].includes(b.booking_status.status_name));
 
     const upcomingHtml = activeUpcoming
         .map(

@@ -38,26 +38,30 @@ async function managerDashboardBody(user) {
     let pendingRequestsHtml = '';
 
     if (isApprover) {
-        pendingCount =
-            (
-                await db()
-                    .from('bookings')
-                    .select('*, booking_status!inner(status_name)', { count: 'exact', head: true })
-                    .eq('current_approver_id', user.user_id)
-                    .like('booking_status.status_name', 'Waiting%')
-            ).count || 0;
-        approvedCount = (await db().from('booking_approvals').select('*', { count: 'exact', head: true }).eq('approver_id', user.user_id).eq('action', 'approved')).count || 0;
-        rejectedCount = (await db().from('booking_approvals').select('*', { count: 'exact', head: true }).eq('approver_id', user.user_id).eq('action', 'rejected')).count || 0;
-
-        const rows = unwrap(
-            await db()
+        // These 4 queries are independent of each other - fired
+        // concurrently instead of one at a time (each round-trip to
+        // Supabase pays its own network latency, so awaiting them in
+        // series was purely additive time for no reason).
+        const [pendingRes, approvedRes, rejectedRes, rows] = await Promise.all([
+            db()
+                .from('bookings')
+                .select('*, booking_status!inner(status_name)', { count: 'exact', head: true })
+                .eq('current_approver_id', user.user_id)
+                .like('booking_status.status_name', 'Waiting%'),
+            db().from('booking_approvals').select('*', { count: 'exact', head: true }).eq('approver_id', user.user_id).eq('action', 'approved'),
+            db().from('booking_approvals').select('*', { count: 'exact', head: true }).eq('approver_id', user.user_id).eq('action', 'rejected'),
+            db()
                 .from('bookings')
                 .select('booking_id, travel_date, purpose, direction, users!bookings_user_id_fkey(full_name, employee_id), ferry_schedule(departure_time), booking_status!inner(status_name, badge_color)')
                 .eq('current_approver_id', user.user_id)
                 .like('booking_status.status_name', 'Waiting%')
                 .order('travel_date', { ascending: true })
                 .limit(8)
-        );
+                .then(unwrap),
+        ]);
+        pendingCount = pendingRes.count || 0;
+        approvedCount = approvedRes.count || 0;
+        rejectedCount = rejectedRes.count || 0;
         pendingRequestsHtml = rows
             .map(
                 (r) => html`<li class="dash-todo-item">
@@ -78,12 +82,16 @@ async function managerDashboardBody(user) {
         const departmentId = selfRows[0]?.department_id;
         const resortId = selfRows[0]?.resort_id;
         if (departmentId && resortId) {
-            const deptUserIds = unwrap(
-                await db().from('users').select('user_id').eq('department_id', departmentId).eq('resort_id', resortId)
-            ).map((u) => u.user_id);
-            const bookings = deptUserIds.length
-                ? unwrap(await db().from('bookings').select('booking_status(status_name)').in('user_id', deptUserIds))
-                : [];
+            // Filters directly on the joined users row (inner join) rather
+            // than a separate "fetch matching user_ids, then fetch their
+            // bookings" round-trip - same result, one less sequential query.
+            const bookings = unwrap(
+                await db()
+                    .from('bookings')
+                    .select('booking_status(status_name), users!bookings_user_id_fkey!inner(department_id, resort_id)')
+                    .eq('users.department_id', departmentId)
+                    .eq('users.resort_id', resortId)
+            );
             const counts = new Map();
             for (const b of bookings) counts.set(b.booking_status.status_name, (counts.get(b.booking_status.status_name) || 0) + 1);
             deptSummaryHtml = [...counts.entries()].map(([name, total]) => `<tr><td>${name}</td><td>${total}</td></tr>`).join('');

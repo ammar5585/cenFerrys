@@ -8,7 +8,7 @@ import { requirePermission } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
-import { getRemainingSeats } from '../seats.js';
+import { getRemainingSeatsBatch } from '../seats.js';
 import { getWaitingList, promoteWaitingListBooking, recordMovement } from '../security.js';
 import { getActiveResorts } from '../refData.js';
 import { logActivity, clientIp } from '../activity.js';
@@ -64,39 +64,53 @@ async function securityDashboardBody({ fullName, search }) {
     let manifestCount = 0;
     let availableSeatsTotal = 0;
     let completedTrips = 0;
-    const tripRows = [];
 
-    for (const s of todaysSchedules) {
-        const manifest = await manifestFor(s.schedule_id, today);
-        manifestCount += manifest.length;
-        departedToday += manifest.filter((p) => ['Departed', 'Arrived', 'Completed'].includes(p.booking_status.status_name)).length;
-        arrivedToday += manifest.filter((p) => ['Arrived', 'Completed'].includes(p.booking_status.status_name)).length;
-        const { remaining } = await getRemainingSeats(s.schedule_id, today);
-        availableSeatsTotal += remaining;
-        const isCompleted = manifest.length > 0 && manifest.every((p) => ['Arrived', 'Completed'].includes(p.booking_status.status_name));
-        if (isCompleted) completedTrips++;
-
-        const noShowRows = unwrap(
-            await db()
-                .from('bookings')
-                .select('booking_id, booking_status!inner(status_name)')
-                .eq('schedule_id', s.schedule_id)
-                .eq('travel_date', today)
-                .eq('booking_status.status_name', 'No Show')
-        );
-        noShowToday += noShowRows.length;
-
-        const waitingList = await getWaitingList(s.schedule_id, today);
-        tripRows.push({ ...s, manifestCount: manifest.length, waitingCount: waitingList.length, completed: isCompleted });
+    // This used to run manifestFor/getRemainingSeats/noShow/getWaitingList
+    // one schedule at a time, in series, each also awaited one after the
+    // other within a single schedule - 4 sequential round-trips PER
+    // schedule. Remaining-seats now uses the existing batch RPC (one
+    // round-trip for every schedule at once, same as admin.js's
+    // dashboard); the other 3 per-schedule lookups are independent of
+    // each other and of every other schedule's, so the whole thing now
+    // runs concurrently via Promise.all instead of N*3 round-trips in series.
+    const seatInfoById = await getRemainingSeatsBatch(todaysSchedules.map((s) => s.schedule_id), today);
+    const perScheduleResults = await Promise.all(
+        todaysSchedules.map(async (s) => {
+            const [manifest, noShowRows, waitingList] = await Promise.all([
+                manifestFor(s.schedule_id, today),
+                db()
+                    .from('bookings')
+                    .select('booking_id, booking_status!inner(status_name)')
+                    .eq('schedule_id', s.schedule_id)
+                    .eq('travel_date', today)
+                    .eq('booking_status.status_name', 'No Show')
+                    .then(unwrap),
+                getWaitingList(s.schedule_id, today),
+            ]);
+            const isCompleted = manifest.length > 0 && manifest.every((p) => ['Arrived', 'Completed'].includes(p.booking_status.status_name));
+            return { schedule: s, manifest, noShowCount: noShowRows.length, waitingCount: waitingList.length, isCompleted };
+        })
+    );
+    for (const r of perScheduleResults) {
+        manifestCount += r.manifest.length;
+        departedToday += r.manifest.filter((p) => ['Departed', 'Arrived', 'Completed'].includes(p.booking_status.status_name)).length;
+        arrivedToday += r.manifest.filter((p) => ['Arrived', 'Completed'].includes(p.booking_status.status_name)).length;
+        availableSeatsTotal += seatInfoById.get(r.schedule.schedule_id)?.remaining ?? 0;
+        if (r.isCompleted) completedTrips++;
+        noShowToday += r.noShowCount;
     }
+    const tripRows = perScheduleResults.map((r) => ({ ...r.schedule, manifestCount: r.manifest.length, waitingCount: r.waitingCount, completed: r.isCompleted }));
 
-    // Upcoming departures: the next 7 days' schedules (beyond today).
-    let upcomingCount = 0;
-    for (let i = 1; i <= 7; i++) {
+    // Upcoming departures: the next 7 days' schedules (beyond today) -
+    // independent per day, so fetched concurrently rather than one day
+    // at a time.
+    const upcomingDates = Array.from({ length: 7 }, (_, i) => {
         const d = new Date();
-        d.setDate(d.getDate() + i);
-        upcomingCount += (await activeSchedulesForDate(d.toISOString().slice(0, 10))).length;
-    }
+        d.setDate(d.getDate() + i + 1);
+        return d.toISOString().slice(0, 10);
+    });
+    const upcomingCounts = await Promise.all(upcomingDates.map((d) => activeSchedulesForDate(d)));
+    const upcomingCount = upcomingCounts.reduce((sum, schedules) => sum + schedules.length, 0);
 
     let waitingListTotal = 0;
     for (const t of tripRows) waitingListTotal += t.waitingCount;

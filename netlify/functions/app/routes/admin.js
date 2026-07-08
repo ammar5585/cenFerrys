@@ -51,28 +51,83 @@ function statCard({ value, label, icon }) {
 async function adminDashboardBody(fullName) {
     const today = new Date().toISOString().slice(0, 10);
     const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
 
-    const totalStaff = (await db().from('users').select('*', { count: 'exact', head: true }).eq('status', 'active')).count || 0;
-    const todaysBookings = (await db().from('bookings').select('*', { count: 'exact', head: true }).eq('travel_date', today)).count || 0;
-
-    const statusCounts = {};
-    for (const name of ['Approved', 'Rejected', 'Cancelled']) {
-        const rows = unwrap(await db().from('booking_status').select('status_id').eq('status_name', name).limit(1));
-        statusCounts[name] = rows.length
-            ? (await db().from('bookings').select('*', { count: 'exact', head: true }).eq('status_id', rows[0].status_id)).count || 0
-            : 0;
-    }
-    const waitingStatusIds = unwrap(await db().from('booking_status').select('status_id').like('status_name', 'Waiting%')).map((r) => r.status_id);
-    const pendingApprovals = waitingStatusIds.length
-        ? (await db().from('bookings').select('*', { count: 'exact', head: true }).in('status_id', waitingStatusIds)).count || 0
-        : 0;
-
-    const schedules = unwrap(
-        await db()
+    // This dashboard used to issue ~15 DB round-trips one at a time
+    // (each `await`ed in sequence) - measured at 6-8s in production
+    // before this fix, since every round-trip to Supabase pays its own
+    // network latency with nothing overlapped. None of these queries
+    // actually depend on each other's *rows* (only the two count
+    // queries below depend on status_id values), so the independent
+    // ones now fire together via Promise.all - same queries, same
+    // results, just concurrent instead of one-at-a-time.
+    const [
+        totalStaffRes,
+        todaysBookingsRes,
+        statusRows,
+        waitingStatusRows,
+        schedules,
+        unassignedRows,
+        recentActivity,
+        recentBookings,
+    ] = await Promise.all([
+        db().from('users').select('*', { count: 'exact', head: true }).eq('status', 'active'),
+        db().from('bookings').select('*', { count: 'exact', head: true }).eq('travel_date', today),
+        db().from('booking_status').select('status_id, status_name').in('status_name', ['Approved', 'Rejected', 'Cancelled']).then(unwrap),
+        db().from('booking_status').select('status_id').like('status_name', 'Waiting%').then(unwrap),
+        db()
             .from('ferry_schedule')
             .select('schedule_id, departure_time, capacity, weekdays, ferry_routes(direction)')
             .eq('status', 'active')
-    );
+            .then(unwrap),
+        // Requests currently unassigned (no viable department-hierarchy
+        // approver at any tier) - these are exactly the ones an executive
+        // needs to override, same rule notifyExecutives() in approval.js
+        // fires on.
+        db()
+            .from('bookings')
+            .select('booking_id, travel_date, purpose, users!bookings_user_id_fkey(full_name, departments(department_name)), booking_status!inner(status_name)')
+            .is('current_approver_id', null)
+            .like('booking_status.status_name', 'Pending%', { foreignTable: 'booking_status' })
+            .order('travel_date', { ascending: true })
+            .limit(6)
+            .then(unwrap),
+        db()
+            .from('activity_logs')
+            .select('action, details, created_at, users(full_name)')
+            .order('created_at', { ascending: false })
+            .limit(8)
+            .then(unwrap),
+        // Bookings submitted per day, last 7 days (inclusive of today) -
+        // feeds the Chart.js trend line below.
+        db().from('bookings').select('created_at').gte('created_at', sevenDaysAgo.toISOString()).then(unwrap),
+    ]);
+    const totalStaff = totalStaffRes.count || 0;
+    const todaysBookings = todaysBookingsRes.count || 0;
+    const waitingStatusIds = waitingStatusRows.map((r) => r.status_id);
+    const statusIdByName = new Map(statusRows.map((r) => [r.status_name, r.status_id]));
+
+    // Second wave: these DO depend on the status_id/waiting-id values
+    // just resolved above, but the 4 count queries are independent of
+    // each other, so they still run concurrently rather than in series.
+    const [approvedRes, rejectedRes, cancelledRes, pendingApprovalsRes] = await Promise.all([
+        statusIdByName.has('Approved')
+            ? db().from('bookings').select('*', { count: 'exact', head: true }).eq('status_id', statusIdByName.get('Approved'))
+            : Promise.resolve({ count: 0 }),
+        statusIdByName.has('Rejected')
+            ? db().from('bookings').select('*', { count: 'exact', head: true }).eq('status_id', statusIdByName.get('Rejected'))
+            : Promise.resolve({ count: 0 }),
+        statusIdByName.has('Cancelled')
+            ? db().from('bookings').select('*', { count: 'exact', head: true }).eq('status_id', statusIdByName.get('Cancelled'))
+            : Promise.resolve({ count: 0 }),
+        waitingStatusIds.length
+            ? db().from('bookings').select('*', { count: 'exact', head: true }).in('status_id', waitingStatusIds)
+            : Promise.resolve({ count: 0 }),
+    ]);
+    const statusCounts = { Approved: approvedRes.count || 0, Rejected: rejectedRes.count || 0, Cancelled: cancelledRes.count || 0 };
+    const pendingApprovals = pendingApprovalsRes.count || 0;
+
     const todaysTrips = schedules.filter((s) => s.weekdays.includes(weekday));
     let availableSeatsTotal = 0;
     let fullyBookedCount = 0;
@@ -83,39 +138,6 @@ async function adminDashboardBody(fullName) {
         if (info.remaining <= 0) fullyBookedCount++;
         return { ...t, booked: info.booked, remaining: info.remaining };
     });
-
-    // Requests currently unassigned (no viable department-hierarchy
-    // approver at any tier) - these are exactly the ones an executive
-    // needs to override, same rule notifyExecutives() in approval.js
-    // fires on.
-    const unassignedRows = unwrap(
-        await db()
-            .from('bookings')
-            .select('booking_id, travel_date, purpose, users!bookings_user_id_fkey(full_name, departments(department_name)), booking_status!inner(status_name)')
-            .is('current_approver_id', null)
-            .like('booking_status.status_name', 'Pending%', { foreignTable: 'booking_status' })
-            .order('travel_date', { ascending: true })
-            .limit(6)
-    );
-
-    const recentActivity = unwrap(
-        await db()
-            .from('activity_logs')
-            .select('action, details, created_at, users(full_name)')
-            .order('created_at', { ascending: false })
-            .limit(8)
-    );
-
-    // Bookings submitted per day, last 7 days (inclusive of today) - feeds
-    // the Chart.js trend line below.
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
-    const recentBookings = unwrap(
-        await db()
-            .from('bookings')
-            .select('created_at')
-            .gte('created_at', sevenDaysAgo.toISOString())
-    );
     const dayLabels = [];
     const dayCounts = [];
     for (let i = 6; i >= 0; i--) {
