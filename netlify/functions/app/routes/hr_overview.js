@@ -43,17 +43,21 @@ async function readFormBody(request) {
 }
 
 async function overviewPageBody(csrfToken) {
-    const rows = unwrap(
-        await db()
+    // Independent of each other - fetched concurrently rather than in
+    // series (recentOverridesHtml() is its own multi-query chain, but
+    // none of it depends on `rows`/`activeUsers` or vice versa).
+    const [rows, activeUsers, recentOverrides] = await Promise.all([
+        db()
             .from('bookings')
             .select(
                 'booking_id, travel_date, direction, purpose, remarks, seats, current_approver_id, users!bookings_user_id_fkey(full_name, employee_id, department_id, resort_id, departments(department_name), resorts(resort_name)), ferry_schedule(departure_time), booking_status!inner(status_name, badge_color), approver:current_approver_id(full_name)'
             )
             .or('status_name.like.Waiting%,status_name.like.Pending%', { foreignTable: 'booking_status' })
             .order('travel_date', { ascending: true })
-    );
-
-    const activeUsers = unwrap(await db().from('users').select('user_id, full_name, employee_id').eq('status', 'active').order('full_name'));
+            .then(unwrap),
+        db().from('users').select('user_id, full_name, employee_id').eq('status', 'active').order('full_name').then(unwrap),
+        recentOverridesHtml(),
+    ]);
     const userOptions = activeUsers.map((u) => `<option value="${u.user_id}">${h(u.full_name)} (${h(u.employee_id)})</option>`).join('');
 
     const cards = rows
@@ -107,7 +111,7 @@ async function overviewPageBody(csrfToken) {
 <div class="row g-3">
     ${raw(cards || '<p class="text-muted text-center py-4">No requests are currently pending anywhere in the organization.</p>')}
 </div>
-${await recentOverridesHtml()}`;
+${raw(recentOverrides)}`;
 }
 
 /**
@@ -132,13 +136,14 @@ async function recentOverridesHtml() {
     if (!overrides.length) return '';
 
     const bookingIds = [...new Set(overrides.map((o) => o.booking_id))];
-    const bookingRows = unwrap(
-        await db().from('bookings').select('booking_id, users!bookings_user_id_fkey(full_name, employee_id)').in('booking_id', bookingIds)
-    );
-    const bookingById = new Map(bookingRows.map((b) => [b.booking_id, b.users]));
-
     const userIds = [...new Set(overrides.flatMap((o) => [o.approver_id, o.original_approver_id]).filter(Boolean))];
-    const userRows = userIds.length ? unwrap(await db().from('users').select('user_id, full_name').in('user_id', userIds)) : [];
+    // Both depend only on `overrides` (already resolved above), not on
+    // each other - fetched concurrently.
+    const [bookingRows, userRows] = await Promise.all([
+        db().from('bookings').select('booking_id, users!bookings_user_id_fkey(full_name, employee_id)').in('booking_id', bookingIds).then(unwrap),
+        userIds.length ? db().from('users').select('user_id, full_name').in('user_id', userIds).then(unwrap) : Promise.resolve([]),
+    ]);
+    const bookingById = new Map(bookingRows.map((b) => [b.booking_id, b.users]));
     const userById = new Map(userRows.map((u) => [u.user_id, u.full_name]));
 
     const rowsHtml = overrides

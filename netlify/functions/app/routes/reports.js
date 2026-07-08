@@ -362,13 +362,14 @@ ${showFullFilters ? reportTypeSelector('booking') : ''}
 }
 
 async function loadFilterOptions() {
-    return {
-        departments: await getAllDepartments(),
-        resorts: await getAllResorts(),
-        employees: unwrap(await db().from('users').select('user_id, full_name').order('full_name')),
-        routes: unwrap(await db().from('ferry_routes').select('*').order('route_name')),
-        statuses: unwrap(await db().from('booking_status').select('*').order('status_id')),
-    };
+    const [departments, resorts, employees, routes, statuses] = await Promise.all([
+        getAllDepartments(),
+        getAllResorts(),
+        db().from('users').select('user_id, full_name').order('full_name').then(unwrap),
+        db().from('ferry_routes').select('*').order('route_name').then(unwrap),
+        db().from('booking_status').select('*').order('status_id').then(unwrap),
+    ]);
+    return { departments, resorts, employees, routes, statuses };
 }
 
 function toCsv(rows, includeApprover) {
@@ -422,16 +423,20 @@ async function handleReport(request, auth, scope, basePath) {
         ...(scope === 'admin' && reportType === 'booking' ? { employee: String(filters.empFilter), status: String(filters.statusFilter), purpose: filters.purpose } : {}),
     }).toString();
 
-    const companyName = await getSetting('company_name', 'Staff Ferry Transfer Portal');
-    const siteLogo = await getSetting('site_logo', '');
-
     if (scope === 'admin' && reportType !== 'booking' && REPORT_TYPES[reportType]) {
         const rows = await REPORT_TYPES[reportType].fetchRows(filters);
         if (url.searchParams.get('format') === 'csv') {
             const filename = `${reportType}_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.csv`;
             return csvResponse(genericReportCsv(reportType, rows), filename);
         }
-        const filterOptions = await loadFilterOptions();
+        // Independent of `rows` and of each other - fetched concurrently
+        // (also skipped entirely for the CSV branch above, which never
+        // needed them).
+        const [companyName, siteLogo, filterOptions] = await Promise.all([
+            getSetting('company_name', 'Staff Ferry Transfer Portal'),
+            getSetting('site_logo', ''),
+            loadFilterOptions(),
+        ]);
         const body = genericReportBody({ reportType, rows, filters, filterOptions, basePath, companyName, siteLogo });
         return renderShellForRequest({ request, auth, pageTitle: 'Reports', path: basePath, bodyHtml: body });
     }
@@ -443,7 +448,11 @@ async function handleReport(request, auth, scope, basePath) {
         return csvResponse(toCsv(rows, scope === 'admin'), filename);
     }
 
-    const filterOptions = await loadFilterOptions();
+    const [companyName, siteLogo, filterOptions] = await Promise.all([
+        getSetting('company_name', 'Staff Ferry Transfer Portal'),
+        getSetting('site_logo', ''),
+        loadFilterOptions(),
+    ]);
     const body = reportPageBody({ rows, filters, filterOptions, scope, basePath, companyName, siteLogo });
     return renderShellForRequest({ request, auth, pageTitle: 'Reports', path: basePath, bodyHtml: body });
 }

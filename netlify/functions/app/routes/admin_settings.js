@@ -15,12 +15,14 @@ import { flashSetCookie } from '../flash.js';
 const WEEKDAY_OPTIONS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 async function settingsBody({ errors, csrfToken }) {
-    const maxSeats = await getSetting('max_seats_per_booking', 4);
-    const workingDaysStr = await getSetting('working_days', 'Mon,Tue,Wed,Thu,Fri,Sat,Sun');
-    const passwordMinLength = await getSetting('password_min_length', 8);
-    const sessionTimeout = await getSetting('session_timeout_minutes', 30);
-    const notificationsEnabled = await getSetting('notifications_enabled', '1');
-    const maintenanceMode = await getSetting('maintenance_mode', '0');
+    const [maxSeats, workingDaysStr, passwordMinLength, sessionTimeout, notificationsEnabled, maintenanceMode] = await Promise.all([
+        getSetting('max_seats_per_booking', 4),
+        getSetting('working_days', 'Mon,Tue,Wed,Thu,Fri,Sat,Sun'),
+        getSetting('password_min_length', 8),
+        getSetting('session_timeout_minutes', 30),
+        getSetting('notifications_enabled', '1'),
+        getSetting('maintenance_mode', '0'),
+    ]);
     const workingDays = workingDaysStr.split(',');
 
     return html`

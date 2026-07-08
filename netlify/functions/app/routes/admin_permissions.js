@@ -41,8 +41,10 @@ function asArray(value) {
 }
 
 async function rolesWithUserCounts() {
-    const roles = unwrap(await db().from('roles').select('*').order('role_id'));
-    const counts = unwrap(await db().from('users').select('role_id'));
+    const [roles, counts] = await Promise.all([
+        db().from('roles').select('*').order('role_id').then(unwrap),
+        db().from('users').select('role_id').then(unwrap),
+    ]);
     const countByRole = new Map();
     for (const row of counts) countByRole.set(row.role_id, (countByRole.get(row.role_id) || 0) + 1);
     return roles.map((r) => ({ ...r, userCount: countByRole.get(r.role_id) || 0 }));
@@ -85,8 +87,14 @@ function permissionMatrixHtml(catalog, grantedKeys, formIdPrefix) {
 }
 
 async function rolesPageBody(csrfToken) {
-    const [roles, catalog] = await Promise.all([rolesWithUserCounts(), getPermissionCatalog()]);
-    const rolePermRows = unwrap(await db().from('role_permissions').select('role_id, permission_id'));
+    // role_permissions doesn't actually depend on `roles`/`catalog`'s
+    // fetched rows (only the lookup map built from them afterward), so
+    // it fires in the same wave rather than as its own sequential stage.
+    const [roles, catalog, rolePermRows] = await Promise.all([
+        rolesWithUserCounts(),
+        getPermissionCatalog(),
+        db().from('role_permissions').select('role_id, permission_id').then(unwrap),
+    ]);
     const permKeyById = new Map(catalog.map((p) => [p.permission_id, p.permission_key]));
     const grantedByRole = new Map();
     for (const row of rolePermRows) {

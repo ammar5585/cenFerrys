@@ -25,20 +25,24 @@ export async function getSession(request) {
         return { user: null, setCookie: null, expired };
     }
 
-    // Re-check the account is still active - closes most of the gap
-    // left by JWTs not supporting instant server-side revocation.
-    const rows = unwrap(
-        await db().from('users').select('status').eq('user_id', payload.user_id).limit(1)
-    );
-    if (!rows.length || rows[0].status !== 'active') {
-        return { user: null, setCookie: null, expired: false };
-    }
-
-    const timeoutMinutes = Number(await getSetting('session_timeout_minutes', 30));
-    const [isDeptApprover, permsBitmask] = await Promise.all([
+    // This used to be 3 sequential stages on EVERY single authenticated
+    // page load (status check, then session_timeout_minutes setting,
+    // then a Promise.all of the other two) - none of these four actually
+    // depend on each other's result (the status check's row is only
+    // used to decide whether to bail out below, not as an input to the
+    // other three), so all four now fire in one wave instead.
+    const [statusRows, timeoutSetting, isDeptApprover, permsBitmask] = await Promise.all([
+        db().from('users').select('status').eq('user_id', payload.user_id).limit(1).then(unwrap),
+        getSetting('session_timeout_minutes', 30),
         checkIsDepartmentApprover(payload.user_id),
         getEffectivePermissions(payload.user_id, payload.role_id),
     ]);
+    // Re-check the account is still active - closes most of the gap
+    // left by JWTs not supporting instant server-side revocation.
+    if (!statusRows.length || statusRows[0].status !== 'active') {
+        return { user: null, setCookie: null, expired: false };
+    }
+    const timeoutMinutes = Number(timeoutSetting);
     const freshToken = signSessionToken(
         {
             user_id: payload.user_id,

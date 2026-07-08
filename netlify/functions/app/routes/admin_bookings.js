@@ -37,13 +37,21 @@ async function bookingsPageBody({ dateFrom, dateTo, statusFilter, deptFilter, re
     if (dateFrom) query = query.gte('travel_date', dateFrom);
     if (dateTo) query = query.lte('travel_date', dateTo);
     if (statusFilter) query = query.eq('status_id', statusFilter);
-    let bookings = unwrap(await query);
+
+    // These 4 are independent of each other - fetched concurrently
+    // instead of one at a time (getAllDepartments()/getActiveResorts()
+    // are already in-memory-cached after their first call in a warm
+    // container, but `query`/booking_status are real round-trips either way).
+    const [bookingsRaw, statuses, departments, resorts] = await Promise.all([
+        query.then(unwrap),
+        db().from('booking_status').select('*').order('status_id').then(unwrap),
+        getAllDepartments(),
+        getActiveResorts(),
+    ]);
+    let bookings = bookingsRaw;
     if (deptFilter) bookings = bookings.filter((b) => b.users.department_id === deptFilter);
     if (resortFilter) bookings = bookings.filter((b) => b.users.resort_id === resortFilter);
 
-    const statuses = unwrap(await db().from('booking_status').select('*').order('status_id'));
-    const departments = await getAllDepartments();
-    const resorts = await getActiveResorts();
     const canAdminOverride = hasPermission(perms, 'booking.admin_override');
     const canHrManualBook = hasPermission(perms, 'booking.hr_manual_booking');
     const canOverrideCapacity = canHrManualBook && hasPermission(perms, 'booking.override_capacity');
@@ -79,13 +87,13 @@ async function bookingsPageBody({ dateFrom, dateTo, statusFilter, deptFilter, re
 
     let hrModalHtml = '';
     if (canHrManualBook) {
-        const resorts = await getActiveResorts();
-        const activeUsersWithResort = unwrap(
-            await db().from('users').select('user_id, full_name, employee_id, resort_id').eq('status', 'active').order('full_name')
-        );
-        const schedulesForHr = unwrap(
-            await db().from('ferry_schedule').select('schedule_id, departure_time, ferry_routes(route_name, direction)').eq('status', 'active').order('departure_time')
-        );
+        // `resorts` was already fetched above (getActiveResorts() is
+        // in-memory-cached anyway, but no need to call it twice) - only
+        // the other two are genuinely new round-trips, fetched concurrently.
+        const [activeUsersWithResort, schedulesForHr] = await Promise.all([
+            db().from('users').select('user_id, full_name, employee_id, resort_id').eq('status', 'active').order('full_name').then(unwrap),
+            db().from('ferry_schedule').select('schedule_id, departure_time, ferry_routes(route_name, direction)').eq('status', 'active').order('departure_time').then(unwrap),
+        ]);
         hrModalHtml = `<div class="modal fade" id="hrManualBookingModal" tabindex="-1"><div class="modal-dialog"><form method="post" class="modal-content">
     ${csrfField(csrfToken)}<input type="hidden" name="action" value="hr_manual_booking">
     <div class="modal-header"><h5 class="modal-title"><i class="bi bi-person-plus"></i> HR Manual Booking</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>

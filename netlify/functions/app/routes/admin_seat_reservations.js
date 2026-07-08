@@ -80,14 +80,16 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken }) {
         .limit(300);
     if (statusFilter) query = query.eq('status', statusFilter);
     if (resortFilter) query = query.eq('resort_id', resortFilter);
-    const reservations = unwrap(await query);
 
-    const resorts = await getActiveResorts();
-    const departments = await getAllDepartments();
-    const activeUsers = unwrap(await db().from('users').select('user_id, full_name, employee_id').eq('status', 'active').order('full_name'));
-    const schedules = unwrap(
-        await db().from('ferry_schedule').select('schedule_id, departure_time, ferry_routes(route_name, direction)').eq('status', 'active').order('departure_time')
-    );
+    // Independent of each other - fetched concurrently rather than
+    // 5 round-trips in series.
+    const [reservations, resorts, departments, activeUsers, schedules] = await Promise.all([
+        query.then(unwrap),
+        getActiveResorts(),
+        getAllDepartments(),
+        db().from('users').select('user_id, full_name, employee_id').eq('status', 'active').order('full_name').then(unwrap),
+        db().from('ferry_schedule').select('schedule_id, departure_time, ferry_routes(route_name, direction)').eq('status', 'active').order('departure_time').then(unwrap),
+    ]);
 
     const typeLabel = (v) => RESERVATION_TYPES.find((t) => t.value === v)?.label ?? v;
 
