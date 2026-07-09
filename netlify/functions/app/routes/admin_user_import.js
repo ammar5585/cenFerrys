@@ -111,6 +111,16 @@ async function parseAndValidateCsv(rawText) {
     const seenEmployeeIds = new Set();
     const seenUsernames = new Set();
 
+    // A Reporting Manager reference may point to a brand-new employee
+    // being created in this very same file (importing a manager together
+    // with their team in one upload is a normal use case) - so a
+    // Reporting Manager ref isn't an error just because it's missing from
+    // the DB today; it only fails if it matches nothing at all, in or out
+    // of this batch.
+    const batchEmployeeIds = new Set(
+        records.map((r) => (r['Employee ID'] || '').trim().toLowerCase()).filter(Boolean)
+    );
+
     const rows = records.map((record, index) => {
         const rowNumber = index + 2; // +1 for 1-indexing, +1 for the header row
         const errors = [];
@@ -165,14 +175,23 @@ async function parseAndValidateCsv(rawText) {
         }
 
         let reportingManagerId = null;
+        let reportingManagerBatchRef = null;
         if (reportingManagerRef) {
-            const byEmp = existingByEmployeeId.get(reportingManagerRef.toLowerCase());
-            const byUser = existingByUsername.get(reportingManagerRef.toLowerCase());
+            const refKey = reportingManagerRef.toLowerCase();
+            const byEmp = existingByEmployeeId.get(refKey);
+            const byUser = existingByUsername.get(refKey);
             const match = byEmp ?? byUser;
-            if (!match) {
-                errors.push(`Reporting Manager "${reportingManagerRef}" does not match any existing user's Employee ID or username.`);
-            } else {
+            if (match) {
                 reportingManagerId = match.user_id;
+            } else if (refKey === employeeIdKey) {
+                errors.push('Reporting Manager cannot be the same as this row\'s own Employee ID.');
+            } else if (batchEmployeeIds.has(refKey)) {
+                // Not in the DB yet, but another row in this file has this
+                // Employee ID - resolve the link after all rows are created.
+                reportingManagerBatchRef = refKey;
+                warnings.push(`Reporting Manager "${reportingManagerRef}" is being created in this same file - will be linked automatically after import.`);
+            } else {
+                errors.push(`Reporting Manager "${reportingManagerRef}" does not match any existing user's Employee ID or username.`);
             }
         }
 
@@ -216,6 +235,7 @@ async function parseAndValidateCsv(rawText) {
             departmentId,
             roleId,
             reportingManagerId,
+            reportingManagerBatchRef,
             existingUserId: existing?.user_id ?? null,
             mode,
             errors,
@@ -436,6 +456,12 @@ export function registerAdminUserImportRoutes(router) {
         // action's forced-change behavior.
         const createdRows = [];
         let updatedCount = 0;
+        // employee_id (lowercase) -> newly-created user_id, so rows whose
+        // Reporting Manager pointed at another new employee in this same
+        // file can be linked up in a second pass below, once that manager
+        // actually has a user_id.
+        const createdUserIdByEmployeeId = new Map();
+        const rowsNeedingBatchLink = [];
 
         for (const r of rows) {
             if (r.mode === 'error') {
@@ -451,23 +477,29 @@ export function registerAdminUserImportRoutes(router) {
             try {
                 if (r.mode === 'create') {
                     const hash = await hashPassword(DEFAULT_IMPORT_PASSWORD);
-                    unwrap(
-                        await db().from('users').insert({
-                            employee_id: r.employeeId,
-                            full_name: r.fullName,
-                            username: r.username,
-                            password: hash,
-                            must_change_password: true,
-                            resort_id: r.resortId,
-                            department_id: r.departmentId,
-                            designation: r.designation || null,
-                            role_id: r.roleId,
-                            reporting_manager_id: r.reportingManagerId,
-                            email: r.email || null,
-                            phone: r.phone || null,
-                            status: 'active',
-                        })
+                    const inserted = unwrap(
+                        await db()
+                            .from('users')
+                            .insert({
+                                employee_id: r.employeeId,
+                                full_name: r.fullName,
+                                username: r.username,
+                                password: hash,
+                                must_change_password: true,
+                                resort_id: r.resortId,
+                                department_id: r.departmentId,
+                                designation: r.designation || null,
+                                role_id: r.roleId,
+                                reporting_manager_id: r.reportingManagerId,
+                                email: r.email || null,
+                                phone: r.phone || null,
+                                status: 'active',
+                            })
+                            .select('user_id')
                     );
+                    const newUserId = inserted[0].user_id;
+                    createdUserIdByEmployeeId.set(r.employeeId.toLowerCase(), newUserId);
+                    if (r.reportingManagerBatchRef) rowsNeedingBatchLink.push({ userId: newUserId, managerEmployeeId: r.reportingManagerBatchRef });
                     createdRows.push({ employeeId: r.employeeId, username: r.username });
                     if (r.email) {
                         deferBestEffort(
@@ -497,12 +529,22 @@ export function registerAdminUserImportRoutes(router) {
                             })
                             .eq('user_id', r.existingUserId)
                     );
+                    if (r.reportingManagerBatchRef) rowsNeedingBatchLink.push({ userId: r.existingUserId, managerEmployeeId: r.reportingManagerBatchRef });
                     updatedCount++;
                 }
                 successCount++;
             } catch (err) {
                 failedRows.push({ row_number: r.rowNumber, employee_id: r.employeeId, errors: [`Database error: ${err.message}`] });
             }
+        }
+
+        // Second pass: link up rows whose Reporting Manager was another
+        // employee being created in this same file - their manager didn't
+        // have a user_id yet during the loop above.
+        for (const { userId, managerEmployeeId } of rowsNeedingBatchLink) {
+            const managerId = createdUserIdByEmployeeId.get(managerEmployeeId);
+            if (!managerId) continue; // manager's own row failed to create - leave unlinked
+            unwrap(await db().from('users').update({ reporting_manager_id: managerId }).eq('user_id', userId));
         }
 
         unwrap(
