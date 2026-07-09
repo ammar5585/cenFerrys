@@ -1,13 +1,18 @@
 // CSV bulk user import: upload -> parse/validate -> preview -> confirm,
-// with an import history log. The working data is never staged in the
-// database - the raw CSV text is carried through the preview page's
-// hidden form field and re-parsed/re-validated from scratch on confirm
+// with an import history log. The file is staged directly to Supabase
+// Storage from the browser (a signed upload URL, bypassing Vercel's
+// 4.5MB function request/response body cap) and carried through the
+// preview page as a storage path rather than the raw text itself. It's
+// re-downloaded and re-parsed/re-validated from scratch on confirm
 // (never trust the preview render's results, same discipline used by
-// admin_department_approval.js's server-side active-user re-check).
+// admin_department_approval.js's server-side active-user re-check), then
+// deleted from storage - it's a temp upload, not a permanent record.
 
+import crypto from 'node:crypto';
 import { parse } from 'csv-parse/sync';
 import { db, unwrap } from '../db.js';
-import { requirePermission } from '../guards.js';
+import { requirePermission, requireLogin } from '../guards.js';
+import { hasPermission } from '../permissions.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
@@ -15,14 +20,20 @@ import { hashPassword } from '../auth.js';
 import { sendTemplatedEmail } from '../mailer.js';
 import { deferBestEffort } from '../deferred.js';
 import { logActivity, clientIp } from '../activity.js';
-import { redirectTo, notFound, csvResponse } from '../response.js';
+import { redirectTo, notFound, csvResponse, jsonResponse } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatDateTime } from '../format.js';
 import { getAllResorts, getActiveDepartments } from '../refData.js';
 import { ROLE_ADMIN, ROLE_GM, ROLE_RM, ROLE_HR, ROLE_SECURITY } from '../session.js';
 
 const MAX_ROWS = 1500;
-const MAX_BYTES = 1.5 * 1024 * 1024;
+// Vercel Functions cap both request AND response bodies at 4.5MB - files
+// are staged directly to Supabase Storage from the browser (bypassing
+// that limit entirely) rather than passed through the function body, so
+// this is a genuine data-shape sanity cap, not a workaround for the
+// platform limit.
+const MAX_BYTES = 8 * 1024 * 1024;
+const CSV_IMPORT_BUCKET = 'csv-imports';
 
 // Fixed default password for every bulk-imported user (per user request) -
 // must_change_password: true forces a change at their first login.
@@ -246,7 +257,7 @@ async function parseAndValidateCsv(rawText) {
     return { rows };
 }
 
-function previewPageBody({ rows, rawText, duplicateMode, csrfToken }) {
+function previewPageBody({ rows, storagePath, duplicateMode, csrfToken }) {
     const createCount = rows.filter((r) => r.mode === 'create').length;
     const updateCount = rows.filter((r) => r.mode === 'update').length;
     const errorCount = rows.filter((r) => r.mode === 'error').length;
@@ -284,7 +295,7 @@ function previewPageBody({ rows, rawText, duplicateMode, csrfToken }) {
 <form method="post" action="/admin/users/import/confirm">
     ${raw(csrfField(csrfToken))}
     <input type="hidden" name="duplicate_mode" value="${duplicateMode}">
-    <textarea name="csv_text" style="display:none">${rawText}</textarea>
+    <input type="hidden" name="storage_path" value="${storagePath}">
     <button type="submit" class="btn btn-primary" ${createCount + updateCount === 0 ? 'disabled' : ''}>
         <i class="bi bi-check-lg"></i> Confirm Import (${createCount + (duplicateMode === 'update' ? updateCount : 0)} row(s))
     </button>
@@ -327,21 +338,67 @@ ${failedRows.length
 }
 
 function uploadPageBody(csrfToken) {
+    // The CSV is staged directly to Supabase Storage from the browser
+    // (signed upload URL) instead of being posted through this function -
+    // Vercel Functions cap request/response bodies at 4.5MB, which a large
+    // employee roster CSV can exceed. JS intercepts submit, uploads the
+    // file, then does a normal form POST carrying only the storage path.
+    const script = `
+(function () {
+    var form = document.getElementById('importForm');
+    var fileInput = document.getElementById('csvFile');
+    var storagePathInput = document.getElementById('storagePathInput');
+    var submitBtn = document.getElementById('importSubmitBtn');
+    var errorBox = document.getElementById('importErrorBox');
+
+    form.addEventListener('submit', function (e) {
+        if (storagePathInput.value) return; // already staged, let the real submit through
+        e.preventDefault();
+        var file = fileInput.files[0];
+        if (!file) return;
+        errorBox.classList.add('d-none');
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Uploading...';
+
+        var fd = new FormData();
+        fd.append('csrf_token', window.CSRF_TOKEN);
+        fetch('/admin/users/import/upload-url', { method: 'POST', body: fd })
+            .then(function (res) { if (!res.ok) throw new Error('Could not prepare upload.'); return res.json(); })
+            .then(function (data) {
+                return fetch(data.uploadUrl, { method: 'PUT', headers: { 'content-type': 'text/csv' }, body: file })
+                    .then(function (putRes) {
+                        if (!putRes.ok) throw new Error('File upload failed.');
+                        storagePathInput.value = data.path;
+                        form.submit();
+                    });
+            })
+            .catch(function (err) {
+                errorBox.textContent = err.message || 'Upload failed. Please try again.';
+                errorBox.classList.remove('d-none');
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i class="bi bi-upload"></i> Upload &amp; Preview';
+            });
+    });
+})();`;
+
     return html`
 <h5 class="mb-3"><i class="bi bi-file-earmark-arrow-up"></i> Bulk Import Users</h5>
 <p class="text-muted">Upload a CSV file to create or update multiple users at once. <a href="/admin/users/import/template">Download the CSV template</a>. <a href="/admin/users/import/history">View import history</a>.</p>
 <div class="card shadow-sm"><div class="card-body">
-    <form method="post" enctype="multipart/form-data">
+    <div id="importErrorBox" class="alert alert-danger d-none"></div>
+    <form method="post" action="/admin/users/import" id="importForm">
         ${raw(csrfField(csrfToken))}
-        <div class="mb-3"><label class="form-label">CSV File *</label><input type="file" name="csv_file" accept=".csv" class="form-control" required></div>
+        <input type="hidden" name="storage_path" id="storagePathInput" value="">
+        <div class="mb-3"><label class="form-label">CSV File *</label><input type="file" id="csvFile" accept=".csv" class="form-control" required></div>
         <div class="mb-3">
             <label class="form-label d-block">If an Employee ID already exists</label>
             <div class="form-check"><input class="form-check-input" type="radio" name="duplicate_mode" value="skip" id="dupSkip" checked><label class="form-check-label" for="dupSkip">Skip (do not modify the existing user) - recommended</label></div>
             <div class="form-check"><input class="form-check-input" type="radio" name="duplicate_mode" value="update" id="dupUpdate"><label class="form-check-label" for="dupUpdate">Update the existing user's details (password is never changed by import)</label></div>
         </div>
-        <button type="submit" class="btn btn-primary"><i class="bi bi-upload"></i> Upload &amp; Preview</button>
+        <button type="submit" class="btn btn-primary" id="importSubmitBtn"><i class="bi bi-upload"></i> Upload &amp; Preview</button>
     </form>
-</div></div>`;
+</div></div>
+<script>${raw(script)}</script>`;
 }
 
 async function historyPageBody() {
@@ -408,6 +465,27 @@ export function registerAdminUserImportRoutes(router) {
         return csvResponse(header + body, `import_${importId}_errors.csv`);
     });
 
+    // Issues a short-lived signed URL the browser uploads the CSV straight
+    // to Supabase Storage with - the file's bytes never pass through this
+    // function, so Vercel's 4.5MB request-body cap doesn't apply to it.
+    router.post('/admin/users/import/upload-url', async (request) => {
+        const auth = await requireLogin(request);
+        if (auth.response) return jsonResponse({ error: 'Not authenticated.' }, { status: 401 });
+        if (!hasPermission(auth.user.perms, 'user_management.import')) {
+            return jsonResponse({ error: 'Forbidden.' }, { status: 403 });
+        }
+        const form = await request.formData();
+        if (!verifyCsrf(auth.user.csrf, form.get('csrf_token'))) {
+            return jsonResponse({ error: 'Invalid request.' }, { status: 403 });
+        }
+
+        const filename = `import_${crypto.randomBytes(8).toString('hex')}.csv`;
+        const { data, error } = await db().storage.from(CSV_IMPORT_BUCKET).createSignedUploadUrl(filename);
+        if (error) return jsonResponse({ error: 'Could not prepare upload.' }, { status: 500 });
+
+        return jsonResponse({ uploadUrl: data.signedUrl, path: data.path });
+    });
+
     router.post('/admin/users/import', async (request) => {
         const auth = await requirePermission(request, 'user_management.import', { pageTitle: 'Bulk Import Users' });
         if (auth.response) return auth.response;
@@ -416,19 +494,27 @@ export function registerAdminUserImportRoutes(router) {
         const form = await request.formData();
         if (!verifyCsrf(user.csrf, form.get('csrf_token'))) return notFound();
 
-        const file = form.get('csv_file');
+        const storagePath = form.get('storage_path');
         const duplicateMode = form.get('duplicate_mode') === 'update' ? 'update' : 'skip';
-        if (!file || typeof file.text !== 'function') {
+        if (!storagePath) {
             return redirectTo('/admin/users/import', { cookies: [auth.setCookie, flashSetCookie('error', 'Please choose a CSV file to upload.')].filter(Boolean) });
         }
 
-        const rawText = await file.text();
+        const { data: fileBlob, error: dlError } = await db().storage.from(CSV_IMPORT_BUCKET).download(storagePath);
+        if (dlError) {
+            return redirectTo('/admin/users/import', { cookies: [auth.setCookie, flashSetCookie('error', 'Could not retrieve the uploaded file - please try uploading again.')].filter(Boolean) });
+        }
+        const rawText = await fileBlob.text();
+
         const { fileError, rows } = await parseAndValidateCsv(rawText);
         if (fileError) {
+            await db().storage.from(CSV_IMPORT_BUCKET).remove([storagePath]);
             return redirectTo('/admin/users/import', { cookies: [auth.setCookie, flashSetCookie('error', fileError)].filter(Boolean) });
         }
 
-        const body = previewPageBody({ rows, rawText, duplicateMode, csrfToken: user.csrf });
+        // Not deleted yet - the confirm step re-downloads and re-validates
+        // from scratch (never trust the preview render), then cleans up.
+        const body = previewPageBody({ rows, storagePath, duplicateMode, csrfToken: user.csrf });
         return renderShellForRequest({ request, auth, pageTitle: 'Import Preview', path: '/admin/users/import', bodyHtml: body });
     });
 
@@ -440,10 +526,22 @@ export function registerAdminUserImportRoutes(router) {
         if (!verifyCsrf(user.csrf, form.csrf_token)) return notFound();
 
         const duplicateMode = form.duplicate_mode === 'update' ? 'update' : 'skip';
-        const rawText = form.csv_text || '';
+        const storagePath = form.storage_path || '';
+        if (!storagePath) {
+            return redirectTo('/admin/users/import', { cookies: [auth.setCookie, flashSetCookie('error', 'Upload session expired - please upload the file again.')].filter(Boolean) });
+        }
+
+        const { data: fileBlob, error: dlError } = await db().storage.from(CSV_IMPORT_BUCKET).download(storagePath);
+        if (dlError) {
+            return redirectTo('/admin/users/import', { cookies: [auth.setCookie, flashSetCookie('error', 'Upload session expired - please upload the file again.')].filter(Boolean) });
+        }
+        const rawText = await fileBlob.text();
 
         // Re-parse and re-validate from scratch - never trust the preview render.
         const { fileError, rows } = await parseAndValidateCsv(rawText);
+        // Done with the staged file either way - it's a temp upload, not a
+        // permanent record (the import_history row below is the audit trail).
+        await db().storage.from(CSV_IMPORT_BUCKET).remove([storagePath]);
         if (fileError) {
             return redirectTo('/admin/users/import', { cookies: [auth.setCookie, flashSetCookie('error', fileError)].filter(Boolean) });
         }
