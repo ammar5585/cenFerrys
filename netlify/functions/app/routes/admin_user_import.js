@@ -19,6 +19,7 @@ import { redirectTo, notFound, csvResponse } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatDateTime } from '../format.js';
 import { getAllResorts, getActiveDepartments } from '../refData.js';
+import { ROLE_ADMIN, ROLE_GM, ROLE_RM, ROLE_HR, ROLE_SECURITY } from '../session.js';
 
 const MAX_ROWS = 1500;
 const MAX_BYTES = 1.5 * 1024 * 1024;
@@ -27,10 +28,12 @@ const MAX_BYTES = 1.5 * 1024 * 1024;
 // must_change_password: true forces a change at their first login.
 const DEFAULT_IMPORT_PASSWORD = 'Welcome@123';
 
-// Never let a CSV grant Administrator/GM/RM/HR Manager - only these
-// three, matching how Role is otherwise treated as an explicit
-// admin-only choice everywhere else in the app.
-const ALLOWED_ROLES = ['Staff', 'Department Manager', 'Transport Coordinator'];
+// Never let a CSV grant Administrator/GM/RM/HR Manager/Security - matching
+// how Role is otherwise treated as an explicit admin-only choice elsewhere
+// in the app. This is a deny-list (not an allow-list of specific names) so
+// it never goes stale as custom roles are added/renamed via Roles &
+// Permissions - every other role, built-in or custom, is importable.
+const EXCLUDED_ROLES = new Set([ROLE_ADMIN, ROLE_GM, ROLE_RM, ROLE_HR, ROLE_SECURITY]);
 
 const CSV_TEMPLATE = [
     'Employee ID,Full Name,Username,Resort,Department,Designation,Role,Reporting Manager (Employee ID),Email,Phone',
@@ -80,8 +83,9 @@ async function parseAndValidateCsv(rawText) {
     const departments = await getActiveDepartments();
     const departmentByName = new Map(departments.map((d) => [d.department_name.toLowerCase(), d.department_id]));
 
-    const roles = unwrap(await db().from('roles').select('role_id, role_name').in('role_name', ALLOWED_ROLES));
-    const roleByName = new Map(roles.map((r) => [r.role_name.toLowerCase(), r.role_id]));
+    const allRoles = unwrap(await db().from('roles').select('role_id, role_name'));
+    const importableRoles = allRoles.filter((r) => !EXCLUDED_ROLES.has(r.role_name));
+    const roleByName = new Map(importableRoles.map((r) => [r.role_name.toLowerCase(), r]));
 
     const existingUsers = unwrap(
         await db().from('users').select('user_id, employee_id, username, resort_id, department_id')
@@ -151,11 +155,12 @@ async function parseAndValidateCsv(rawText) {
         if (!roleName) {
             errors.push('Role is required.');
         } else {
-            roleId = roleByName.get(roleName.toLowerCase()) ?? null;
-            if (!roleId) {
-                errors.push(`Role must be one of: ${ALLOWED_ROLES.join(', ')}.`);
+            const matchedRole = roleByName.get(roleName.toLowerCase()) ?? null;
+            if (!matchedRole) {
+                errors.push(`Role "${roleName}" is not a valid, assignable role. Check the exact spelling under Roles & Permissions.`);
             } else {
-                resolvedRoleName = ALLOWED_ROLES.find((r) => r.toLowerCase() === roleName.toLowerCase());
+                roleId = matchedRole.role_id;
+                resolvedRoleName = matchedRole.role_name;
             }
         }
 
