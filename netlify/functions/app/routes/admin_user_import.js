@@ -31,8 +31,10 @@ const MAX_ROWS = 1500;
 // are staged directly to Supabase Storage from the browser (bypassing
 // that limit entirely) rather than passed through the function body, so
 // this is a genuine data-shape sanity cap, not a workaround for the
-// platform limit.
-const MAX_BYTES = 8 * 1024 * 1024;
+// platform limit. Must stay under the csv-imports bucket's own
+// file_size_limit (50MB) or a too-large file fails at the storage layer
+// with a less friendly error before this check ever runs.
+const MAX_BYTES = 45 * 1024 * 1024;
 const CSV_IMPORT_BUCKET = 'csv-imports';
 
 // Fixed default password for every bulk-imported user (per user request) -
@@ -351,12 +353,21 @@ function uploadPageBody(csrfToken) {
     var submitBtn = document.getElementById('importSubmitBtn');
     var errorBox = document.getElementById('importErrorBox');
 
+    var MAX_BYTES = ${MAX_BYTES};
+
     form.addEventListener('submit', function (e) {
         if (storagePathInput.value) return; // already staged, let the real submit through
         e.preventDefault();
         var file = fileInput.files[0];
         if (!file) return;
         errorBox.classList.add('d-none');
+
+        if (file.size > MAX_BYTES) {
+            errorBox.textContent = 'File is too large (' + (file.size / (1024 * 1024)).toFixed(1) + ' MB, max ' + (MAX_BYTES / (1024 * 1024)).toFixed(0) + ' MB).';
+            errorBox.classList.remove('d-none');
+            return;
+        }
+
         submitBtn.disabled = true;
         submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Uploading...';
 
@@ -367,7 +378,8 @@ function uploadPageBody(csrfToken) {
             .then(function (data) {
                 return fetch(data.uploadUrl, { method: 'PUT', headers: { 'content-type': 'text/csv' }, body: file })
                     .then(function (putRes) {
-                        if (!putRes.ok) throw new Error('File upload failed.');
+                        if (putRes.status === 400 || putRes.status === 413) throw new Error('File is too large for the server to accept.');
+                        if (!putRes.ok) throw new Error('File upload failed (server said: ' + putRes.status + ').');
                         storagePathInput.value = data.path;
                         form.submit();
                     });
