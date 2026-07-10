@@ -205,6 +205,65 @@ export async function setHodReservationDepartment({ reservationId, departmentId,
     return { ok: true };
 }
 
+/**
+ * Creates a new HOD-type reserved-seat block directly from Security's
+ * manifest page - a deliberate exception to "Security cannot create
+ * reserved seat allocations" (confirmed explicitly with the user),
+ * scoped to a single day (the schedule/date already being viewed)
+ * rather than an open-ended range, so it can't accidentally reserve
+ * seats on dates nobody looked at. Logged to seat_reservation_log
+ * (action: 'created') so it shows up in the same audit trail as every
+ * other reservation, regardless of who created it.
+ */
+export async function createHodReservation({ scheduleId, travelDate, departmentId, seats, createdByUserId }) {
+    if (!Number.isInteger(seats) || seats < 1) return { ok: false, reason: 'invalid_seats' };
+
+    const deptRows = unwrap(await db().from('departments').select('department_id, department_name').eq('department_id', departmentId).limit(1));
+    if (!deptRows.length) return { ok: false, reason: 'invalid_department' };
+
+    const scheduleRows = unwrap(await db().from('ferry_schedule').select('schedule_id, ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1));
+    if (!scheduleRows.length) return { ok: false, reason: 'invalid_schedule' };
+    const direction = scheduleRows[0].ferry_routes?.direction ?? null;
+
+    const inserted = unwrap(
+        await db()
+            .from('seat_reservations')
+            .insert({
+                schedule_id: scheduleId,
+                department_id: departmentId,
+                reservation_type: 'hod',
+                seats,
+                start_date: travelDate,
+                end_date: travelDate,
+                weekdays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+                reason: 'HOD Seats (created from Security manifest)',
+                status: 'active',
+                created_by_user_id: createdByUserId,
+            })
+            .select('*')
+    );
+    const reservation = inserted[0];
+
+    unwrap(
+        await db().from('seat_reservation_log').insert({
+            reservation_id: reservation.reservation_id,
+            schedule_id: scheduleId,
+            direction,
+            resort_id: null,
+            reservation_type: 'hod',
+            department_name_snapshot: deptRows[0].department_name,
+            seats,
+            start_date: travelDate,
+            end_date: travelDate,
+            action: 'created',
+            actor_user_id: createdByUserId,
+            reason: 'Created by Security from the manifest page',
+        })
+    );
+
+    return { ok: true, reservation };
+}
+
 /** Loads a reservation with the joins every write path below needs (schedule/direction/department name). */
 async function loadReservationForWrite(reservationId) {
     const rows = unwrap(

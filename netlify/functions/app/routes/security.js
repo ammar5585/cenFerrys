@@ -18,6 +18,7 @@ import {
     reassignEmployeeToHodSeat,
     releaseHodSeatAssignment,
     setHodReservationDepartment,
+    createHodReservation,
 } from '../hodSeatAssignment.js';
 import { getActiveResorts, getActiveDepartments } from '../refData.js';
 import { logActivity, clientIp } from '../activity.js';
@@ -34,6 +35,7 @@ const HOD_ACTION_SUCCESS = {
     reassign_hod_seat: 'Reserved seat reassigned to the new employee.',
     release_hod_seat: 'Reserved seat released - it is now available for another employee.',
     set_hod_department: 'Department set for this reserved seat.',
+    create_hod_reservation: 'Reserved seat block created for this schedule and date.',
 };
 const HOD_ACTION_ERROR = {
     reservation_not_available: 'This reservation is no longer available for this date.',
@@ -45,6 +47,8 @@ const HOD_ACTION_ERROR = {
     too_late_to_release: 'This passenger has already departed - it is too late to release.',
     department_already_set: 'This reservation already has a department set.',
     invalid_department: 'Please choose a valid department.',
+    invalid_seats: 'Please enter a valid number of seats.',
+    invalid_schedule: 'That ferry schedule was not found.',
     seats_already_assigned: 'This reservation already has an employee assigned - release them before changing the department.',
 };
 
@@ -347,15 +351,36 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
             })
         );
     }
-    const departmentOptionsForSet =
-        hodReservations.some((r) => r.departmentId == null || r.seatsAssigned === 0)
+    // Needed for the Set/Change-department forms and the Add
+    // Reservation form below - fetched once per page render whenever
+    // Security can act on HOD seats at all, not just when a reservation
+    // happens to need it, since Add Reservation is always offered.
+    const allDepartmentOptions =
+        scheduleId && canAssignHodSeats
             ? (await getActiveDepartments()).map((d) => `<option value="${d.department_id}">${h(d.department_name)}</option>`).join('')
             : '';
 
-    const hodCardHtml = hodReservations.length
-        ? html`<div class="card shadow-sm mb-3">
+    // Security creating a new HOD reservation directly (department +
+    // seat count, scoped to this exact schedule/date) is a deliberate
+    // exception to "Security cannot create reserved seat allocations",
+    // confirmed explicitly with the user - offered whether or not any
+    // reservations already exist for this schedule/date.
+    const addReservationFormHtml =
+        scheduleId && canAssignHodSeats
+            ? `<form method="post" class="d-flex flex-wrap gap-2 align-items-end p-3 border-top">
+                ${csrfField(csrfToken)}<input type="hidden" name="action" value="create_hod_reservation"><input type="hidden" name="date" value="${date}"><input type="hidden" name="schedule_id" value="${scheduleId}">
+                <div><label class="form-label small mb-0">Department</label><select name="department_id" class="form-select form-select-sm" required><option value="">-- Choose --</option>${allDepartmentOptions}</select></div>
+                <div><label class="form-label small mb-0">Seats</label><input type="number" name="seats" class="form-control form-control-sm" min="1" value="1" style="width:80px" required></div>
+                <button class="btn btn-sm btn-primary"><i class="bi bi-plus-lg"></i> Add Reservation</button>
+            </form>`
+            : '';
+
+    const hodCardHtml =
+        scheduleId && canAssignHodSeats
+            ? html`<div class="card shadow-sm mb-3">
             <div class="card-header bg-white"><i class="bi bi-bookmark-star"></i> HOD Reserved Seats</div>
-            <div class="table-responsive"><table class="table table-hover mb-0 align-middle small">
+            ${hodReservations.length
+                ? html`<div class="table-responsive"><table class="table table-hover mb-0 align-middle small">
                 <thead><tr><th>Department</th><th>Reserved</th><th>Assigned</th><th>Available</th><th>Currently Assigned</th><th>Actions</th></tr></thead>
                 <tbody>${raw(
                     hodReservations
@@ -385,7 +410,7 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
                             // assigned yet - it locks again once someone is.
                             const deptForm = (label) =>
                                 `<form method="post" class="d-flex gap-1">${csrfField(csrfToken)}<input type="hidden" name="action" value="set_hod_department"><input type="hidden" name="reservation_id" value="${r.reservationId}"><input type="hidden" name="date" value="${date}"><input type="hidden" name="schedule_id" value="${scheduleId}">
-                                        <select name="department_id" class="form-select form-select-sm" required><option value="">-- ${h(label)} --</option>${departmentOptionsForSet}</select>
+                                        <select name="department_id" class="form-select form-select-sm" required><option value="">-- ${h(label)} --</option>${allDepartmentOptions}</select>
                                         <button class="btn btn-sm btn-outline-primary">Save</button>
                                     </form>`;
                             const departmentCell =
@@ -412,9 +437,11 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
                         })
                         .join('')
                 )}</tbody>
-            </table></div>
+            </table></div>`
+                : html`<div class="p-3 text-muted small">No reserved seats for this schedule/date yet.</div>`}
+            ${raw(addReservationFormHtml)}
         </div>`
-        : '';
+            : '';
 
     const hodModalsHtml = hodReservations
         .filter((r) => r.departmentId != null)
@@ -558,6 +585,21 @@ export function registerSecurityRoutes(router) {
                 setByUserId: user.user_id,
             });
             await logActivity(user.user_id, 'Security: set_hod_department', `reservation_id=${form.reservation_id || ''} department_id=${form.department_id || ''}`, clientIp(request));
+            return redirectTo(backTo, {
+                cookies: [auth.setCookie, flashSetCookie(result.ok ? 'success' : 'error', result.ok ? HOD_ACTION_SUCCESS[action] : HOD_ACTION_ERROR[result.reason] || 'Could not complete this action.')].filter(Boolean),
+            });
+        }
+
+        if (action === 'create_hod_reservation') {
+            if (!hasPermission(user.perms, 'security.assign_hod_seats')) return notFound();
+            const result = await createHodReservation({
+                scheduleId: Number(form.schedule_id),
+                travelDate: form.date,
+                departmentId: Number(form.department_id) || 0,
+                seats: Number(form.seats),
+                createdByUserId: user.user_id,
+            });
+            await logActivity(user.user_id, 'Security: create_hod_reservation', `schedule_id=${form.schedule_id || ''} department_id=${form.department_id || ''} seats=${form.seats || ''}`, clientIp(request));
             return redirectTo(backTo, {
                 cookies: [auth.setCookie, flashSetCookie(result.ok ? 'success' : 'error', result.ok ? HOD_ACTION_SUCCESS[action] : HOD_ACTION_ERROR[result.reason] || 'Could not complete this action.')].filter(Boolean),
             });
