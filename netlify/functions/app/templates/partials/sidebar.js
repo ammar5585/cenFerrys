@@ -58,7 +58,7 @@ export function renderSidebar(permsHex, currentPath, isDeptApprover = false, com
                 navLink('/staff/profile', 'bi-person-circle', 'My Profile', currentPath)
             );
         }
-        if (can('approval_workflow.manage_reserved_seats')) links.push(navLink('/manager/reserved_seats', 'bi-bookmark-star', 'Reserved Seats', currentPath));
+        if (can('approval_workflow.manage_reserved_seats')) links.push(navLink('/manager/hod_seat_request', 'bi-bookmark-star', 'HOD Reserved Seat Request', currentPath));
     }
 
     const isLegacyApproverRole = can('approval_workflow.view_history') || can('approval_workflow.manage_own_availability');

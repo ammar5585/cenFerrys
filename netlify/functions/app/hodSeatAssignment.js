@@ -19,6 +19,7 @@
 import { db, unwrap } from './db.js';
 import { getStatusId } from './approval.js';
 import { createNotification } from './notifications.js';
+import { getSetting, setSetting } from './settings.js';
 
 const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const HOD_BOOKING_PURPOSE = 'HOD Reserved Seat Assignment';
@@ -26,6 +27,7 @@ const RESERVABLE_TYPES = ['hod', 'department'];
 // Must stay identical to 0023_hod_seat_assignment.sql's exclusion list.
 const OCCUPIED_EXCLUDED_STATUSES = ['Rejected', 'Cancelled', 'Expired', 'No Show'];
 const REASSIGNABLE_STATUSES = ['Approved', 'Checked-In'];
+const DEFAULT_HOD_SEAT_ALLOCATION = 2;
 
 function weekdayFor(travelDate) {
     return WEEKDAY_ABBR[new Date(`${travelDate}T00:00:00Z`).getUTCDay()];
@@ -564,4 +566,248 @@ export async function recordHodSeatAutoRelease(bookingId, booking) {
         assigned_by_user_id: null,
         remarks: 'Seat automatically released - employee marked No Show.',
     });
+}
+
+// =====================================================================
+// HOD Self-Service Reserved Seat Request: a resort-wide (not
+// department-scoped) pool of seats an HOD can request ONLY for
+// themselves - distinct from everything above, which is Security/HR/
+// Administrator assigning a NAMED employee (any department member) to
+// a department-scoped reservation. The pool reservation itself reuses
+// the exact same seat_reservations table and
+// reserved_seats_for_schedule_date() capacity math, just with
+// department_id left NULL (resort-wide, not one department's), so it's
+// walled off from general capacity and visible on Security's manifest
+// with zero further changes needed anywhere else.
+// =====================================================================
+
+function hodAllocationSettingKey(resortId) {
+    return `hod_seat_allocation_resort_${resortId}`;
+}
+
+/** Admin-configurable count of self-service HOD seats per schedule/date for one resort (default 2). */
+export async function getHodSeatAllocation(resortId) {
+    const value = await getSetting(hodAllocationSettingKey(resortId), DEFAULT_HOD_SEAT_ALLOCATION);
+    return Math.max(0, Number(value) || 0);
+}
+
+export async function setHodSeatAllocation(resortId, seats) {
+    await setSetting(hodAllocationSettingKey(resortId), Math.max(0, Number(seats) || 0));
+}
+
+/** Finds the resort-wide HOD pool reservation for one schedule+date, without creating it - a pool that doesn't exist yet just means nobody has requested from it, so the full configured allocation is reported as available. */
+async function findHodPool({ resortId, scheduleId, travelDate }) {
+    const weekday = weekdayFor(travelDate);
+    const rows = unwrap(
+        await db()
+            .from('seat_reservations')
+            .select('reservation_id, seats, weekdays')
+            .eq('schedule_id', scheduleId)
+            .eq('resort_id', resortId)
+            .eq('reservation_type', 'hod')
+            .is('department_id', null)
+            .eq('status', 'active')
+            .lte('start_date', travelDate)
+            .gte('end_date', travelDate)
+    );
+    return rows.find((r) => r.weekdays.includes(weekday)) ?? null;
+}
+
+/** Same as findHodPool, but lazily creates the pool (sized to the current admin-configured allocation) the first time anyone requests from it for this schedule+date - avoids needing a separate admin step to "set up" every schedule/date in advance. */
+async function findOrCreateHodPool({ resortId, scheduleId, travelDate, createdByUserId }) {
+    const found = await findHodPool({ resortId, scheduleId, travelDate });
+    if (found) return found;
+
+    const allocation = await getHodSeatAllocation(resortId);
+    const scheduleRows = unwrap(await db().from('ferry_schedule').select('schedule_id, ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1));
+    const direction = scheduleRows[0]?.ferry_routes?.direction ?? null;
+
+    const inserted = unwrap(
+        await db()
+            .from('seat_reservations')
+            .insert({
+                schedule_id: scheduleId,
+                department_id: null,
+                resort_id: resortId,
+                reservation_type: 'hod',
+                seats: allocation,
+                start_date: travelDate,
+                end_date: travelDate,
+                weekdays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+                reason: 'HOD Reserved Seat pool (self-service)',
+                status: 'active',
+                created_by_user_id: createdByUserId,
+            })
+            .select('reservation_id, seats, weekdays')
+    );
+    const reservation = inserted[0];
+
+    unwrap(
+        await db().from('seat_reservation_log').insert({
+            reservation_id: reservation.reservation_id,
+            schedule_id: scheduleId,
+            direction,
+            resort_id: resortId,
+            reservation_type: 'hod',
+            department_name_snapshot: null,
+            seats: allocation,
+            start_date: travelDate,
+            end_date: travelDate,
+            action: 'created',
+            actor_user_id: createdByUserId,
+            reason: 'Auto-created by HOD Reserved Seat Request self-service',
+        })
+    );
+
+    return reservation;
+}
+
+/** Read-only status for the HOD Reserved Seat Request page: pool total/assigned/available for this resort+schedule+date, plus the caller's own current booking against it (if any), so the page can show a Request or Cancel button. */
+export async function getOwnHodSeatStatus({ resortId, scheduleId, travelDate, userId }) {
+    const pool = await findHodPool({ resortId, scheduleId, travelDate });
+    const allocation = pool ? pool.seats : await getHodSeatAllocation(resortId);
+    const assignedCount = pool ? await countActiveAssignments(pool.reservation_id, travelDate) : 0;
+
+    const myBookingRows = unwrap(
+        await db()
+            .from('bookings')
+            .select('booking_id, source_reservation_id, booking_status(status_name)')
+            .eq('user_id', userId)
+            .eq('schedule_id', scheduleId)
+            .eq('travel_date', travelDate)
+            .not('source_reservation_id', 'is', null)
+    );
+    const myActive = myBookingRows.find((b) => !OCCUPIED_EXCLUDED_STATUSES.includes(b.booking_status.status_name));
+
+    return {
+        seatsTotal: allocation,
+        seatsAssigned: assignedCount,
+        seatsAvailable: Math.max(0, allocation - assignedCount),
+        myBookingId: myActive?.booking_id ?? null,
+        myStatus: myActive?.booking_status?.status_name ?? null,
+    };
+}
+
+/**
+ * The HOD's own self-request - always books the requester themselves
+ * against the resort-wide pool, never another employee and never a
+ * department-scoped reservation. Re-validates everything server-side
+ * (resort match, schedule validity, no existing HOD seat for this
+ * date, remaining capacity) rather than trusting the page's own status
+ * check.
+ */
+export async function requestOwnHodSeat({ resortId, scheduleId, travelDate, userId, remarks }) {
+    const employeeRows = unwrap(await db().from('users').select('user_id, full_name, employee_id, department_id, resort_id, status').eq('user_id', userId).limit(1));
+    const employee = employeeRows[0];
+    if (!employee || employee.status !== 'active' || employee.resort_id !== resortId) return { ok: false, reason: 'invalid_resort' };
+
+    const scheduleRows = unwrap(await db().from('ferry_schedule').select('schedule_id, status, weekdays, ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1));
+    const schedule = scheduleRows[0];
+    if (!schedule || schedule.status !== 'active' || !schedule.weekdays.includes(weekdayFor(travelDate))) return { ok: false, reason: 'invalid_schedule' };
+
+    if (await employeeHasHodAssignment(userId, scheduleId, travelDate)) return { ok: false, reason: 'already_requested' };
+
+    const pool = await findOrCreateHodPool({ resortId, scheduleId, travelDate, createdByUserId: userId });
+    const assignedCount = await countActiveAssignments(pool.reservation_id, travelDate);
+    if (assignedCount >= pool.seats) return { ok: false, reason: 'seat_unavailable' };
+
+    const approvedId = await getStatusId('Approved');
+    const direction = schedule.ferry_routes?.direction ?? null;
+    const inserted = unwrap(
+        await db()
+            .from('bookings')
+            .insert({
+                user_id: userId,
+                schedule_id: scheduleId,
+                travel_date: travelDate,
+                direction,
+                purpose: HOD_BOOKING_PURPOSE,
+                remarks: remarks || null,
+                seats: 1,
+                status_id: approvedId,
+                booking_method: 'hod_seat_assignment',
+                source_reservation_id: pool.reservation_id,
+            })
+            .select('*')
+    );
+    const booking = inserted[0];
+
+    await insertHodAssignmentLog({
+        reservation_id: pool.reservation_id,
+        schedule_id: scheduleId,
+        direction,
+        travel_date: travelDate,
+        resort_id: resortId,
+        department_id: employee.department_id,
+        department_name_snapshot: null,
+        booking_id: booking.booking_id,
+        action: 'assigned',
+        employee_assigned_user_id: employee.user_id,
+        employee_assigned_name_snapshot: employee.full_name,
+        employee_assigned_id_snapshot: employee.employee_id,
+        assigned_by_user_id: userId,
+        remarks: remarks || 'Self-requested via HOD Reserved Seat Request',
+    });
+
+    return { ok: true, booking };
+}
+
+/** The HOD cancelling their own request - refuses any booking that isn't theirs, and reuses the same before-departure guard as every other release in this file. */
+export async function cancelOwnHodSeatRequest({ bookingId, userId, remarks }) {
+    const rows = unwrap(
+        await db()
+            .from('bookings')
+            .select('booking_id, user_id, schedule_id, travel_date, source_reservation_id, users!bookings_user_id_fkey(full_name, employee_id), booking_status(status_name)')
+            .eq('booking_id', bookingId)
+            .limit(1)
+    );
+    const booking = rows[0];
+    if (!booking || booking.user_id !== userId || !booking.source_reservation_id) return { ok: false, reason: 'not_hod_assignment' };
+    if (!REASSIGNABLE_STATUSES.includes(booking.booking_status.status_name)) return { ok: false, reason: 'too_late_to_release' };
+
+    const reservation = await loadReservationForWrite(booking.source_reservation_id);
+
+    const cancelledId = await getStatusId('Cancelled');
+    unwrap(await db().from('bookings').update({ status_id: cancelledId }).eq('booking_id', bookingId));
+
+    await insertHodAssignmentLog({
+        reservation_id: booking.source_reservation_id,
+        schedule_id: booking.schedule_id,
+        direction: reservation?.ferry_schedule?.ferry_routes?.direction ?? null,
+        travel_date: booking.travel_date,
+        resort_id: reservation?.resort_id ?? null,
+        department_id: reservation?.department_id ?? null,
+        department_name_snapshot: null,
+        booking_id: bookingId,
+        action: 'released',
+        employee_removed_user_id: booking.user_id,
+        employee_removed_name_snapshot: booking.users.full_name,
+        employee_removed_id_snapshot: booking.users.employee_id,
+        assigned_by_user_id: userId,
+        remarks: remarks || 'Cancelled by HOD (self-service)',
+    });
+
+    return { ok: true };
+}
+
+/** All of this user's own HOD Reserved Seat Request bookings, most recent travel date first - covers both "status of requests" and "booking history" in one list, since self-service HOD bookings are the only kind an HOD makes through this feature. */
+export async function listOwnHodSeatRequests(userId) {
+    const rows = unwrap(
+        await db()
+            .from('bookings')
+            .select('booking_id, travel_date, direction, created_at, source_reservation_id, booking_status(status_name, badge_color), ferry_schedule(departure_time, ferry_routes(route_name, direction))')
+            .eq('user_id', userId)
+            .eq('booking_method', 'hod_seat_assignment')
+            .order('travel_date', { ascending: false })
+            .limit(100)
+    );
+    if (!rows.length) return [];
+
+    const reservationIds = [...new Set(rows.map((r) => r.source_reservation_id).filter(Boolean))];
+    const reservations = reservationIds.length
+        ? unwrap(await db().from('seat_reservations').select('reservation_id, resorts(resort_name)').in('reservation_id', reservationIds))
+        : [];
+    const resortNameByReservation = new Map(reservations.map((r) => [r.reservation_id, r.resorts?.resort_name ?? '-']));
+
+    return rows.map((r) => ({ ...r, resortName: resortNameByReservation.get(r.source_reservation_id) ?? '-' }));
 }

@@ -19,6 +19,8 @@ import { formatTime } from '../format.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { getActiveResorts, getAllDepartments } from '../refData.js';
+import { getHodSeatAllocation, setHodSeatAllocation } from '../hodSeatAssignment.js';
+import { logActivity, clientIp } from '../activity.js';
 
 const WEEKDAY_OPTIONS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const RESERVATION_TYPES = [
@@ -90,6 +92,24 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken }) {
         db().from('users').select('user_id, full_name, employee_id').eq('status', 'active').order('full_name').then(unwrap),
         db().from('ferry_schedule').select('schedule_id, departure_time, ferry_routes(route_name, direction)').eq('status', 'active').order('departure_time').then(unwrap),
     ]);
+
+    // Per-resort default allocation for the HOD Reserved Seat Request
+    // self-service feature (hodSeatAssignment.js) - a schedule/date's
+    // actual pool size is fixed at whatever this was when that pool was
+    // first created, so changing this only affects schedules/dates
+    // nobody has requested from yet.
+    const hodAllocations = await Promise.all(resorts.map((r) => getHodSeatAllocation(r.resort_id)));
+    const hodAllocationHtml = `<div class="card shadow-sm mb-3">
+    <div class="card-header bg-white"><i class="bi bi-bookmark-star"></i> HOD Reserved Seat Request - Default Allocation per Resort</div>
+    <div class="card-body">
+        <p class="text-muted small">Used by the HOD Reserved Seat Request self-service page (Ferry Booking menu) the first time anyone requests a seat for a given ferry schedule/date. Changing this does not resize a schedule/date that already has requests against it.</p>
+        <form method="post" class="row g-3 align-items-end">
+            ${csrfField(csrfToken)}<input type="hidden" name="action" value="set_hod_allocation">
+            ${resorts.map((r, i) => `<div class="col-md-3"><label class="form-label">${h(r.resort_name)}</label><input type="number" name="hod_allocation_${r.resort_id}" class="form-control" min="0" value="${hodAllocations[i]}"></div>`).join('')}
+            <div class="col-md-3"><button class="btn btn-outline-primary"><i class="bi bi-check-lg"></i> Save Allocation</button></div>
+        </form>
+    </div>
+</div>`;
 
     const typeLabel = (v) => RESERVATION_TYPES.find((t) => t.value === v)?.label ?? v;
 
@@ -207,6 +227,7 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken }) {
 </script>`;
 
     return html`
+${raw(hodAllocationHtml)}
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h5 class="mb-0"><i class="bi bi-bookmark-star"></i> Seat Reservations</h5>
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createReservationModal"><i class="bi bi-plus-lg"></i> New Reservation</button>
@@ -254,6 +275,19 @@ export function registerAdminSeatReservationsRoutes(router) {
         const { user } = auth;
         const form = await readFormBody(request);
         if (!verifyCsrf(user.csrf, form.csrf_token)) return notFound();
+
+        if (form.action === 'set_hod_allocation') {
+            const resorts = await getActiveResorts();
+            await Promise.all(
+                resorts.map((r) => {
+                    const key = `hod_allocation_${r.resort_id}`;
+                    if (form[key] === undefined) return null;
+                    return setHodSeatAllocation(r.resort_id, Number(form[key]));
+                })
+            );
+            await logActivity(user.user_id, 'Updated HOD Reserved Seat Request default allocation', null, clientIp(request));
+            return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('success', 'HOD Reserved Seat allocation saved.')].filter(Boolean) });
+        }
 
         if (form.action === 'create') {
             const reservationType = form.reservation_type;
