@@ -49,13 +49,16 @@ export function renderSidebar(permsHex, currentPath, isDeptApprover = false, com
         if (can('settings.manage_email')) links.push(navLink('/admin/email_settings', 'bi-envelope-at', 'Email Settings', currentPath));
     }
 
-    if (can('booking.create_own')) {
-        links.push(
-            html`<div class="nav-heading">My Bookings</div>`,
-            navLink('/staff/book', 'bi-plus-circle', 'New Booking', currentPath),
-            navLink('/staff/my_bookings', 'bi-journal-text', 'Booking History', currentPath),
-            navLink('/staff/profile', 'bi-person-circle', 'My Profile', currentPath)
-        );
+    if (can('booking.create_own') || can('approval_workflow.manage_reserved_seats')) {
+        links.push(html`<div class="nav-heading">Ferry Booking</div>`);
+        if (can('booking.create_own')) {
+            links.push(
+                navLink('/staff/book', 'bi-plus-circle', 'New Booking', currentPath),
+                navLink('/staff/my_bookings', 'bi-journal-text', 'Booking History', currentPath),
+                navLink('/staff/profile', 'bi-person-circle', 'My Profile', currentPath)
+            );
+        }
+        if (can('approval_workflow.manage_reserved_seats')) links.push(navLink('/manager/reserved_seats', 'bi-bookmark-star', 'Reserved Seats', currentPath));
     }
 
     const isLegacyApproverRole = can('approval_workflow.view_history') || can('approval_workflow.manage_own_availability');
@@ -79,10 +82,11 @@ export function renderSidebar(permsHex, currentPath, isDeptApprover = false, com
         );
     }
 
-    if (can('approval_workflow.view_department_requests') || can('approval_workflow.manage_reserved_seats')) {
-        links.push(html`<div class="nav-heading">Department</div>`);
-        if (can('approval_workflow.view_department_requests')) links.push(navLink('/manager/department_requests', 'bi-people', 'Department Requests', currentPath));
-        if (can('approval_workflow.manage_reserved_seats')) links.push(navLink('/manager/reserved_seats', 'bi-bookmark-star', 'Reserved Seats', currentPath));
+    if (can('approval_workflow.view_department_requests')) {
+        links.push(
+            html`<div class="nav-heading">Department</div>`,
+            navLink('/manager/department_requests', 'bi-people', 'Department Requests', currentPath)
+        );
     }
 
     if (can('dashboard.view_transport')) {
