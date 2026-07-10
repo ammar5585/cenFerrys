@@ -66,7 +66,7 @@ export async function getHodReservationsForScheduleDate(scheduleId, travelDate) 
     const reservations = unwrap(
         await db()
             .from('seat_reservations')
-            .select('reservation_id, department_id, seats, contact_name, weekdays, departments(department_name)')
+            .select('reservation_id, department_id, resort_id, seats, contact_name, weekdays, departments(department_name), resorts(resort_name)')
             .eq('schedule_id', scheduleId)
             .eq('status', 'active')
             .in('reservation_type', RESERVABLE_TYPES)
@@ -98,6 +98,8 @@ export async function getHodReservationsForScheduleDate(scheduleId, travelDate) 
             reservationId: r.reservation_id,
             departmentId: r.department_id,
             departmentName: r.departments?.department_name ?? '-',
+            resortId: r.resort_id,
+            resortName: r.resorts?.resort_name ?? '-',
             contactName: r.contact_name,
             seatsTotal: r.seats,
             seatsAssigned: active.length,
@@ -215,11 +217,14 @@ export async function setHodReservationDepartment({ reservationId, departmentId,
  * (action: 'created') so it shows up in the same audit trail as every
  * other reservation, regardless of who created it.
  */
-export async function createHodReservation({ scheduleId, travelDate, departmentId, seats, createdByUserId }) {
+export async function createHodReservation({ scheduleId, travelDate, departmentId, resortId, seats, createdByUserId }) {
     if (!Number.isInteger(seats) || seats < 1) return { ok: false, reason: 'invalid_seats' };
 
     const deptRows = unwrap(await db().from('departments').select('department_id, department_name').eq('department_id', departmentId).limit(1));
     if (!deptRows.length) return { ok: false, reason: 'invalid_department' };
+
+    const resortRows = unwrap(await db().from('resorts').select('resort_id, resort_name').eq('resort_id', resortId).limit(1));
+    if (!resortRows.length) return { ok: false, reason: 'invalid_resort' };
 
     const scheduleRows = unwrap(await db().from('ferry_schedule').select('schedule_id, ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1));
     if (!scheduleRows.length) return { ok: false, reason: 'invalid_schedule' };
@@ -231,6 +236,7 @@ export async function createHodReservation({ scheduleId, travelDate, departmentI
             .insert({
                 schedule_id: scheduleId,
                 department_id: departmentId,
+                resort_id: resortId,
                 reservation_type: 'hod',
                 seats,
                 start_date: travelDate,
@@ -249,7 +255,7 @@ export async function createHodReservation({ scheduleId, travelDate, departmentI
             reservation_id: reservation.reservation_id,
             schedule_id: scheduleId,
             direction,
-            resort_id: null,
+            resort_id: resortId,
             reservation_type: 'hod',
             department_name_snapshot: deptRows[0].department_name,
             seats,

@@ -49,6 +49,7 @@ const HOD_ACTION_ERROR = {
     invalid_department: 'Please choose a valid department.',
     invalid_seats: 'Please enter a valid number of seats.',
     invalid_schedule: 'That ferry schedule was not found.',
+    invalid_resort: 'Please choose a valid resort.',
     seats_already_assigned: 'This reservation already has an employee assigned - release them before changing the department.',
 };
 
@@ -359,16 +360,22 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
         scheduleId && canAssignHodSeats
             ? (await getActiveDepartments()).map((d) => `<option value="${d.department_id}">${h(d.department_name)}</option>`).join('')
             : '';
+    const allResortOptions = resorts.map((r) => `<option value="${r.resort_id}">${h(r.resort_name)}</option>`).join('');
 
-    // Security creating a new HOD reservation directly (department +
-    // seat count, scoped to this exact schedule/date) is a deliberate
-    // exception to "Security cannot create reserved seat allocations",
-    // confirmed explicitly with the user - offered whether or not any
-    // reservations already exist for this schedule/date.
+    // Security creating a new HOD reservation directly (resort +
+    // department + seat count, scoped to this exact schedule/date) is a
+    // deliberate exception to "Security cannot create reserved seat
+    // allocations", confirmed explicitly with the user - offered
+    // whether or not any reservations already exist for this
+    // schedule/date. Resort is tracked per-reservation (metadata, same
+    // as the admin Seat Reservations form) since HOD seats are held per
+    // resort even though a single ferry schedule can carry passengers
+    // from either.
     const addReservationFormHtml =
         scheduleId && canAssignHodSeats
             ? `<form method="post" class="d-flex flex-wrap gap-2 align-items-end p-3 border-top">
                 ${csrfField(csrfToken)}<input type="hidden" name="action" value="create_hod_reservation"><input type="hidden" name="date" value="${date}"><input type="hidden" name="schedule_id" value="${scheduleId}">
+                <div><label class="form-label small mb-0">Resort</label><select name="resort_id" class="form-select form-select-sm" required><option value="">-- Choose --</option>${allResortOptions}</select></div>
                 <div><label class="form-label small mb-0">Department</label><select name="department_id" class="form-select form-select-sm" required><option value="">-- Choose --</option>${allDepartmentOptions}</select></div>
                 <div><label class="form-label small mb-0">Seats</label><input type="number" name="seats" class="form-control form-control-sm" min="1" value="1" style="width:80px" required></div>
                 <button class="btn btn-sm btn-primary"><i class="bi bi-plus-lg"></i> Add Reservation</button>
@@ -381,7 +388,7 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
             <div class="card-header bg-white"><i class="bi bi-bookmark-star"></i> HOD Reserved Seats</div>
             ${hodReservations.length
                 ? html`<div class="table-responsive"><table class="table table-hover mb-0 align-middle small">
-                <thead><tr><th>Department</th><th>Reserved</th><th>Assigned</th><th>Available</th><th>Currently Assigned</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Resort</th><th>Department</th><th>Reserved</th><th>Assigned</th><th>Available</th><th>Currently Assigned</th><th>Actions</th></tr></thead>
                 <tbody>${raw(
                     hodReservations
                         .map((r) => {
@@ -429,6 +436,7 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
                                       ? `<button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#hodModal${r.reservationId}">Assign</button>`
                                       : '<span class="text-muted small">Full</span>';
                             return `<tr>
+                            <td>${h(r.resortName)}</td>
                             <td>${departmentCell}${r.contactName ? `<br><small class="text-muted">${h(r.contactName)}</small>` : ''}</td>
                             <td>${r.seatsTotal}</td><td>${r.seatsAssigned}</td><td>${r.seatsAvailable}</td>
                             <td>${assignedHtml}</td>
@@ -596,6 +604,7 @@ export function registerSecurityRoutes(router) {
                 scheduleId: Number(form.schedule_id),
                 travelDate: form.date,
                 departmentId: Number(form.department_id) || 0,
+                resortId: Number(form.resort_id) || 0,
                 seats: Number(form.seats),
                 createdByUserId: user.user_id,
             });
