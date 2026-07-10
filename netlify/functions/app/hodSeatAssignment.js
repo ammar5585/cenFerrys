@@ -208,6 +208,49 @@ export async function setHodReservationDepartment({ reservationId, departmentId,
 }
 
 /**
+ * Deletes (soft - sets status to 'cancelled', matching how every other
+ * reservation removal in this app already works, never a hard SQL
+ * DELETE) an HOD reservation created from Security's manifest page.
+ * Administrator-only (checked by the caller, not here) and only while
+ * no one is currently assigned - the same "seat must be empty" guard
+ * used for changing a department, so an active assignment can't be
+ * silently orphaned.
+ */
+export async function deleteHodReservation({ reservationId, deletedByUserId }) {
+    const rows = unwrap(
+        await db()
+            .from('seat_reservations')
+            .select('reservation_id, schedule_id, department_id, resort_id, reservation_type, status, seats, start_date, end_date, departments(department_name), ferry_schedule(ferry_routes(direction))')
+            .eq('reservation_id', reservationId)
+            .limit(1)
+    );
+    const reservation = rows[0];
+    if (!reservation || reservation.status !== 'active') return { ok: false, reason: 'reservation_not_available' };
+    if (await reservationHasAnyActiveAssignment(reservationId)) return { ok: false, reason: 'seats_already_assigned' };
+
+    unwrap(await db().from('seat_reservations').update({ status: 'cancelled' }).eq('reservation_id', reservationId));
+
+    unwrap(
+        await db().from('seat_reservation_log').insert({
+            reservation_id: reservationId,
+            schedule_id: reservation.schedule_id,
+            direction: reservation.ferry_schedule?.ferry_routes?.direction ?? null,
+            resort_id: reservation.resort_id,
+            reservation_type: reservation.reservation_type,
+            department_name_snapshot: reservation.departments?.department_name ?? null,
+            seats: reservation.seats,
+            start_date: reservation.start_date,
+            end_date: reservation.end_date,
+            action: 'cancelled',
+            actor_user_id: deletedByUserId,
+            reason: 'Deleted by Administrator from the Security manifest page',
+        })
+    );
+
+    return { ok: true };
+}
+
+/**
  * Creates a new HOD-type reserved-seat block directly from Security's
  * manifest page - a deliberate exception to "Security cannot create
  * reserved seat allocations" (confirmed explicitly with the user),

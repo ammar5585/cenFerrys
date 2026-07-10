@@ -19,6 +19,7 @@ import {
     releaseHodSeatAssignment,
     setHodReservationDepartment,
     createHodReservation,
+    deleteHodReservation,
 } from '../hodSeatAssignment.js';
 import { getActiveResorts, getActiveDepartments } from '../refData.js';
 import { logActivity, clientIp } from '../activity.js';
@@ -36,6 +37,7 @@ const HOD_ACTION_SUCCESS = {
     release_hod_seat: 'Reserved seat released - it is now available for another employee.',
     set_hod_department: 'Department set for this reserved seat.',
     create_hod_reservation: 'Reserved seat block created for this schedule and date.',
+    delete_hod_reservation: 'Reserved seat block deleted.',
 };
 const HOD_ACTION_ERROR = {
     reservation_not_available: 'This reservation is no longer available for this date.',
@@ -50,7 +52,7 @@ const HOD_ACTION_ERROR = {
     invalid_seats: 'Please enter a valid number of seats.',
     invalid_schedule: 'That ferry schedule was not found.',
     invalid_resort: 'Please choose a valid resort.',
-    seats_already_assigned: 'This reservation already has an employee assigned - release them before changing the department.',
+    seats_already_assigned: 'This reservation already has an employee assigned - release them before changing the department or deleting it.',
 };
 
 async function readFormBody(request) {
@@ -334,7 +336,7 @@ const HOD_MODAL_SCRIPT = `
     });
 })();`;
 
-async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csrfToken, canAssignHodSeats }) {
+async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csrfToken, canAssignHodSeats, isAdmin }) {
     let manifest = scheduleId ? await manifestFor(scheduleId, date) : [];
     if (resortFilter) manifest = manifest.filter((p) => p.users.resort_id === resortFilter);
     const resorts = await getActiveResorts();
@@ -435,12 +437,19 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
                                     : r.seatsAvailable > 0
                                       ? `<button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#hodModal${r.reservationId}">Assign</button>`
                                       : '<span class="text-muted small">Full</span>';
+                            // Administrator-only, and only while the seat is
+                            // empty - same guard as changing the department,
+                            // so an active assignment can't be orphaned.
+                            const deleteBtn =
+                                isAdmin && r.seatsAssigned === 0
+                                    ? `<form method="post" class="d-inline ms-1" data-confirm="Delete this reserved seat block? This cannot be undone.">${csrfField(csrfToken)}<input type="hidden" name="action" value="delete_hod_reservation"><input type="hidden" name="reservation_id" value="${r.reservationId}"><input type="hidden" name="date" value="${date}"><input type="hidden" name="schedule_id" value="${scheduleId}"><button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>`
+                                    : '';
                             return `<tr>
                             <td>${h(r.resortName)}</td>
                             <td>${departmentCell}${r.contactName ? `<br><small class="text-muted">${h(r.contactName)}</small>` : ''}</td>
                             <td>${r.seatsTotal}</td><td>${r.seatsAssigned}</td><td>${r.seatsAvailable}</td>
                             <td>${assignedHtml}</td>
-                            <td>${assignBtn}</td>
+                            <td>${assignBtn}${deleteBtn}</td>
                         </tr>`;
                         })
                         .join('')
@@ -571,7 +580,8 @@ export function registerSecurityRoutes(router) {
         const resortFilter = Number(url.searchParams.get('resort') || 0);
         const schedules = await activeSchedulesForDate(date);
         const canAssignHodSeats = hasPermission(auth.user.perms, 'security.assign_hod_seats');
-        const body = await manifestPageBody({ date, scheduleId, schedules, resortFilter, csrfToken: auth.user.csrf, canAssignHodSeats });
+        const isAdmin = auth.user.role_name === ROLE_ADMIN;
+        const body = await manifestPageBody({ date, scheduleId, schedules, resortFilter, csrfToken: auth.user.csrf, canAssignHodSeats, isAdmin });
         return renderShellForRequest({ request, auth, pageTitle: 'Passenger Manifest', path: '/security/manifest', bodyHtml: body });
     });
 
@@ -593,6 +603,21 @@ export function registerSecurityRoutes(router) {
                 setByUserId: user.user_id,
             });
             await logActivity(user.user_id, 'Security: set_hod_department', `reservation_id=${form.reservation_id || ''} department_id=${form.department_id || ''}`, clientIp(request));
+            return redirectTo(backTo, {
+                cookies: [auth.setCookie, flashSetCookie(result.ok ? 'success' : 'error', result.ok ? HOD_ACTION_SUCCESS[action] : HOD_ACTION_ERROR[result.reason] || 'Could not complete this action.')].filter(Boolean),
+            });
+        }
+
+        if (action === 'delete_hod_reservation') {
+            // Administrator-only, stricter than the security.assign_hod_seats
+            // permission every other HOD action here uses - deleting a
+            // reserved-seat allocation is a bigger step than assigning to one.
+            if (user.role_name !== ROLE_ADMIN) return notFound();
+            const result = await deleteHodReservation({
+                reservationId: Number(form.reservation_id),
+                deletedByUserId: user.user_id,
+            });
+            await logActivity(user.user_id, 'Security: delete_hod_reservation', `reservation_id=${form.reservation_id || ''}`, clientIp(request));
             return redirectTo(backTo, {
                 cookies: [auth.setCookie, flashSetCookie(result.ok ? 'success' : 'error', result.ok ? HOD_ACTION_SUCCESS[action] : HOD_ACTION_ERROR[result.reason] || 'Could not complete this action.')].filter(Boolean),
             });
