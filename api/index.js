@@ -36,6 +36,7 @@ import { registerAdminEmailSettingsRoutes } from '../netlify/functions/app/route
 import { registerReportsRoutes } from '../netlify/functions/app/routes/reports.js';
 import { registerHrOverviewRoutes } from '../netlify/functions/app/routes/hr_overview.js';
 import { registerManagerExtraRoutes } from '../netlify/functions/app/routes/manager_extra.js';
+import { registerHodReservationRoutes } from '../netlify/functions/app/routes/hod_reservations.js';
 import { registerTransportSchedulesViewRoutes } from '../netlify/functions/app/routes/transport_schedules_view.js';
 import { registerMiscRoutes } from '../netlify/functions/app/routes/misc.js';
 import { registerSecurityRoutes } from '../netlify/functions/app/routes/security.js';
@@ -65,6 +66,7 @@ registerAdminEmailSettingsRoutes(router);
 registerReportsRoutes(router);
 registerHrOverviewRoutes(router);
 registerManagerExtraRoutes(router);
+registerHodReservationRoutes(router);
 registerTransportSchedulesViewRoutes(router);
 registerMiscRoutes(router);
 registerSecurityRoutes(router);
