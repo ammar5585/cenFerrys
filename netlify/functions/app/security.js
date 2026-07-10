@@ -12,6 +12,7 @@ import { sendTemplatedEmail } from './mailer.js';
 import { deferBestEffort } from './deferred.js';
 import { formatDate, formatTime } from './format.js';
 import { ROLE_SECURITY } from './session.js';
+import { recordHodSeatAutoRelease } from './hodSeatAssignment.js';
 
 /** Every active Security user - used to notify when a seat frees up or a trip completes. */
 async function getActiveSecurityUsers() {
@@ -178,7 +179,7 @@ export async function recordMovement(bookingId, action, { officerId, remarks }) 
     const rows = unwrap(
         await db()
             .from('bookings')
-            .select('user_id, schedule_id, travel_date, status_id, users!bookings_user_id_fkey(department_id, resort_id)')
+            .select('user_id, schedule_id, travel_date, status_id, source_reservation_id, users!bookings_user_id_fkey(department_id, resort_id, full_name, employee_id)')
             .eq('booking_id', bookingId)
             .limit(1)
     );
@@ -213,6 +214,7 @@ export async function recordMovement(bookingId, action, { officerId, remarks }) 
 
     if (action === 'no_show') {
         await notifySecurityIfWaitingList(booking.schedule_id, booking.travel_date);
+        await recordHodSeatAutoRelease(bookingId, booking); // no-op if not an HOD-assigned booking
     }
     if (action === 'arrived') {
         await checkTripCompletion(booking.schedule_id, booking.travel_date);

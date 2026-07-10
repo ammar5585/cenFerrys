@@ -22,11 +22,11 @@ export const DEFAULT_ROLE_PERMISSIONS = {
         'booking.hr_manual_booking', 'booking.override_capacity', 'booking.override_approval', 'booking.manage_seat_reservations',
         'approval_workflow.access', 'approval_workflow.manage_manager_availability',
         'approval_workflow.configure_hierarchy', 'approval_workflow.executive_override',
-        'security.access', 'security.manage_manifest', 'security.manage_waiting_list',
+        'security.access', 'security.manage_manifest', 'security.manage_waiting_list', 'security.assign_hod_seats',
         'reports.access', 'reports.view_admin',
         'branding.access', 'branding.manage',
         'settings.access', 'settings.manage', 'settings.manage_notifications', 'settings.manage_email',
-        'audit_logs.access', 'audit_logs.view_activity', 'audit_logs.view_permission_changes', 'audit_logs.view_hr_manual_bookings', 'audit_logs.view_seat_reservations', 'audit_logs.view_email_log',
+        'audit_logs.access', 'audit_logs.view_activity', 'audit_logs.view_permission_changes', 'audit_logs.view_hr_manual_bookings', 'audit_logs.view_seat_reservations', 'audit_logs.view_email_log', 'audit_logs.view_hod_seat_assignments',
     ],
     'General Manager': [
         'dashboard.access', 'dashboard.view_manager',
@@ -44,11 +44,11 @@ export const DEFAULT_ROLE_PERMISSIONS = {
         'dashboard.access', 'dashboard.view_manager',
         'approval_workflow.access', 'approval_workflow.view_history',
         'approval_workflow.manage_own_availability', 'approval_workflow.executive_override',
-        'security.access', 'security.manage_waiting_list',
+        'security.access', 'security.manage_waiting_list', 'security.manage_manifest', 'security.assign_hod_seats',
         'reports.access', 'reports.view_admin', 'reports.view_manager',
         'booking.access', 'booking.view_all',
         'booking.hr_manual_booking', 'booking.override_capacity', 'booking.override_approval', 'booking.manage_seat_reservations',
-        'audit_logs.access', 'audit_logs.view_hr_manual_bookings', 'audit_logs.view_seat_reservations',
+        'audit_logs.access', 'audit_logs.view_hr_manual_bookings', 'audit_logs.view_seat_reservations', 'audit_logs.view_hod_seat_assignments',
     ],
     'Transport Coordinator': [
         'dashboard.access', 'dashboard.view_transport',
@@ -64,6 +64,6 @@ export const DEFAULT_ROLE_PERMISSIONS = {
     ],
     Security: [
         'dashboard.access', 'dashboard.view_security',
-        'security.access', 'security.manage_manifest', 'security.manage_waiting_list',
+        'security.access', 'security.manage_manifest', 'security.manage_waiting_list', 'security.assign_hod_seats',
     ],
 };

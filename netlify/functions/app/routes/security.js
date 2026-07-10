@@ -5,11 +5,19 @@
 
 import { db, unwrap } from '../db.js';
 import { requirePermission } from '../guards.js';
+import { hasPermission } from '../permissions.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
 import { getRemainingSeatsBatch } from '../seats.js';
 import { getWaitingList, promoteWaitingListBooking, recordMovement } from '../security.js';
+import {
+    getHodReservationsForScheduleDate,
+    searchHodSeatCandidates,
+    assignEmployeeToHodSeat,
+    reassignEmployeeToHodSeat,
+    releaseHodSeatAssignment,
+} from '../hodSeatAssignment.js';
 import { getActiveResorts } from '../refData.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
@@ -19,6 +27,21 @@ import { ROLE_ADMIN, ROLE_HR } from '../session.js';
 
 const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MANIFEST_STATUSES = ['Approved', 'Checked-In', 'Departed', 'Arrived', 'Completed'];
+
+const HOD_ACTION_SUCCESS = {
+    assign_hod_seat: 'Employee assigned to reserved seat.',
+    reassign_hod_seat: 'Reserved seat reassigned to the new employee.',
+    release_hod_seat: 'Reserved seat released - it is now available for another employee.',
+};
+const HOD_ACTION_ERROR = {
+    reservation_not_available: 'This reservation is no longer available for this date.',
+    employee_not_in_department: 'That employee is not an active employee in this seat\'s department.',
+    seat_unavailable: 'No reserved seats remain available.',
+    already_assigned: 'This employee is already assigned to a reserved seat for this schedule.',
+    not_hod_assignment: 'This booking is not an HOD reserved-seat assignment.',
+    too_late_to_reassign: 'This passenger has already departed - it is too late to reassign.',
+    too_late_to_release: 'This passenger has already departed - it is too late to release.',
+};
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -45,7 +68,7 @@ async function manifestFor(scheduleId, travelDate) {
         await db()
             .from('bookings')
             .select(
-                'booking_id, seats, checked_in_at, departed_at, arrived_at, users!bookings_user_id_fkey(full_name, employee_id, designation, resort_id, departments(department_name), resorts(resort_name)), booking_status!inner(status_name, badge_color)'
+                'booking_id, seats, checked_in_at, departed_at, arrived_at, booking_method, source_reservation_id, users!bookings_user_id_fkey(full_name, employee_id, designation, resort_id, departments(department_name), resorts(resort_name)), booking_status!inner(status_name, badge_color)'
             )
             .eq('schedule_id', scheduleId)
             .eq('travel_date', travelDate)
@@ -206,7 +229,7 @@ ${raw(searchResultsHtml)}
 </div>`;
 }
 
-function manifestActionButtons({ booking, csrfToken, date, scheduleId }) {
+function manifestActionButtons({ booking, csrfToken, date, scheduleId, canAssignHodSeats }) {
     const status = booking.booking_status.status_name;
     const form = (action, label, btnClass, confirmMsg) => `
         <form method="post" class="d-inline"${confirmMsg ? ` data-confirm="${h(confirmMsg)}"` : ''}>
@@ -214,19 +237,94 @@ function manifestActionButtons({ booking, csrfToken, date, scheduleId }) {
             <input type="hidden" name="date" value="${date}"><input type="hidden" name="schedule_id" value="${scheduleId}">
             <button class="btn btn-sm ${btnClass}">${label}</button>
         </form>`;
+
+    let base = '';
     if (status === 'Approved') {
-        return raw(form('check_in', 'Check-In', 'btn-outline-primary') + form('no_show', 'No Show', 'btn-outline-danger', 'Mark this passenger as a no-show? Their seat will be released.'));
+        base = form('check_in', 'Check-In', 'btn-outline-primary') + form('no_show', 'No Show', 'btn-outline-danger', 'Mark this passenger as a no-show? Their seat will be released.');
+    } else if (status === 'Checked-In') {
+        base = form('departed', 'Mark Departed', 'btn-outline-success') + form('no_show', 'No Show', 'btn-outline-danger', 'Mark this passenger as a no-show? Their seat will be released.');
+    } else if (status === 'Departed') {
+        base = form('arrived', 'Mark Arrived', 'btn-outline-info');
     }
-    if (status === 'Checked-In') {
-        return raw(form('departed', 'Mark Departed', 'btn-outline-success') + form('no_show', 'No Show', 'btn-outline-danger', 'Mark this passenger as a no-show? Their seat will be released.'));
+
+    // Reassign/Release are only for HOD-assigned bookings, only before
+    // departure, and only for users who hold the narrower assignment
+    // permission (layered on top of the page's own manifest permission).
+    let hodExtra = '';
+    if (canAssignHodSeats && booking.booking_method === 'hod_seat_assignment' && ['Approved', 'Checked-In'].includes(status)) {
+        hodExtra =
+            `<button type="button" class="btn btn-sm btn-outline-warning" data-bs-toggle="modal" data-bs-target="#hodModal${booking.source_reservation_id}" data-reassign-booking-id="${booking.booking_id}">Reassign</button>` +
+            form('release_hod_seat', 'Release', 'btn-outline-secondary', 'Release this reserved seat? The employee will be removed from this booking and the seat will become available for another employee.');
     }
-    if (status === 'Departed') {
-        return raw(form('arrived', 'Mark Arrived', 'btn-outline-info'));
-    }
-    return raw('<span class="text-muted small">-</span>');
+
+    const combined = base + hodExtra;
+    return combined ? raw(combined) : raw('<span class="text-muted small">-</span>');
 }
 
-async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csrfToken }) {
+/** Assign/Reassign modal for one HOD reservation - shared between the "Assign" button (HOD Reserved Seats card) and each manifest row's "Reassign" button. */
+function hodSeatModalHtml({ reservation, candidates, csrfToken, date, scheduleId }) {
+    const optionsHtml = candidates
+        .map((c) => {
+            const suffix = c.alreadyAssignedElsewhere
+                ? ' - already assigned to a reserved seat for this schedule'
+                : c.hasExistingBooking
+                  ? ' - already has a booking for this schedule'
+                  : '';
+            return `<option value="${c.user_id}" data-search="${h(`${c.full_name} ${c.employee_id}`.toLowerCase())}" ${c.alreadyAssignedElsewhere ? 'disabled' : ''}>${h(c.full_name)} (${h(c.employee_id)})${c.designation ? ` - ${h(c.designation)}` : ''}${h(suffix)}</option>`;
+        })
+        .join('');
+
+    return `<div class="modal fade" id="hodModal${reservation.reservationId}" tabindex="-1"><div class="modal-dialog"><form method="post" class="modal-content">
+    ${csrfField(csrfToken)}
+    <input type="hidden" name="action" value="assign_hod_seat" class="hod-action-field">
+    <input type="hidden" name="booking_id" value="" class="hod-booking-id-field">
+    <input type="hidden" name="reservation_id" value="${reservation.reservationId}">
+    <input type="hidden" name="schedule_id" value="${scheduleId}">
+    <input type="hidden" name="date" value="${date}">
+    <div class="modal-header"><h5 class="modal-title hod-modal-title"><i class="bi bi-person-plus"></i> Assign Employee - ${h(reservation.departmentName)}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+        <div class="mb-2"><input type="text" class="form-control hod-search-input" placeholder="Search Employee ID or Name"></div>
+        <select name="employee_user_id" size="8" class="form-select hod-candidate-select" required>${optionsHtml}</select>
+        <div class="mb-0 mt-2"><label class="form-label">Remarks (optional)</label><textarea name="remarks" class="form-control" rows="2"></textarea></div>
+    </div>
+    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Confirm</button></div>
+</form></div></div>`;
+}
+
+/** Filters options by search text and, on Reassign, swaps the form to reassign mode - no AJAX, matches this codebase's existing no-typeahead search pattern. */
+const HOD_MODAL_SCRIPT = `
+(function () {
+    document.querySelectorAll('.modal[id^="hodModal"]').forEach(function (modal) {
+        var searchInput = modal.querySelector('.hod-search-input');
+        var select = modal.querySelector('.hod-candidate-select');
+        var actionField = modal.querySelector('.hod-action-field');
+        var bookingIdField = modal.querySelector('.hod-booking-id-field');
+        var titleEl = modal.querySelector('.hod-modal-title');
+        if (searchInput && select) {
+            searchInput.addEventListener('input', function () {
+                var needle = searchInput.value.toLowerCase();
+                Array.prototype.forEach.call(select.options, function (opt) {
+                    opt.hidden = needle && opt.dataset.search.indexOf(needle) === -1;
+                });
+            });
+        }
+        modal.addEventListener('show.bs.modal', function (e) {
+            var trigger = e.relatedTarget;
+            var reassignBookingId = trigger ? trigger.getAttribute('data-reassign-booking-id') : null;
+            if (reassignBookingId) {
+                actionField.value = 'reassign_hod_seat';
+                bookingIdField.value = reassignBookingId;
+                if (titleEl) titleEl.innerHTML = '<i class="bi bi-arrow-repeat"></i> Reassign Reserved Seat';
+            } else {
+                actionField.value = 'assign_hod_seat';
+                bookingIdField.value = '';
+                if (titleEl) titleEl.innerHTML = '<i class="bi bi-person-plus"></i> Assign Employee';
+            }
+        });
+    });
+})();`;
+
+async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csrfToken, canAssignHodSeats }) {
     let manifest = scheduleId ? await manifestFor(scheduleId, date) : [];
     if (resortFilter) manifest = manifest.filter((p) => p.users.resort_id === resortFilter);
     const resorts = await getActiveResorts();
@@ -234,6 +332,48 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
         .map((s) => `<option value="${s.schedule_id}" ${scheduleId === s.schedule_id ? 'selected' : ''}>${h(s.ferry_routes.direction)} - ${h(formatTime(s.departure_time))}</option>`)
         .join('');
     const resortOptions = resorts.map((r) => `<option value="${r.resort_id}" ${resortFilter === r.resort_id ? 'selected' : ''}>${h(r.resort_name)}</option>`).join('');
+
+    const hodReservations = scheduleId && canAssignHodSeats ? await getHodReservationsForScheduleDate(scheduleId, date) : [];
+    const hodCandidatesByReservation = new Map();
+    if (hodReservations.length) {
+        await Promise.all(
+            hodReservations.map(async (r) => {
+                hodCandidatesByReservation.set(r.reservationId, await searchHodSeatCandidates({ reservationId: r.reservationId, travelDate: date, needle: '' }));
+            })
+        );
+    }
+
+    const hodCardHtml = hodReservations.length
+        ? html`<div class="card shadow-sm mb-3">
+            <div class="card-header bg-white"><i class="bi bi-bookmark-star"></i> HOD Reserved Seats</div>
+            <div class="table-responsive"><table class="table table-hover mb-0 align-middle small">
+                <thead><tr><th>Department</th><th>Reserved</th><th>Assigned</th><th>Available</th><th>Currently Assigned</th><th>Actions</th></tr></thead>
+                <tbody>${raw(
+                    hodReservations
+                        .map((r) => {
+                            const assignedHtml = r.assignments.length
+                                ? r.assignments.map((a) => `${h(a.fullName)} (${h(a.employeeId)}) - ${h(a.statusName)}`).join('<br>')
+                                : '<span class="text-muted">None</span>';
+                            const assignBtn =
+                                r.seatsAvailable > 0
+                                    ? `<button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#hodModal${r.reservationId}">Assign</button>`
+                                    : '<span class="text-muted small">Full</span>';
+                            return `<tr>
+                            <td>${h(r.departmentName)}${r.contactName ? `<br><small class="text-muted">${h(r.contactName)}</small>` : ''}</td>
+                            <td>${r.seatsTotal}</td><td>${r.seatsAssigned}</td><td>${r.seatsAvailable}</td>
+                            <td>${assignedHtml}</td>
+                            <td>${assignBtn}</td>
+                        </tr>`;
+                        })
+                        .join('')
+                )}</tbody>
+            </table></div>
+        </div>`
+        : '';
+
+    const hodModalsHtml = hodReservations
+        .map((r) => hodSeatModalHtml({ reservation: r, candidates: hodCandidatesByReservation.get(r.reservationId) ?? [], csrfToken, date, scheduleId }))
+        .join('');
 
     const rowsHtml = manifest
         .map(
@@ -248,7 +388,7 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
             <td>${p.departed_at ? formatDateTime(p.departed_at) : '-'}</td>
             <td>${p.arrived_at ? formatDateTime(p.arrived_at) : '-'}</td>
             <td><span class="badge ${statusBadgeClass(p.booking_status.badge_color)}">${p.booking_status.status_name}</span></td>
-            <td class="text-nowrap">${manifestActionButtons({ booking: p, csrfToken, date, scheduleId })}</td>
+            <td class="text-nowrap">${manifestActionButtons({ booking: p, csrfToken, date, scheduleId, canAssignHodSeats })}</td>
         </tr>`
         )
         .map((r) => r.toString())
@@ -264,12 +404,15 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
         <div class="col-md-2 d-flex align-items-end"><button class="btn btn-outline-primary btn-sm w-100" type="submit">View</button></div>
     </form>
 </div></div>
+${raw(hodCardHtml)}
 ${scheduleId
     ? html`<div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover mb-0 align-middle small">
         <thead><tr><th>Employee ID</th><th>Name</th><th>Department</th><th>Designation</th><th>Resort</th><th>Booking Ref</th><th>Seats</th><th>Departed</th><th>Arrived</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody>${raw(rowsHtml || '<tr><td colspan="11" class="text-center text-muted py-4">No passengers on this manifest.</td></tr>')}</tbody>
     </table></div></div>`
-    : ''}`;
+    : ''}
+${raw(hodModalsHtml)}
+${hodReservations.length ? html`<script>${raw(HOD_MODAL_SCRIPT)}</script>` : ''}`;
 }
 
 async function waitingListPageBody({ date, scheduleId, schedules, resortFilter, csrfToken, canOverrideFifo }) {
@@ -346,7 +489,8 @@ export function registerSecurityRoutes(router) {
         const scheduleId = Number(url.searchParams.get('schedule_id') || 0);
         const resortFilter = Number(url.searchParams.get('resort') || 0);
         const schedules = await activeSchedulesForDate(date);
-        const body = await manifestPageBody({ date, scheduleId, schedules, resortFilter, csrfToken: auth.user.csrf });
+        const canAssignHodSeats = hasPermission(auth.user.perms, 'security.assign_hod_seats');
+        const body = await manifestPageBody({ date, scheduleId, schedules, resortFilter, csrfToken: auth.user.csrf, canAssignHodSeats });
         return renderShellForRequest({ request, auth, pageTitle: 'Passenger Manifest', path: '/security/manifest', bodyHtml: body });
     });
 
@@ -357,8 +501,38 @@ export function registerSecurityRoutes(router) {
         const form = await readFormBody(request);
         if (!verifyCsrf(user.csrf, form.csrf_token)) return notFound();
 
-        const bookingId = Number(form.booking_id);
         const action = form.action;
+        const backTo = `/security/manifest?date=${form.date || ''}&schedule_id=${form.schedule_id || ''}`;
+
+        if (['assign_hod_seat', 'reassign_hod_seat', 'release_hod_seat'].includes(action)) {
+            if (!hasPermission(user.perms, 'security.assign_hod_seats')) return notFound();
+            const remarks = (form.remarks || '').trim() || null;
+            let result;
+            if (action === 'assign_hod_seat') {
+                result = await assignEmployeeToHodSeat({
+                    reservationId: Number(form.reservation_id),
+                    travelDate: form.date,
+                    employeeUserId: Number(form.employee_user_id),
+                    assignedByUserId: user.user_id,
+                    remarks,
+                });
+            } else if (action === 'reassign_hod_seat') {
+                result = await reassignEmployeeToHodSeat({
+                    bookingId: Number(form.booking_id),
+                    newEmployeeUserId: Number(form.employee_user_id),
+                    assignedByUserId: user.user_id,
+                    remarks,
+                });
+            } else {
+                result = await releaseHodSeatAssignment({ bookingId: Number(form.booking_id), releasedByUserId: user.user_id, remarks });
+            }
+            await logActivity(user.user_id, `Security: ${action}`, `reservation_id=${form.reservation_id || ''} booking_id=${form.booking_id || ''}`, clientIp(request));
+            return redirectTo(backTo, {
+                cookies: [auth.setCookie, flashSetCookie(result.ok ? 'success' : 'error', result.ok ? HOD_ACTION_SUCCESS[action] : HOD_ACTION_ERROR[result.reason] || 'Could not complete this action.')].filter(Boolean),
+            });
+        }
+
+        const bookingId = Number(form.booking_id);
         if (!['check_in', 'departed', 'no_show', 'arrived'].includes(action)) {
             return redirectTo('/security/dashboard', { cookies: [auth.setCookie] });
         }
@@ -366,7 +540,7 @@ export function registerSecurityRoutes(router) {
         await recordMovement(bookingId, action, { officerId: user.user_id, remarks: (form.remarks || '').trim() || null });
         await logActivity(user.user_id, `Security: ${action}`, `booking_id=${bookingId}`, clientIp(request));
 
-        return redirectTo(`/security/manifest?date=${form.date || ''}&schedule_id=${form.schedule_id || ''}`, {
+        return redirectTo(backTo, {
             cookies: [auth.setCookie, flashSetCookie('success', 'Passenger status updated.')].filter(Boolean),
         });
     });
