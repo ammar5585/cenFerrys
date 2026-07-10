@@ -191,11 +191,15 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken }) {
     var nameField = document.getElementById('resNameField');
     if (!typeSelect) return;
     var departmentScopedTypes = ['department', 'hod'];
+    var departmentSelect = departmentField.querySelector('select');
     function sync() {
         employeeField.style.display = typeSelect.value === 'employee_specific' ? '' : 'none';
         var isDepartmentScoped = departmentScopedTypes.indexOf(typeSelect.value) !== -1;
         departmentField.style.display = isDepartmentScoped ? '' : 'none';
         nameField.style.display = isDepartmentScoped ? '' : 'none';
+        // Required only while shown - a hidden required field would block
+        // submission with no visible error explaining why.
+        departmentSelect.required = isDepartmentScoped;
     }
     typeSelect.addEventListener('change', sync);
     sync();
@@ -277,6 +281,13 @@ export function registerAdminSeatReservationsRoutes(router) {
             }
             if (endDate < startDate) {
                 return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'End date must be on or after the start date.')].filter(Boolean) });
+            }
+            // A Department/HOD reservation with no department set can never
+            // be assigned to anyone (Security's HOD seat assignment feature
+            // scopes candidate search to this exact department) - the form
+            // allows leaving it blank, so this must be enforced server-side.
+            if (DEPARTMENT_SCOPED_TYPES.includes(reservationType) && !departmentId) {
+                return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'Department is required for a Department or HOD reservation.')].filter(Boolean) });
             }
 
             const scheduleRows = unwrap(await db().from('ferry_schedule').select('ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1));

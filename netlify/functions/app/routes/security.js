@@ -354,12 +354,19 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
                             const assignedHtml = r.assignments.length
                                 ? r.assignments.map((a) => `${h(a.fullName)} (${h(a.employeeId)}) - ${h(a.statusName)}`).join('<br>')
                                 : '<span class="text-muted">None</span>';
+                            // A reservation created without a department set (the
+                            // create form's Department field allows "-- None --"
+                            // for department/hod types) has no candidate pool to
+                            // assign from - shown, but not actionable, rather than
+                            // offering a button that can never succeed.
                             const assignBtn =
-                                r.seatsAvailable > 0
-                                    ? `<button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#hodModal${r.reservationId}">Assign</button>`
-                                    : '<span class="text-muted small">Full</span>';
+                                r.departmentId == null
+                                    ? '<span class="text-danger small">No department set</span>'
+                                    : r.seatsAvailable > 0
+                                      ? `<button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#hodModal${r.reservationId}">Assign</button>`
+                                      : '<span class="text-muted small">Full</span>';
                             return `<tr>
-                            <td>${h(r.departmentName)}${r.contactName ? `<br><small class="text-muted">${h(r.contactName)}</small>` : ''}</td>
+                            <td>${r.departmentId == null ? '<span class="text-danger">No department set</span>' : h(r.departmentName)}${r.contactName ? `<br><small class="text-muted">${h(r.contactName)}</small>` : ''}</td>
                             <td>${r.seatsTotal}</td><td>${r.seatsAssigned}</td><td>${r.seatsAvailable}</td>
                             <td>${assignedHtml}</td>
                             <td>${assignBtn}</td>
@@ -372,6 +379,7 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
         : '';
 
     const hodModalsHtml = hodReservations
+        .filter((r) => r.departmentId != null)
         .map((r) => hodSeatModalHtml({ reservation: r, candidates: hodCandidatesByReservation.get(r.reservationId) ?? [], csrfToken, date, scheduleId }))
         .join('');
 

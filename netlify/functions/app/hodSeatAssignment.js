@@ -125,7 +125,13 @@ export async function searchHodSeatCandidates({ reservationId, travelDate, needl
         await db().from('seat_reservations').select('department_id, schedule_id').eq('reservation_id', reservationId).limit(1)
     );
     const reservation = resRows[0];
-    if (!reservation) return [];
+    // A 'hod'/'department' reservation with no department set (a
+    // pre-existing gap in the reservation-create form, not enforced
+    // there) has no department-scoped candidate pool to search - rather
+    // than send department_id: null into a PostgREST .eq() filter
+    // (which errors, since it tries to parse "null" as an integer
+    // literal instead of emitting IS NULL), just report no candidates.
+    if (!reservation || reservation.department_id == null) return [];
 
     const candidates = unwrap(
         await db()
