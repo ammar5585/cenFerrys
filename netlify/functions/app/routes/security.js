@@ -17,8 +17,9 @@ import {
     assignEmployeeToHodSeat,
     reassignEmployeeToHodSeat,
     releaseHodSeatAssignment,
+    setHodReservationDepartment,
 } from '../hodSeatAssignment.js';
-import { getActiveResorts } from '../refData.js';
+import { getActiveResorts, getActiveDepartments } from '../refData.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
@@ -32,6 +33,7 @@ const HOD_ACTION_SUCCESS = {
     assign_hod_seat: 'Employee assigned to reserved seat.',
     reassign_hod_seat: 'Reserved seat reassigned to the new employee.',
     release_hod_seat: 'Reserved seat released - it is now available for another employee.',
+    set_hod_department: 'Department set for this reserved seat.',
 };
 const HOD_ACTION_ERROR = {
     reservation_not_available: 'This reservation is no longer available for this date.',
@@ -41,6 +43,8 @@ const HOD_ACTION_ERROR = {
     not_hod_assignment: 'This booking is not an HOD reserved-seat assignment.',
     too_late_to_reassign: 'This passenger has already departed - it is too late to reassign.',
     too_late_to_release: 'This passenger has already departed - it is too late to release.',
+    department_already_set: 'This reservation already has a department set.',
+    invalid_department: 'Please choose a valid department.',
 };
 
 async function readFormBody(request) {
@@ -342,6 +346,8 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
             })
         );
     }
+    const departmentOptionsForSet =
+        hodReservations.some((r) => r.departmentId == null) ? (await getActiveDepartments()).map((d) => `<option value="${d.department_id}">${h(d.department_name)}</option>`).join('') : '';
 
     const hodCardHtml = hodReservations.length
         ? html`<div class="card shadow-sm mb-3">
@@ -351,22 +357,41 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
                 <tbody>${raw(
                     hodReservations
                         .map((r) => {
+                            // Each assigned employee gets its own Reassign/Release
+                            // inline, reusing the exact same shared modal/actions as
+                            // the manifest table below - reachable from either place.
                             const assignedHtml = r.assignments.length
-                                ? r.assignments.map((a) => `${h(a.fullName)} (${h(a.employeeId)}) - ${h(a.statusName)}`).join('<br>')
+                                ? r.assignments
+                                      .map((a) => {
+                                          const canManage = ['Approved', 'Checked-In'].includes(a.statusName);
+                                          const actions = canManage
+                                              ? ` <button type="button" class="btn btn-sm btn-outline-warning py-0" data-bs-toggle="modal" data-bs-target="#hodModal${r.reservationId}" data-reassign-booking-id="${a.bookingId}">Reassign</button>` +
+                                                `<form method="post" class="d-inline" data-confirm="Release this reserved seat? ${h(a.fullName)} will be removed from this booking.">${csrfField(csrfToken)}<input type="hidden" name="action" value="release_hod_seat"><input type="hidden" name="booking_id" value="${a.bookingId}"><input type="hidden" name="date" value="${date}"><input type="hidden" name="schedule_id" value="${scheduleId}"><button class="btn btn-sm btn-outline-secondary py-0">Release</button></form>`
+                                              : '';
+                                          return `<div class="mb-1">${h(a.fullName)} (${h(a.employeeId)}) - ${h(a.statusName)}${actions}</div>`;
+                                      })
+                                      .join('')
                                 : '<span class="text-muted">None</span>';
                             // A reservation created without a department set (the
                             // create form's Department field allows "-- None --"
                             // for department/hod types) has no candidate pool to
-                            // assign from - shown, but not actionable, rather than
-                            // offering a button that can never succeed.
+                            // assign from - let Security fix it inline rather than
+                            // needing an Admin/HR round-trip through Seat Reservations.
+                            const departmentCell =
+                                r.departmentId == null
+                                    ? `<form method="post" class="d-flex gap-1">${csrfField(csrfToken)}<input type="hidden" name="action" value="set_hod_department"><input type="hidden" name="reservation_id" value="${r.reservationId}"><input type="hidden" name="date" value="${date}"><input type="hidden" name="schedule_id" value="${scheduleId}">
+                                        <select name="department_id" class="form-select form-select-sm" required><option value="">-- Set department --</option>${departmentOptionsForSet}</select>
+                                        <button class="btn btn-sm btn-outline-primary">Save</button>
+                                    </form>`
+                                    : h(r.departmentName);
                             const assignBtn =
                                 r.departmentId == null
-                                    ? '<span class="text-danger small">No department set</span>'
+                                    ? '<span class="text-muted small">Set department first</span>'
                                     : r.seatsAvailable > 0
                                       ? `<button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#hodModal${r.reservationId}">Assign</button>`
                                       : '<span class="text-muted small">Full</span>';
                             return `<tr>
-                            <td>${r.departmentId == null ? '<span class="text-danger">No department set</span>' : h(r.departmentName)}${r.contactName ? `<br><small class="text-muted">${h(r.contactName)}</small>` : ''}</td>
+                            <td>${departmentCell}${r.contactName ? `<br><small class="text-muted">${h(r.contactName)}</small>` : ''}</td>
                             <td>${r.seatsTotal}</td><td>${r.seatsAssigned}</td><td>${r.seatsAvailable}</td>
                             <td>${assignedHtml}</td>
                             <td>${assignBtn}</td>
@@ -511,6 +536,19 @@ export function registerSecurityRoutes(router) {
 
         const action = form.action;
         const backTo = `/security/manifest?date=${form.date || ''}&schedule_id=${form.schedule_id || ''}`;
+
+        if (action === 'set_hod_department') {
+            if (!hasPermission(user.perms, 'security.assign_hod_seats')) return notFound();
+            const result = await setHodReservationDepartment({
+                reservationId: Number(form.reservation_id),
+                departmentId: Number(form.department_id) || 0,
+                setByUserId: user.user_id,
+            });
+            await logActivity(user.user_id, 'Security: set_hod_department', `reservation_id=${form.reservation_id || ''} department_id=${form.department_id || ''}`, clientIp(request));
+            return redirectTo(backTo, {
+                cookies: [auth.setCookie, flashSetCookie(result.ok ? 'success' : 'error', result.ok ? HOD_ACTION_SUCCESS[action] : HOD_ACTION_ERROR[result.reason] || 'Could not complete this action.')].filter(Boolean),
+            });
+        }
 
         if (['assign_hod_seat', 'reassign_hod_seat', 'release_hod_seat'].includes(action)) {
             if (!hasPermission(user.perms, 'security.assign_hod_seats')) return notFound();

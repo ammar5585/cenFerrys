@@ -169,6 +169,29 @@ export async function searchHodSeatCandidates({ reservationId, travelDate, needl
     }));
 }
 
+/**
+ * Fixes an HOD/department reservation that was created with no
+ * department (the create form allows leaving it blank) - only ever
+ * sets a currently-unset department, never changes one that's already
+ * configured. That stricter case stays HR/Admin-only via the existing
+ * Seat Reservations page, matching "Security cannot change department
+ * seat allocations" for reservations that are already properly set up.
+ */
+export async function setHodReservationDepartment({ reservationId, departmentId, setByUserId }) {
+    const rows = unwrap(
+        await db().from('seat_reservations').select('reservation_id, department_id, reservation_type').eq('reservation_id', reservationId).limit(1)
+    );
+    const reservation = rows[0];
+    if (!reservation || !RESERVABLE_TYPES.includes(reservation.reservation_type)) return { ok: false, reason: 'reservation_not_available' };
+    if (reservation.department_id != null) return { ok: false, reason: 'department_already_set' };
+
+    const deptRows = unwrap(await db().from('departments').select('department_id').eq('department_id', departmentId).limit(1));
+    if (!deptRows.length) return { ok: false, reason: 'invalid_department' };
+
+    unwrap(await db().from('seat_reservations').update({ department_id: departmentId }).eq('reservation_id', reservationId));
+    return { ok: true };
+}
+
 /** Loads a reservation with the joins every write path below needs (schedule/direction/department name). */
 async function loadReservationForWrite(reservationId) {
     const rows = unwrap(
