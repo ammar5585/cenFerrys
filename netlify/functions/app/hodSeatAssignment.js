@@ -169,13 +169,23 @@ export async function searchHodSeatCandidates({ reservationId, travelDate, needl
     }));
 }
 
+/** True if any non-cancelled/rejected/expired/no-show booking is linked to this reservation, on any date within its range. */
+async function reservationHasAnyActiveAssignment(reservationId) {
+    const rows = unwrap(
+        await db().from('bookings').select('booking_id, booking_status(status_name)').eq('source_reservation_id', reservationId)
+    );
+    return rows.some((r) => !OCCUPIED_EXCLUDED_STATUSES.includes(r.booking_status.status_name));
+}
+
 /**
- * Fixes an HOD/department reservation that was created with no
- * department (the create form allows leaving it blank) - only ever
- * sets a currently-unset department, never changes one that's already
- * configured. That stricter case stays HR/Admin-only via the existing
- * Seat Reservations page, matching "Security cannot change department
- * seat allocations" for reservations that are already properly set up.
+ * Sets or fixes an HOD/department reservation's department - either
+ * because the create form allowed leaving it blank, or because Security
+ * picked the wrong one and needs to correct it. Changing an
+ * already-set department is only allowed while no one is currently
+ * assigned to any seat on this reservation (any date in its range) -
+ * once someone is attached, it locks again, matching "Security cannot
+ * change department seat allocations" for a reservation that's
+ * actually in use.
  */
 export async function setHodReservationDepartment({ reservationId, departmentId, setByUserId }) {
     const rows = unwrap(
@@ -183,7 +193,10 @@ export async function setHodReservationDepartment({ reservationId, departmentId,
     );
     const reservation = rows[0];
     if (!reservation || !RESERVABLE_TYPES.includes(reservation.reservation_type)) return { ok: false, reason: 'reservation_not_available' };
-    if (reservation.department_id != null) return { ok: false, reason: 'department_already_set' };
+
+    if (reservation.department_id != null) {
+        if (await reservationHasAnyActiveAssignment(reservationId)) return { ok: false, reason: 'seats_already_assigned' };
+    }
 
     const deptRows = unwrap(await db().from('departments').select('department_id').eq('department_id', departmentId).limit(1));
     if (!deptRows.length) return { ok: false, reason: 'invalid_department' };

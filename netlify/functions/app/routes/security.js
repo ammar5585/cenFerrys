@@ -45,6 +45,7 @@ const HOD_ACTION_ERROR = {
     too_late_to_release: 'This passenger has already departed - it is too late to release.',
     department_already_set: 'This reservation already has a department set.',
     invalid_department: 'Please choose a valid department.',
+    seats_already_assigned: 'This reservation already has an employee assigned - release them before changing the department.',
 };
 
 async function readFormBody(request) {
@@ -347,7 +348,9 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
         );
     }
     const departmentOptionsForSet =
-        hodReservations.some((r) => r.departmentId == null) ? (await getActiveDepartments()).map((d) => `<option value="${d.department_id}">${h(d.department_name)}</option>`).join('') : '';
+        hodReservations.some((r) => r.departmentId == null || r.seatsAssigned === 0)
+            ? (await getActiveDepartments()).map((d) => `<option value="${d.department_id}">${h(d.department_name)}</option>`).join('')
+            : '';
 
     const hodCardHtml = hodReservations.length
         ? html`<div class="card shadow-sm mb-3">
@@ -377,13 +380,23 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
                             // for department/hod types) has no candidate pool to
                             // assign from - let Security fix it inline rather than
                             // needing an Admin/HR round-trip through Seat Reservations.
+                            // Once a department IS set, it can still be corrected
+                            // (e.g. the wrong one was picked) as long as no one is
+                            // assigned yet - it locks again once someone is.
+                            const deptForm = (label) =>
+                                `<form method="post" class="d-flex gap-1">${csrfField(csrfToken)}<input type="hidden" name="action" value="set_hod_department"><input type="hidden" name="reservation_id" value="${r.reservationId}"><input type="hidden" name="date" value="${date}"><input type="hidden" name="schedule_id" value="${scheduleId}">
+                                        <select name="department_id" class="form-select form-select-sm" required><option value="">-- ${h(label)} --</option>${departmentOptionsForSet}</select>
+                                        <button class="btn btn-sm btn-outline-primary">Save</button>
+                                    </form>`;
                             const departmentCell =
                                 r.departmentId == null
-                                    ? `<form method="post" class="d-flex gap-1">${csrfField(csrfToken)}<input type="hidden" name="action" value="set_hod_department"><input type="hidden" name="reservation_id" value="${r.reservationId}"><input type="hidden" name="date" value="${date}"><input type="hidden" name="schedule_id" value="${scheduleId}">
-                                        <select name="department_id" class="form-select form-select-sm" required><option value="">-- Set department --</option>${departmentOptionsForSet}</select>
-                                        <button class="btn btn-sm btn-outline-primary">Save</button>
-                                    </form>`
-                                    : h(r.departmentName);
+                                    ? deptForm('Set department')
+                                    : r.seatsAssigned === 0
+                                      ? `<div>${h(r.departmentName)}
+                                        <a href="#" class="small ms-1" onclick="document.getElementById('changeDept${r.reservationId}').classList.toggle('d-none'); return false;">Change</a>
+                                        <div id="changeDept${r.reservationId}" class="d-none mt-1">${deptForm('Change department')}</div>
+                                    </div>`
+                                      : h(r.departmentName);
                             const assignBtn =
                                 r.departmentId == null
                                     ? '<span class="text-muted small">Set department first</span>'
