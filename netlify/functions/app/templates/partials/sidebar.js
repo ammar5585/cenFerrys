@@ -79,11 +79,10 @@ export function renderSidebar(permsHex, currentPath, isDeptApprover = false, com
         );
     }
 
-    if (can('approval_workflow.view_department_requests')) {
-        links.push(
-            html`<div class="nav-heading">Department</div>`,
-            navLink('/manager/department_requests', 'bi-people', 'Department Requests', currentPath)
-        );
+    if (can('approval_workflow.view_department_requests') || can('approval_workflow.manage_reserved_seats')) {
+        links.push(html`<div class="nav-heading">Department</div>`);
+        if (can('approval_workflow.view_department_requests')) links.push(navLink('/manager/department_requests', 'bi-people', 'Department Requests', currentPath));
+        if (can('approval_workflow.manage_reserved_seats')) links.push(navLink('/manager/reserved_seats', 'bi-bookmark-star', 'Reserved Seats', currentPath));
     }
 
     if (can('dashboard.view_transport')) {

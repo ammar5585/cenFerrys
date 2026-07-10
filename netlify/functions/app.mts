@@ -27,6 +27,7 @@ import { registerAdminEmailSettingsRoutes } from './app/routes/admin_email_setti
 import { registerReportsRoutes } from './app/routes/reports.js';
 import { registerHrOverviewRoutes } from './app/routes/hr_overview.js';
 import { registerManagerExtraRoutes } from './app/routes/manager_extra.js';
+import { registerHodReservationRoutes } from './app/routes/hod_reservations.js';
 import { registerTransportSchedulesViewRoutes } from './app/routes/transport_schedules_view.js';
 import { registerMiscRoutes } from './app/routes/misc.js';
 import { registerSecurityRoutes } from './app/routes/security.js';
@@ -56,6 +57,7 @@ registerAdminEmailSettingsRoutes(router);
 registerReportsRoutes(router);
 registerHrOverviewRoutes(router);
 registerManagerExtraRoutes(router);
+registerHodReservationRoutes(router);
 registerTransportSchedulesViewRoutes(router);
 registerMiscRoutes(router);
 registerSecurityRoutes(router);

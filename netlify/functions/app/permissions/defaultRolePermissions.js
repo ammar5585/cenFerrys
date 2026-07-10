@@ -56,7 +56,7 @@ export const DEFAULT_ROLE_PERMISSIONS = {
     ],
     'Department Manager': [
         'dashboard.access', 'dashboard.view_manager',
-        'approval_workflow.access', 'approval_workflow.view_department_requests',
+        'approval_workflow.access', 'approval_workflow.view_department_requests', 'approval_workflow.manage_reserved_seats',
     ],
     Staff: [
         'dashboard.access', 'dashboard.view_staff',

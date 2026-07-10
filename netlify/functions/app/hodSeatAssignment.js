@@ -138,7 +138,7 @@ export async function searchHodSeatCandidates({ reservationId, travelDate, needl
     const candidates = unwrap(
         await db()
             .from('users')
-            .select('user_id, employee_id, full_name, designation')
+            .select('user_id, employee_id, full_name, designation, resort_id')
             .eq('status', 'active')
             .eq('department_id', reservation.department_id)
             .order('full_name')
@@ -210,13 +210,15 @@ export async function setHodReservationDepartment({ reservationId, departmentId,
 /**
  * Deletes (soft - sets status to 'cancelled', matching how every other
  * reservation removal in this app already works, never a hard SQL
- * DELETE) an HOD reservation created from Security's manifest page.
- * Administrator-only (checked by the caller, not here) and only while
- * no one is currently assigned - the same "seat must be empty" guard
- * used for changing a department, so an active assignment can't be
- * silently orphaned.
+ * DELETE) an HOD reservation. Authorization is entirely the caller's
+ * responsibility (not checked here) - used both by Security's manifest
+ * page (Administrator-only there) and the HOD self-service page
+ * (own-department-only there), each passing its own `reason` for the
+ * audit trail. Only while no one is currently assigned - the same "seat
+ * must be empty" guard used for changing a department, so an active
+ * assignment can't be silently orphaned.
  */
-export async function deleteHodReservation({ reservationId, deletedByUserId }) {
+export async function deleteHodReservation({ reservationId, deletedByUserId, reason = 'Deleted by Administrator from the Security manifest page' }) {
     const rows = unwrap(
         await db()
             .from('seat_reservations')
@@ -243,7 +245,7 @@ export async function deleteHodReservation({ reservationId, deletedByUserId }) {
             end_date: reservation.end_date,
             action: 'cancelled',
             actor_user_id: deletedByUserId,
-            reason: 'Deleted by Administrator from the Security manifest page',
+            reason,
         })
     );
 
