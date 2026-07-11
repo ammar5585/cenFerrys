@@ -99,7 +99,7 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken, isA
         getActiveResorts(),
         getAllDepartments(),
         db().from('users').select('user_id, full_name, employee_id').eq('status', 'active').order('full_name').then(unwrap),
-        db().from('ferry_schedule').select('schedule_id, departure_time, capacity, ferry_routes(route_name, direction)').eq('status', 'active').order('departure_time').then(unwrap),
+        db().from('ferry_schedule').select('schedule_id, departure_time, capacity, service_name, ferry_routes(route_name, direction)').eq('status', 'active').order('departure_time').then(unwrap),
     ]);
 
     const typeLabel = (v) => RESERVATION_TYPES.find((t) => t.value === v)?.label ?? v;
@@ -171,7 +171,7 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken, isA
     const departmentOptionsHtml = departments.map((d) => `<option value="${d.department_id}">${h(d.department_name)}</option>`).join('');
     const resortOptionsHtml = resorts.map((r) => `<option value="${r.resort_id}">${h(r.resort_name)}</option>`).join('');
     const scheduleOptionsHtml = schedules
-        .map((s) => `<option value="${s.schedule_id}">${h(s.ferry_routes.route_name)} - ${h(s.ferry_routes.direction)} - ${h(formatTime(s.departure_time))}</option>`)
+        .map((s) => `<option value="${s.schedule_id}">${h(s.ferry_routes?.route_name ?? s.service_name ?? '-')} - ${h(s.ferry_routes?.direction ?? '')} - ${h(formatTime(s.departure_time))}</option>`)
         .join('');
 
     const createModalHtml = `<div class="modal fade" id="createReservationModal" tabindex="-1"><div class="modal-dialog modal-lg"><form method="post" class="modal-content">
@@ -234,7 +234,7 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken, isA
     const bulkScheduleCheckboxesHtml = schedules
         .map(
             (s) =>
-                `<div class="form-check"><input class="form-check-input bulk-schedule-checkbox" type="checkbox" name="schedule_ids" value="${s.schedule_id}" id="bulkSched${s.schedule_id}"><label class="form-check-label" for="bulkSched${s.schedule_id}">${h(s.ferry_routes.route_name)} - ${h(s.ferry_routes.direction)} - ${h(formatTime(s.departure_time))} <span class="text-muted small">(capacity ${s.capacity})</span></label></div>`
+                `<div class="form-check"><input class="form-check-input bulk-schedule-checkbox" type="checkbox" name="schedule_ids" value="${s.schedule_id}" id="bulkSched${s.schedule_id}"><label class="form-check-label" for="bulkSched${s.schedule_id}">${h(s.ferry_routes?.route_name ?? s.service_name ?? '-')} - ${h(s.ferry_routes?.direction ?? '')} - ${h(formatTime(s.departure_time))} <span class="text-muted small">(capacity ${s.capacity})</span></label></div>`
         )
         .join('');
     const bulkWeekdayCheckboxesHtml = WEEKDAY_OPTIONS.map(

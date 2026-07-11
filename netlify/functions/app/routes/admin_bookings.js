@@ -92,7 +92,7 @@ async function bookingsPageBody({ dateFrom, dateTo, statusFilter, deptFilter, re
         // the other two are genuinely new round-trips, fetched concurrently.
         const [activeUsersWithResort, schedulesForHr] = await Promise.all([
             db().from('users').select('user_id, full_name, employee_id, resort_id').eq('status', 'active').order('full_name').then(unwrap),
-            db().from('ferry_schedule').select('schedule_id, departure_time, ferry_routes(route_name, direction)').eq('status', 'active').order('departure_time').then(unwrap),
+            db().from('ferry_schedule').select('schedule_id, departure_time, service_name, ferry_routes(route_name, direction)').eq('status', 'active').order('departure_time').then(unwrap),
         ]);
         hrModalHtml = `<div class="modal fade" id="hrManualBookingModal" tabindex="-1"><div class="modal-dialog"><form method="post" class="modal-content">
     ${csrfField(csrfToken)}<input type="hidden" name="action" value="hr_manual_booking">
@@ -107,7 +107,7 @@ async function bookingsPageBody({ dateFrom, dateTo, statusFilter, deptFilter, re
             ${activeUsersWithResort.map((u) => `<option value="${u.user_id}" data-resort-id="${u.resort_id ?? ''}">${h(u.full_name)} (${h(u.employee_id)})</option>`).join('')}
         </select></div>
         <div class="mb-3"><label class="form-label">Ferry Schedule</label><select name="schedule_id" class="form-select" required>
-            ${schedulesForHr.map((s) => `<option value="${s.schedule_id}">${h(s.ferry_routes.route_name)} - ${h(s.ferry_routes.direction)} - ${h(formatTime(s.departure_time))}</option>`).join('')}
+            ${schedulesForHr.map((s) => `<option value="${s.schedule_id}">${h(s.ferry_routes?.route_name ?? s.service_name ?? '-')} - ${h(s.ferry_routes?.direction ?? '')} - ${h(formatTime(s.departure_time))}</option>`).join('')}
         </select></div>
         <div class="mb-3"><label class="form-label">Travel Date</label><input type="date" name="travel_date" class="form-control" required value="${new Date().toISOString().slice(0, 10)}"></div>
         <div class="mb-3"><label class="form-label">Seats</label><input type="number" name="seats" class="form-control" min="1" value="1" required></div>
@@ -171,8 +171,8 @@ ${canAdminOverride
                 .join('')
         )}</select></div>
         <div class="mb-3"><label class="form-label">Ferry Schedule</label><select name="schedule_id" class="form-select" required>${raw(
-            unwrap(await db().from('ferry_schedule').select('schedule_id, departure_time, ferry_routes(direction)').eq('status', 'active').order('departure_time'))
-                .map((s) => `<option value="${s.schedule_id}">${h(s.ferry_routes.direction)} - ${h(formatTime(s.departure_time))}</option>`)
+            unwrap(await db().from('ferry_schedule').select('schedule_id, departure_time, service_name, ferry_routes(direction)').eq('status', 'active').order('departure_time'))
+                .map((s) => `<option value="${s.schedule_id}">${h(s.ferry_routes?.direction ?? s.service_name ?? '-')} - ${h(formatTime(s.departure_time))}</option>`)
                 .join('')
         )}</select></div>
         <div class="mb-3"><label class="form-label">Travel Date</label><input type="date" name="travel_date" class="form-control" required value="${new Date().toISOString().slice(0, 10)}"></div>
@@ -234,8 +234,11 @@ export function registerAdminBookingsRoutes(router) {
             const purpose = (form.purpose || '').trim() || 'Admin booking';
             const remarks = (form.remarks || '').trim() || null;
 
-            const scheduleRows = unwrap(await db().from('ferry_schedule').select('ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1));
-            const direction = scheduleRows[0]?.ferry_routes?.direction;
+            // A Ferry Service (admin_ferry_services.js) has no ferry_routes
+            // row at all - route_id is NULL by design - so this join comes
+            // back null for one; service_name is the fallback.
+            const scheduleRows = unwrap(await db().from('ferry_schedule').select('service_name, ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1));
+            const direction = scheduleRows[0]?.ferry_routes?.direction || scheduleRows[0]?.service_name || null;
             const approvedId = await getStatusId('Approved');
 
             const inserted = unwrap(
@@ -294,13 +297,14 @@ export function registerAdminBookingsRoutes(router) {
             const employee = employeeRows[0];
 
             const scheduleRows = unwrap(
-                await db().from('ferry_schedule').select('departure_time, ferry_routes(direction)').eq('schedule_id', scheduleId).eq('status', 'active').limit(1)
+                await db().from('ferry_schedule').select('departure_time, service_name, ferry_routes(direction)').eq('schedule_id', scheduleId).eq('status', 'active').limit(1)
             );
             if (!scheduleRows.length) {
                 return redirectTo('/admin/bookings', { cookies: [auth.setCookie, flashSetCookie('error', 'Ferry schedule not found.')].filter(Boolean) });
             }
             const schedule = scheduleRows[0];
-            const direction = schedule.ferry_routes.direction;
+            // Same Ferry-Service fallback as override_booking above.
+            const direction = schedule.ferry_routes?.direction || schedule.service_name || null;
 
             const waitingListStatusId = await getStatusId('Waiting List');
             let booking;

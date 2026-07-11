@@ -68,7 +68,7 @@ async function activeSchedulesForDate(travelDate) {
     const rows = unwrap(
         await db()
             .from('ferry_schedule')
-            .select('schedule_id, departure_time, capacity, weekdays, ferry_routes(direction)')
+            .select('schedule_id, departure_time, capacity, weekdays, service_name, ferry_routes(direction)')
             .eq('status', 'active')
             .order('departure_time', { ascending: true })
     );
@@ -156,7 +156,7 @@ async function securityDashboardBody({ fullName, search }) {
             (t) => html`<li class="dash-todo-item">
             <span class="dash-todo-dot ${t.completed ? 'bg-success' : 'bg-primary'}"></span>
             <div class="dash-todo-body">
-                <div class="dash-todo-title">${formatTime(t.departure_time)} &middot; ${t.ferry_routes.direction}</div>
+                <div class="dash-todo-title">${formatTime(t.departure_time)} &middot; ${t.ferry_routes?.direction ?? t.service_name ?? '-'}</div>
                 <div class="dash-todo-meta">${t.manifestCount} on manifest${t.waitingCount ? ` &middot; ${t.waitingCount} waiting` : ''}${t.completed ? ' &middot; Completed' : ''}</div>
             </div>
             <a href="/security/manifest?date=${today}&schedule_id=${t.schedule_id}" class="btn btn-sm btn-outline-primary">Manifest</a>
@@ -173,7 +173,7 @@ async function securityDashboardBody({ fullName, search }) {
             await db()
                 .from('bookings')
                 .select(
-                    'booking_id, travel_date, seats, users!bookings_user_id_fkey(full_name, employee_id, departments(department_name), resorts(resort_name)), ferry_schedule(departure_time, ferry_routes(direction)), booking_status(status_name, badge_color)'
+                    'booking_id, travel_date, seats, users!bookings_user_id_fkey(full_name, employee_id, departments(department_name), resorts(resort_name)), ferry_schedule(departure_time, service_name, ferry_routes(direction)), booking_status(status_name, badge_color)'
                 )
                 .gte('travel_date', today)
                 .order('travel_date', { ascending: true })
@@ -186,7 +186,7 @@ async function securityDashboardBody({ fullName, search }) {
                     b.users.full_name.toLowerCase().includes(needle) ||
                     (b.users.departments?.department_name ?? '').toLowerCase().includes(needle) ||
                     (b.users.resorts?.resort_name ?? '').toLowerCase().includes(needle) ||
-                    b.ferry_schedule.ferry_routes.direction.toLowerCase().includes(needle) ||
+                    (b.ferry_schedule.ferry_routes?.direction ?? b.ferry_schedule.service_name ?? '').toLowerCase().includes(needle) ||
                     `bk-${b.booking_id}`.includes(needle)
             )
             .slice(0, 50);
@@ -196,7 +196,7 @@ async function securityDashboardBody({ fullName, search }) {
                 <td>${b.users.employee_id}</td><td>${b.users.full_name}</td><td>${b.users.departments?.department_name ?? '-'}</td>
                 <td>${b.users.resorts?.resort_name ?? '-'}</td><td>BK-${b.booking_id}</td>
                 <td>${formatDate(b.travel_date)} ${formatTime(b.ferry_schedule.departure_time)}</td>
-                <td>${b.ferry_schedule.ferry_routes.direction}</td>
+                <td>${b.ferry_schedule.ferry_routes?.direction ?? b.ferry_schedule.service_name ?? '-'}</td>
                 <td><span class="badge ${statusBadgeClass(b.booking_status.badge_color)}">${b.booking_status.status_name}</span></td>
             </tr>`
             )
@@ -342,7 +342,7 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
     if (resortFilter) manifest = manifest.filter((p) => p.users.resort_id === resortFilter);
     const resorts = await getActiveResorts();
     const scheduleOptions = schedules
-        .map((s) => `<option value="${s.schedule_id}" ${scheduleId === s.schedule_id ? 'selected' : ''}>${h(s.ferry_routes.direction)} - ${h(formatTime(s.departure_time))}</option>`)
+        .map((s) => `<option value="${s.schedule_id}" ${scheduleId === s.schedule_id ? 'selected' : ''}>${h(s.ferry_routes?.direction ?? s.service_name ?? '-')} - ${h(formatTime(s.departure_time))}</option>`)
         .join('');
     const resortOptions = resorts.map((r) => `<option value="${r.resort_id}" ${resortFilter === r.resort_id ? 'selected' : ''}>${h(r.resort_name)}</option>`).join('');
 
@@ -511,7 +511,7 @@ async function waitingListPageBody({ date, scheduleId, schedules, resortFilter, 
     if (resortFilter) waitingList = waitingList.filter((b) => b.users.resort_id === resortFilter);
     const resorts = await getActiveResorts();
     const scheduleOptions = schedules
-        .map((s) => `<option value="${s.schedule_id}" ${scheduleId === s.schedule_id ? 'selected' : ''}>${h(s.ferry_routes.direction)} - ${h(formatTime(s.departure_time))}</option>`)
+        .map((s) => `<option value="${s.schedule_id}" ${scheduleId === s.schedule_id ? 'selected' : ''}>${h(s.ferry_routes?.direction ?? s.service_name ?? '-')} - ${h(formatTime(s.departure_time))}</option>`)
         .join('');
     const resortOptions = resorts.map((r) => `<option value="${r.resort_id}" ${resortFilter === r.resort_id ? 'selected' : ''}>${h(r.resort_name)}</option>`).join('');
 

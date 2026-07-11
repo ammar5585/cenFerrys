@@ -19,6 +19,7 @@ import { redirectTo, htmlResponse, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatDate, formatDateTime, formatTime, statusBadgeClass, greeting } from '../format.js';
 import { ROLE_ADMIN } from '../session.js';
+import { getWholeRouteDirections } from '../ferryServices.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -260,7 +261,7 @@ const BOOKING_PAGE_SCRIPT = `
                     col.innerHTML =
                         '<label class="schedule-card" for="sch' + s.schedule_id + '">' +
                         '<input type="radio" name="schedule_radio" value="' + s.schedule_id + '" id="sch' + s.schedule_id + '" data-full="' + full + '">' +
-                        '<span class="schedule-card-time">' + s.time_label + '</span>' +
+                        '<span class="schedule-card-time">Departs ' + s.time_label + (s.arrival_label ? ' &middot; Arrives ' + s.arrival_label : '') + '</span>' +
                         '<span class="' + (full ? 'schedule-card-seats-waitlist' : 'schedule-card-seats-ok') + '">' + (full ? 'Full - Join Waiting List' : s.remaining + ' seats left') + '</span>' +
                         '<span class="schedule-card-booked">' + s.booked + ' / ' + s.capacity + ' booked</span>' +
                         (s.reserved > 0 ? '<span class="schedule-card-reserved">' + s.reserved + ' reserved</span>' : '') +
@@ -424,7 +425,15 @@ export function registerStaffRoutes(router) {
         if (auth.response) return auth.response;
 
         const maxSeats = Number(await getSetting('max_seats_per_booking', 4));
-        const routes = unwrap(await db().from('ferry_routes').select('direction').eq('status', 'active').order('direction'));
+        // Legacy ferry_routes-linked directions merged with Ferry Services'
+        // whole-route directions (a service has no ferry_routes row at all,
+        // route_id being NULL by design - see ferryServices.js's
+        // getWholeRouteDirections header comment) - both are real, bookable
+        // directions today.
+        const legacyRoutes = unwrap(await db().from('ferry_routes').select('direction').eq('status', 'active').order('direction'));
+        const serviceDirections = await getWholeRouteDirections();
+        const directionNames = [...new Set([...legacyRoutes.map((r) => r.direction), ...serviceDirections.map((d) => d.direction)])].sort();
+        const routes = directionNames.map((direction) => ({ direction }));
         const bookerRows = unwrap(await db().from('users').select('department_id, resort_id').eq('user_id', auth.user.user_id).limit(1));
         const workflowInfo = await getApprovalWorkflowInfo(bookerRows[0]?.resort_id ?? null, bookerRows[0]?.department_id ?? null);
 
@@ -466,7 +475,7 @@ export function registerStaffRoutes(router) {
             const rows = unwrap(
                 await db()
                     .from('ferry_schedule')
-                    .select('schedule_id, departure_time, weekdays, ferry_routes(direction, route_name)')
+                    .select('schedule_id, departure_time, weekdays, service_name, ferry_routes(direction, route_name)')
                     .eq('schedule_id', scheduleId)
                     .eq('status', 'active')
                     .limit(1)
@@ -482,13 +491,22 @@ export function registerStaffRoutes(router) {
             }
         }
 
+        // A Ferry Service (admin_ferry_services.js) has no ferry_routes row
+        // at all - route_id is NULL by design - so schedule.ferry_routes is
+        // null for one. direction_select is what the employee actually
+        // picked (and what the AJAX seat-check already validated against),
+        // so it's the authoritative source; the legacy join is only a
+        // fallback for older schedules that still rely on it.
+        const directionLabel = schedule ? (form.direction_select || '').trim() || schedule.ferry_routes?.direction || schedule.service_name || '' : '';
+        const routeNameLabel = schedule ? schedule.ferry_routes?.route_name || schedule.service_name || '' : '';
+
         if (!errors.length) {
             try {
                 const booking = await bookFerrySeat({
                     userId: user.user_id,
                     scheduleId,
                     travelDate,
-                    direction: schedule.ferry_routes.direction,
+                    direction: directionLabel,
                     purpose,
                     remarks,
                     seats,
@@ -526,8 +544,8 @@ export function registerStaffRoutes(router) {
                         bookerRows[0]?.email,
                         {
                             full_name: bookerRows[0]?.full_name ?? '',
-                            route_name: schedule.ferry_routes.route_name ?? '',
-                            direction: schedule.ferry_routes.direction ?? '',
+                            route_name: routeNameLabel,
+                            direction: directionLabel,
                             travel_date: formatDate(travelDate),
                             departure_time: formatTime(schedule.departure_time),
                             booking_id: booking.booking_id,

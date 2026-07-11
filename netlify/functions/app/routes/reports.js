@@ -24,7 +24,7 @@ async function fetchReportRows({ dateFrom, dateTo, deptFilter, resortFilter, emp
     let query = db()
         .from('bookings')
         .select(
-            'booking_id, travel_date, purpose, seats, users!bookings_user_id_fkey(user_id, full_name, department_id, resort_id, departments(department_name), resorts(resort_name)), ferry_schedule(departure_time, route_id, ferry_routes(route_id, direction)), booking_status(status_name), current_approver_id, approver:current_approver_id(full_name)'
+            'booking_id, travel_date, purpose, seats, users!bookings_user_id_fkey(user_id, full_name, department_id, resort_id, departments(department_name), resorts(resort_name)), ferry_schedule(departure_time, route_id, service_name, ferry_routes(route_id, direction)), booking_status(status_name), current_approver_id, approver:current_approver_id(full_name)'
         )
         .order('travel_date', { ascending: false });
     if (dateFrom) query = query.gte('travel_date', dateFrom);
@@ -35,7 +35,7 @@ async function fetchReportRows({ dateFrom, dateTo, deptFilter, resortFilter, emp
     if (deptFilter) rows = rows.filter((r) => r.users.department_id === deptFilter);
     if (resortFilter) rows = rows.filter((r) => r.users.resort_id === resortFilter);
     if (empFilter) rows = rows.filter((r) => r.users.user_id === empFilter);
-    if (routeFilter) rows = rows.filter((r) => r.ferry_schedule.ferry_routes.route_id === routeFilter);
+    if (routeFilter) rows = rows.filter((r) => r.ferry_schedule.ferry_routes?.route_id === routeFilter);
     if (purpose) rows = rows.filter((r) => r.purpose.toLowerCase().includes(purpose.toLowerCase()));
 
     return rows;
@@ -51,7 +51,7 @@ async function fetchBookingsByStatus(statusNames, { dateFrom, dateTo, deptFilter
     let query = db()
         .from('bookings')
         .select(
-            'booking_id, travel_date, seats, checked_in_at, departed_at, arrived_at, users!bookings_user_id_fkey(full_name, employee_id, department_id, resort_id, departments(department_name), resorts(resort_name)), ferry_schedule(departure_time, route_id, ferry_routes(route_id, direction)), booking_status!inner(status_name)'
+            'booking_id, travel_date, seats, checked_in_at, departed_at, arrived_at, users!bookings_user_id_fkey(full_name, employee_id, department_id, resort_id, departments(department_name), resorts(resort_name)), ferry_schedule(departure_time, route_id, service_name, ferry_routes(route_id, direction)), booking_status!inner(status_name)'
         )
         .in('booking_status.status_name', statusNames)
         .order('travel_date', { ascending: false });
@@ -60,7 +60,7 @@ async function fetchBookingsByStatus(statusNames, { dateFrom, dateTo, deptFilter
     let rows = unwrap(await query);
     if (deptFilter) rows = rows.filter((r) => r.users.department_id === deptFilter);
     if (resortFilter) rows = rows.filter((r) => r.users.resort_id === resortFilter);
-    if (routeFilter) rows = rows.filter((r) => r.ferry_schedule.ferry_routes.route_id === routeFilter);
+    if (routeFilter) rows = rows.filter((r) => r.ferry_schedule.ferry_routes?.route_id === routeFilter);
     return rows;
 }
 
@@ -81,9 +81,9 @@ async function fetchSecurityActionLog({ dateFrom, dateTo, deptFilter, resortFilt
 }
 
 async function fetchFerryOccupancy({ dateFrom, dateTo, routeFilter }) {
-    let schedQuery = db().from('ferry_schedule').select('schedule_id, departure_time, capacity, ferry_routes(route_id, direction)').eq('status', 'active');
+    let schedQuery = db().from('ferry_schedule').select('schedule_id, departure_time, capacity, service_name, ferry_routes(route_id, direction)').eq('status', 'active');
     let schedules = unwrap(await schedQuery);
-    if (routeFilter) schedules = schedules.filter((s) => s.ferry_routes.route_id === routeFilter);
+    if (routeFilter) schedules = schedules.filter((s) => s.ferry_routes?.route_id === routeFilter);
 
     const from = dateFrom || new Date().toISOString().slice(0, 10);
     const to = dateTo || from;
@@ -134,7 +134,7 @@ const REPORT_TYPES = {
             { header: 'Resort', get: (r) => r.users.resorts?.resort_name ?? '' },
             { header: 'Date', get: (r) => formatDate(r.travel_date) },
             { header: 'Departure Time', get: (r) => formatTime(r.ferry_schedule.departure_time) },
-            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes.direction },
+            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes?.direction ?? r.ferry_schedule.service_name ?? '-' },
             { header: 'Seats', get: (r) => r.seats },
             { header: 'Status', get: (r) => r.booking_status.status_name },
         ],
@@ -148,7 +148,7 @@ const REPORT_TYPES = {
             { header: 'Department', get: (r) => r.users.departments?.department_name ?? '' },
             { header: 'Resort', get: (r) => r.users.resorts?.resort_name ?? '' },
             { header: 'Date', get: (r) => formatDate(r.travel_date) },
-            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes.direction },
+            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes?.direction ?? r.ferry_schedule.service_name ?? '-' },
             { header: 'Arrival Time', get: (r) => (r.arrived_at ? formatDateTime(r.arrived_at) : '-') },
             { header: 'Status', get: (r) => r.booking_status.status_name },
         ],
@@ -163,7 +163,7 @@ const REPORT_TYPES = {
             { header: 'Resort', get: (r) => r.users.resorts?.resort_name ?? '' },
             { header: 'Booking Ref', get: (r) => `BK-${r.booking_id}` },
             { header: 'Date', get: (r) => formatDate(r.travel_date) },
-            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes.direction },
+            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes?.direction ?? r.ferry_schedule.service_name ?? '-' },
             { header: 'Departure Time', get: (r) => formatTime(r.ferry_schedule.departure_time) },
             { header: 'Seats', get: (r) => r.seats },
             { header: 'Status', get: (r) => r.booking_status.status_name },
@@ -178,7 +178,7 @@ const REPORT_TYPES = {
             { header: 'Department', get: (r) => r.users.departments?.department_name ?? '' },
             { header: 'Resort', get: (r) => r.users.resorts?.resort_name ?? '' },
             { header: 'Date', get: (r) => formatDate(r.travel_date) },
-            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes.direction },
+            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes?.direction ?? r.ferry_schedule.service_name ?? '-' },
             { header: 'Seats Requested', get: (r) => r.seats },
         ],
     },
@@ -191,7 +191,7 @@ const REPORT_TYPES = {
             { header: 'Department', get: (r) => r.users.departments?.department_name ?? '' },
             { header: 'Resort', get: (r) => r.users.resorts?.resort_name ?? '' },
             { header: 'Date', get: (r) => formatDate(r.travel_date) },
-            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes.direction },
+            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes?.direction ?? r.ferry_schedule.service_name ?? '-' },
             { header: 'Departure Time', get: (r) => formatTime(r.ferry_schedule.departure_time) },
         ],
     },
@@ -200,7 +200,7 @@ const REPORT_TYPES = {
         fetchRows: (f) => fetchFerryOccupancy(f),
         columns: [
             { header: 'Date', get: (r) => formatDate(r.travelDate) },
-            { header: 'Route', get: (r) => r.schedule.ferry_routes.direction },
+            { header: 'Route', get: (r) => r.schedule.ferry_routes?.direction ?? r.schedule.service_name ?? '-' },
             { header: 'Departure Time', get: (r) => formatTime(r.schedule.departure_time) },
             { header: 'Capacity', get: (r) => r.capacity },
             { header: 'Booked', get: (r) => r.booked },
@@ -230,7 +230,7 @@ const REPORT_TYPES = {
             { header: 'Employee ID', get: (r) => r.users.employee_id },
             { header: 'Name', get: (r) => r.users.full_name },
             { header: 'Booking Date', get: (r) => formatDate(r.travel_date) },
-            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes.direction },
+            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes?.direction ?? r.ferry_schedule.service_name ?? '-' },
             { header: 'Checked-In', get: (r) => (r.checked_in_at ? formatDateTime(r.checked_in_at) : '-') },
             { header: 'Departed', get: (r) => (r.departed_at ? formatDateTime(r.departed_at) : '-') },
             { header: 'Arrived', get: (r) => (r.arrived_at ? formatDateTime(r.arrived_at) : '-') },
@@ -314,7 +314,7 @@ function reportPageBody({ rows, filters, filterOptions, scope, basePath, company
             <td>#${r.booking_id}</td><td>${r.users.full_name}</td>
             <td>${r.users.departments?.department_name ?? '-'}</td>
             <td>${formatDate(r.travel_date)}</td><td>${formatTime(r.ferry_schedule.departure_time)}</td>
-            <td>${r.ferry_schedule.ferry_routes.direction}</td><td>${r.purpose}</td>
+            <td>${r.ferry_schedule.ferry_routes?.direction ?? r.ferry_schedule.service_name ?? '-'}</td><td>${r.purpose}</td>
             <td>${r.booking_status.status_name}</td><td>${r.seats}</td>
             ${showFullFilters ? html`<td>${r.approver?.full_name ?? '-'}</td>` : ''}
         </tr>`
@@ -379,9 +379,10 @@ function toCsv(rows, includeApprover) {
     const escape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const body = rows
         .map((r) => {
+            const routeLabel = r.ferry_schedule.ferry_routes?.direction ?? r.ferry_schedule.service_name ?? '-';
             const fields = includeApprover
-                ? [r.booking_id, r.users.full_name, r.users.employee_id ?? '', r.users.departments?.department_name ?? '', r.travel_date, r.ferry_schedule.departure_time, r.ferry_schedule.ferry_routes.direction, r.purpose, r.booking_status.status_name, r.seats, r.approver?.full_name ?? '']
-                : [r.booking_id, r.users.full_name, r.users.departments?.department_name ?? '', r.travel_date, r.ferry_schedule.departure_time, r.ferry_schedule.ferry_routes.direction, r.purpose, r.booking_status.status_name, r.seats];
+                ? [r.booking_id, r.users.full_name, r.users.employee_id ?? '', r.users.departments?.department_name ?? '', r.travel_date, r.ferry_schedule.departure_time, routeLabel, r.purpose, r.booking_status.status_name, r.seats, r.approver?.full_name ?? '']
+                : [r.booking_id, r.users.full_name, r.users.departments?.department_name ?? '', r.travel_date, r.ferry_schedule.departure_time, routeLabel, r.purpose, r.booking_status.status_name, r.seats];
             return fields.map(escape).join(',');
         })
         .join('\n');

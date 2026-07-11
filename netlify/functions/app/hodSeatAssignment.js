@@ -792,7 +792,7 @@ export async function listOwnHodSeatRequests(userId) {
     const rows = unwrap(
         await db()
             .from('bookings')
-            .select('booking_id, travel_date, direction, created_at, source_reservation_id, booking_status(status_name, badge_color), ferry_schedule(departure_time, ferry_routes(route_name, direction))')
+            .select('booking_id, travel_date, direction, created_at, source_reservation_id, booking_status(status_name, badge_color), ferry_schedule(departure_time, service_name, ferry_routes(route_name, direction))')
             .eq('user_id', userId)
             .eq('booking_method', 'hod_seat_assignment')
             .order('travel_date', { ascending: false })

@@ -51,14 +51,14 @@ async function ownResort(userId) {
 async function activeSchedulesForDate(travelDate) {
     const weekday = WEEKDAY_ABBR[new Date(`${travelDate}T00:00:00Z`).getUTCDay()];
     const rows = unwrap(
-        await db().from('ferry_schedule').select('schedule_id, departure_time, weekdays, ferry_routes(direction)').eq('status', 'active').order('departure_time', { ascending: true })
+        await db().from('ferry_schedule').select('schedule_id, departure_time, weekdays, service_name, ferry_routes(direction)').eq('status', 'active').order('departure_time', { ascending: true })
     );
     return rows.filter((s) => s.weekdays.includes(weekday));
 }
 
 async function hodSeatRequestPageBody({ date, scheduleId, schedules, resortId, resortName, userId, csrfToken }) {
     const scheduleOptions = schedules
-        .map((s) => `<option value="${s.schedule_id}" ${scheduleId === s.schedule_id ? 'selected' : ''}>${h(s.ferry_routes.direction)} - ${h(formatTime(s.departure_time))}</option>`)
+        .map((s) => `<option value="${s.schedule_id}" ${scheduleId === s.schedule_id ? 'selected' : ''}>${h(s.ferry_routes?.direction ?? s.service_name ?? '-')} - ${h(formatTime(s.departure_time))}</option>`)
         .join('');
     const pickerHtml = html`
 <div class="card shadow-sm mb-3"><div class="card-body">
@@ -78,7 +78,7 @@ async function hodSeatRequestPageBody({ date, scheduleId, schedules, resortId, r
                 .map(
                     (r) => `<tr>
                 <td>${formatDate(r.travel_date)} ${formatTime(r.ferry_schedule.departure_time)}</td>
-                <td>${h(r.ferry_schedule.ferry_routes.direction)}</td>
+                <td>${h(r.direction ?? r.ferry_schedule.ferry_routes?.direction ?? r.ferry_schedule.service_name ?? '-')}</td>
                 <td>${h(r.resortName)}</td>
                 <td>BK-${r.booking_id}</td>
                 <td><span class="badge ${statusBadgeClass(r.booking_status.badge_color)}">${h(r.booking_status.status_name)}</span></td>

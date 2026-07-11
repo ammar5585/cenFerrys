@@ -22,17 +22,18 @@ export function registerTransportSchedulesViewRoutes(router) {
         const schedules = unwrap(
             await db()
                 .from('ferry_schedule')
-                .select('schedule_id, departure_time, capacity, notes, weekdays, ferry_routes(direction)')
+                .select('schedule_id, departure_time, capacity, notes, weekdays, service_name, ferry_routes(direction)')
                 .eq('status', 'active')
         );
-        const todays = schedules.filter((s) => s.weekdays.includes(weekday)).sort((a, b) => (a.ferry_routes.direction + a.departure_time).localeCompare(b.ferry_routes.direction + b.departure_time));
+        const directionLabel = (s) => s.ferry_routes?.direction ?? s.service_name ?? '-';
+        const todays = schedules.filter((s) => s.weekdays.includes(weekday)).sort((a, b) => (directionLabel(a) + a.departure_time).localeCompare(directionLabel(b) + b.departure_time));
 
         const seatInfoById = await getRemainingSeatsBatch(todays.map((s) => s.schedule_id), date);
         const rowsHtml = todays.map((s) => {
             const info = seatInfoById.get(s.schedule_id) ?? { booked: 0, reserved: 0, remaining: s.capacity };
             const { booked, reserved, remaining } = info;
             return html`<tr>
-                <td>${s.ferry_routes.direction}</td><td>${formatTime(s.departure_time)}</td><td>${s.capacity}</td><td>${booked}</td>
+                <td>${directionLabel(s)}</td><td>${formatTime(s.departure_time)}</td><td>${s.capacity}</td><td>${booked}</td>
                 <td>${reserved > 0 ? html`<span class="badge bg-info text-dark">${reserved} reserved</span>` : '-'}</td>
                 <td class="${remaining <= 0 ? 'seat-full' : 'seat-ok'}">${remaining <= 0 ? 'FULL' : remaining}</td>
                 <td class="text-muted small">${s.notes ?? ''}</td>

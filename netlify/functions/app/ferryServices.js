@@ -102,6 +102,61 @@ export async function getServiceWithStops(scheduleId) {
 }
 
 /**
+ * Every active Ferry Service with a configured route (>= 2 stops),
+ * expressed as a bookable "First Stop to Last Stop" direction - the
+ * whole configured journey, not a sub-segment (segment-level booking
+ * is Phase 2, since it needs a real segment-aware capacity model;
+ * booking the full route still uses the existing flat per-schedule
+ * capacity correctly, since it's still "the whole schedule, booked as
+ * a whole"). This is what connects a Ferry Service (admin_ferry_
+ * services.js) to the booking flow (staff.js/ajax.js) - a service
+ * created there has no ferry_routes row at all (route_id is NULL by
+ * design), so it would otherwise never appear as a bookable direction.
+ */
+export async function getWholeRouteDirections() {
+    const services = unwrap(
+        await db()
+            .from('ferry_schedule')
+            .select('schedule_id, service_name, capacity, weekdays, status')
+            .eq('status', 'active')
+    );
+    if (!services.length) return [];
+
+    const allStops = unwrap(
+        await db()
+            .from('route_stops')
+            .select('schedule_id, stop_order, stop_name, arrival_time, departure_time, status')
+            .in('schedule_id', services.map((s) => s.schedule_id))
+            .eq('status', 'active')
+            .order('stop_order', STOP_ORDER_ASC)
+    );
+    const stopsBySchedule = new Map();
+    for (const stop of allStops) {
+        if (!stopsBySchedule.has(stop.schedule_id)) stopsBySchedule.set(stop.schedule_id, []);
+        stopsBySchedule.get(stop.schedule_id).push(stop);
+    }
+
+    const results = [];
+    for (const service of services) {
+        const stops = stopsBySchedule.get(service.schedule_id) ?? [];
+        if (stops.length < 2) continue;
+        const first = stops[0];
+        const last = stops[stops.length - 1];
+        results.push({
+            scheduleId: service.schedule_id,
+            direction: `${first.stop_name} to ${last.stop_name}`,
+            boardingStopName: first.stop_name,
+            destinationStopName: last.stop_name,
+            boardingTime: first.departure_time,
+            arrivalTime: last.arrival_time,
+            capacity: service.capacity,
+            weekdays: service.weekdays,
+        });
+    }
+    return results;
+}
+
+/**
  * Individual stop/location names for the "Stop Name" picker, derived
  * from Direction Management (directions.name, e.g. "CGLM to CMLM") -
  * there's no separate "locations" table, and directions are already

@@ -42,7 +42,7 @@ async function transportDashboardBody(fullName) {
     const tripsHtml = tripRows
         .map(
             (t) => html`<tr>
-            <td>${formatTime(t.departure_time)}</td><td>${t.ferry_routes.direction}</td><td>${t.capacity}</td><td>${t.passengers}</td>
+            <td>${formatTime(t.departure_time)}</td><td>${t.ferry_routes?.direction ?? t.service_name ?? '-'}</td><td>${t.capacity}</td><td>${t.passengers}</td>
             <td>
                 <a class="btn btn-sm btn-outline-primary" href="/transport/passenger_list?date=${today}&schedule_id=${t.schedule_id}">View</a>
                 <a class="btn btn-sm btn-outline-secondary" target="_blank" href="/transport/manifest_print?date=${today}&schedule_id=${t.schedule_id}"><i class="bi bi-printer"></i></a>
@@ -73,7 +73,7 @@ async function activeSchedulesForDate(travelDate) {
     const rows = unwrap(
         await db()
             .from('ferry_schedule')
-            .select('schedule_id, departure_time, capacity, weekdays, ferry_routes(direction)')
+            .select('schedule_id, departure_time, capacity, weekdays, service_name, ferry_routes(direction)')
             .eq('status', 'active')
             .order('departure_time', { ascending: true })
     );
@@ -123,7 +123,7 @@ export function registerTransportRoutes(router) {
         }
 
         const scheduleOptions = schedules
-            .map((s) => `<option value="${s.schedule_id}" ${scheduleId === s.schedule_id ? 'selected' : ''}>${h(s.ferry_routes.direction)} - ${h(formatTime(s.departure_time))}</option>`)
+            .map((s) => `<option value="${s.schedule_id}" ${scheduleId === s.schedule_id ? 'selected' : ''}>${h(s.ferry_routes?.direction ?? s.service_name ?? '-')} - ${h(formatTime(s.departure_time))}</option>`)
             .join('');
 
         const passengerRows = passengers
@@ -199,7 +199,7 @@ ${scheduleId
         const scheduleId = Number(url.searchParams.get('schedule_id') || 0);
 
         const scheduleRows = unwrap(
-            await db().from('ferry_schedule').select('departure_time, capacity, ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1)
+            await db().from('ferry_schedule').select('departure_time, capacity, service_name, ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1)
         );
         const schedule = scheduleRows[0];
         if (!schedule) return notFound('Schedule not found.');
@@ -227,7 +227,7 @@ ${scheduleId
         ${siteLogo ? html`<img src="${siteLogo}" alt="" style="max-height:60px;" class="mb-2 d-block mx-auto">` : ''}
         <h4>${companyName}</h4>
         <p class="text-muted mb-0">Ferry Passenger Manifest</p>
-        <p><strong>${schedule.ferry_routes.direction}</strong> &middot; ${formatDate(date)} &middot; Departure: ${formatTime(schedule.departure_time)}</p>
+        <p><strong>${schedule.ferry_routes?.direction ?? schedule.service_name ?? '-'}</strong> &middot; ${formatDate(date)} &middot; Departure: ${formatTime(schedule.departure_time)}</p>
     </div>
     <table class="table table-bordered">
         <thead><tr><th>#</th><th>Employee Name</th><th>Employee ID</th><th>Department</th><th>Seats</th><th>Purpose</th></tr></thead>

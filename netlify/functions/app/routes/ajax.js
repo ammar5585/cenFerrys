@@ -7,6 +7,7 @@ import { getSession } from '../session.js';
 import { verifyCsrf } from '../csrf.js';
 import { markAllNotificationsRead } from '../notifications.js';
 import { jsonResponse } from '../response.js';
+import { getWholeRouteDirections } from '../ferryServices.js';
 
 const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -36,20 +37,43 @@ export function registerAjaxRoutes(router) {
         try {
             const weekday = WEEKDAY_ABBR[new Date(`${date}T00:00:00Z`).getUTCDay()];
 
-            const routeRows = unwrap(
-                await db().from('ferry_routes').select('route_id').eq('direction', direction).limit(1)
-            );
-            if (!routeRows.length) return jsonResponse({ success: true, schedules: [] });
+            // Two sources merged: legacy ferry_routes-linked schedules (the
+            // original single-leg model - still supported for any schedule
+            // that hasn't been given route_stops), and Ferry Services
+            // (admin_ferry_services.js) matched by their whole configured
+            // route ("First Stop to Last Stop") - a service has no
+            // ferry_routes row at all (route_id is NULL by design), so it
+            // would never surface here otherwise.
+            const routeRows = unwrap(await db().from('ferry_routes').select('route_id').eq('direction', direction).limit(1));
+            const legacySchedules = routeRows.length
+                ? unwrap(
+                      await db()
+                          .from('ferry_schedule')
+                          .select('schedule_id, departure_time, capacity, weekdays')
+                          .eq('route_id', routeRows[0].route_id)
+                          .eq('status', 'active')
+                          .order('departure_time', { ascending: true })
+                  )
+                : [];
 
-            const schedules = unwrap(
-                await db()
-                    .from('ferry_schedule')
-                    .select('schedule_id, departure_time, capacity, weekdays')
-                    .eq('route_id', routeRows[0].route_id)
-                    .eq('status', 'active')
-                    .order('departure_time', { ascending: true })
-            );
-            const matching = schedules.filter((s) => Array.isArray(s.weekdays) && s.weekdays.includes(weekday));
+            const wholeRouteDirections = await getWholeRouteDirections();
+            const serviceMatches = wholeRouteDirections.filter((d) => d.direction === direction);
+
+            const byScheduleId = new Map();
+            for (const s of legacySchedules) {
+                if (Array.isArray(s.weekdays) && s.weekdays.includes(weekday)) {
+                    byScheduleId.set(s.schedule_id, { schedule_id: s.schedule_id, capacity: s.capacity, departure_time: s.departure_time, arrival_time: null });
+                }
+            }
+            for (const d of serviceMatches) {
+                if (Array.isArray(d.weekdays) && d.weekdays.includes(weekday)) {
+                    // A route-stops match is the richer source (has a real
+                    // arrival time) - it wins over a legacy entry for the
+                    // same schedule_id, if somehow both matched.
+                    byScheduleId.set(d.scheduleId, { schedule_id: d.scheduleId, capacity: d.capacity, departure_time: d.boardingTime, arrival_time: d.arrivalTime });
+                }
+            }
+            const matching = [...byScheduleId.values()].sort((a, b) => (a.departure_time > b.departure_time ? 1 : -1));
 
             // One batched RPC call instead of one per schedule - see
             // getRemainingSeatsBatch()'s header comment.
@@ -59,6 +83,7 @@ export function registerAjaxRoutes(router) {
                 return {
                     schedule_id: s.schedule_id,
                     time_label: formatTime(s.departure_time),
+                    arrival_label: s.arrival_time ? formatTime(s.arrival_time) : '',
                     capacity: info.capacity,
                     booked: info.booked,
                     reserved: info.reserved,
