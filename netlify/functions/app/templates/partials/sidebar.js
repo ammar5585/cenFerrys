@@ -5,6 +5,7 @@
 
 import { html, raw } from '../html.js';
 import { hasPermission } from '../../permissions.js';
+import { ROLE_ADMIN } from '../../session.js';
 
 function navLink(path, icon, label, currentPath) {
     const active = currentPath === path ? 'active' : '';
@@ -20,19 +21,27 @@ function navLink(path, icon, label, currentPath) {
  * per-user override that grants only some of what a built-in role has
  * today actually hides the rest.
  */
-export function renderSidebar(permsHex, currentPath, isDeptApprover = false, companyName = 'Ferry Portal', siteLogo = '') {
+export function renderSidebar(permsHex, currentPath, isDeptApprover = false, companyName = 'Ferry Portal', siteLogo = '', roleName = null) {
     const can = (key) => hasPermission(permsHex, key);
+    const isAdmin = roleName === ROLE_ADMIN;
     const links = [navLink('/dashboard', 'bi-speedometer2', 'Dashboard', currentPath)];
 
     if (can('user_management.access') || can('schedule_management.access') || can('approval_workflow.configure_hierarchy')
-        || can('booking.view_all') || can('reports.view_admin') || can('audit_logs.access') || can('branding.access') || can('settings.access') || can('settings.manage_email')) {
+        || can('booking.view_all') || can('reports.view_admin') || can('audit_logs.access') || can('branding.access') || can('settings.access') || can('settings.manage_email') || isAdmin) {
         links.push(html`<div class="nav-heading">Administration</div>`);
         if (can('user_management.view')) links.push(navLink('/admin/users', 'bi-people', 'User Management', currentPath));
         if (can('user_management.import')) links.push(navLink('/admin/users/import', 'bi-file-earmark-arrow-up', 'Bulk Import Users', currentPath));
         if (can('user_management.manage_departments')) links.push(navLink('/admin/departments', 'bi-diagram-2', 'Departments', currentPath));
         if (can('user_management.manage_roles')) links.push(navLink('/admin/roles', 'bi-shield-lock', 'Roles & Permissions', currentPath));
-        if (can('schedule_management.view')) links.push(navLink('/admin/schedules', 'bi-calendar3', 'Ferry Schedules', currentPath));
-        if (can('schedule_management.manage_routes')) links.push(navLink('/admin/routes', 'bi-signpost-split', 'Routes', currentPath));
+        // Ferry Services (route-based, multi-stop) replaces the old Ferry
+        // Schedules/Routes admin pages as the primary entry point -
+        // Administrator-only per spec, gated by role rather than a
+        // permission bitmask key (no such permission exists for this
+        // System-Administrator-only feature). The old admin.js schedule
+        // CRUD and admin_config.js route CRUD routes still exist (nothing
+        // else has been migrated off them yet - see the Phase 1 plan) but
+        // are deliberately unlinked here.
+        if (isAdmin) links.push(navLink('/admin/ferry_services', 'bi-signpost-2', 'Ferry Services', currentPath));
         if (can('schedule_management.manage_directions')) links.push(navLink('/admin/directions', 'bi-arrow-left-right', 'Direction Management', currentPath));
         if (can('booking.manage_seat_reservations')) links.push(navLink('/admin/seat_reservations', 'bi-bookmark-star', 'Seat Reservations', currentPath));
         if (can('schedule_management.manage_holidays')) links.push(navLink('/admin/holidays', 'bi-calendar-x', 'Holidays', currentPath));
