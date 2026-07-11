@@ -112,18 +112,18 @@ export async function getServiceWithStops(scheduleId) {
  * service created there has no ferry_routes row at all (route_id is
  * NULL by design), so it would otherwise never appear as bookable.
  *
- * The bookable label is the service's own name (e.g. "The Atollia
- * Evening") rather than a derived "First Stop to Last Stop" string -
- * for a round-trip route that's the same stop at both ends ("CGLM to
- * CGLM"), which reads as meaningless/confusing to an employee booking
- * a seat. Falls back to the stop-chain string only if the service
- * somehow has no name.
+ * The bookable label is the service's own name + code (e.g. "The
+ * Atollia Evening (SVC-8)") rather than a derived "First Stop to Last
+ * Stop" string - for a round-trip route that's the same stop at both
+ * ends ("CGLM to CGLM"), which reads as meaningless/confusing to an
+ * employee booking a seat. Falls back to the stop-chain string only if
+ * the service somehow has no name.
  */
 export async function getWholeRouteDirections() {
     const services = unwrap(
         await db()
             .from('ferry_schedule')
-            .select('schedule_id, service_name, capacity, weekdays, status')
+            .select('schedule_id, service_name, service_code, capacity, weekdays, status')
             .eq('status', 'active')
     );
     if (!services.length) return [];
@@ -148,9 +148,14 @@ export async function getWholeRouteDirections() {
         if (stops.length < 2) continue;
         const first = stops[0];
         const last = stops[stops.length - 1];
+        const nameAndCode = service.service_name
+            ? service.service_code
+                ? `${service.service_name} (${service.service_code})`
+                : service.service_name
+            : `${first.stop_name} to ${last.stop_name}`;
         results.push({
             scheduleId: service.schedule_id,
-            direction: service.service_name || `${first.stop_name} to ${last.stop_name}`,
+            direction: nameAndCode,
             boardingStopName: first.stop_name,
             destinationStopName: last.stop_name,
             boardingTime: first.departure_time,
