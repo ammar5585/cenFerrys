@@ -52,6 +52,7 @@ const HOD_ACTION_ERROR = {
     invalid_seats: 'Please enter a valid number of seats.',
     invalid_schedule: 'That ferry schedule was not found.',
     invalid_resort: 'Please choose a valid resort.',
+    duplicate_reservation: 'An HOD Reserved Seat allocation already exists for this resort, schedule, and department on this date - edit or assign to the existing one instead.',
     seats_already_assigned: 'This reservation already has an employee assigned - release them before changing the department or deleting it.',
 };
 

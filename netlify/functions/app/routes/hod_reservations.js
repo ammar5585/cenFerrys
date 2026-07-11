@@ -29,7 +29,8 @@ const ACTION_ERROR = {
     invalid_resort: 'Your account has no resort assigned, or does not match this resort - contact an Administrator.',
     invalid_schedule: 'That ferry schedule was not found for this date.',
     already_requested: 'You already have a reserved seat for this schedule and date.',
-    seat_unavailable: 'No HOD reserved seats remain available for this schedule and date.',
+    seat_unavailable: 'No HOD Reserved Seats are available for this ferry schedule.',
+    no_pool_configured: 'No HOD Reserved Seats are available for this ferry schedule.',
     not_hod_assignment: 'That request could not be found.',
     too_late_to_release: 'This trip has already departed - it is too late to cancel.',
     no_resort: 'Your account has no resort assigned - contact an Administrator before requesting a reserved seat.',
@@ -122,7 +123,7 @@ async function hodSeatRequestPageBody({ date, scheduleId, schedules, resortId, r
               ? html`<form method="post">${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="request_seat"><input type="hidden" name="date" value="${date}"><input type="hidden" name="schedule_id" value="${scheduleId}">
                     <button class="btn btn-primary btn-sm"><i class="bi bi-bookmark-plus"></i> Request My Reserved Seat</button>
                 </form>`
-              : html`<p class="text-muted small mb-0">No reserved seats remain available for this schedule and date.</p>`}
+              : html`<p class="text-muted small mb-0">No HOD Reserved Seats are available for this ferry schedule.</p>`}
     </div>
 </div>`;
     }

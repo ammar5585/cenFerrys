@@ -19,8 +19,6 @@ import { formatTime } from '../format.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { getActiveResorts, getAllDepartments } from '../refData.js';
-import { getHodSeatAllocation, setHodSeatAllocation } from '../hodSeatAssignment.js';
-import { logActivity, clientIp } from '../activity.js';
 
 const WEEKDAY_OPTIONS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const RESERVATION_TYPES = [
@@ -35,6 +33,12 @@ const RESERVATION_TYPES = [
 // row - both show the Department picker plus a free-text Name field for
 // who within that department the reservation is actually held by/for.
 const DEPARTMENT_SCOPED_TYPES = ['department', 'hod'];
+// Unlike Department Reservations, an HOD Reservation is allowed to have
+// no department at all - it's the resort-wide allocation the HOD
+// Reserved Seat Request self-service feature (hodSeatAssignment.js)
+// consumes from, which has no department dimension. Department stays
+// required only for the plain 'department' type.
+const DEPARTMENT_REQUIRED_TYPES = ['department'];
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -92,24 +96,6 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken }) {
         db().from('users').select('user_id, full_name, employee_id').eq('status', 'active').order('full_name').then(unwrap),
         db().from('ferry_schedule').select('schedule_id, departure_time, ferry_routes(route_name, direction)').eq('status', 'active').order('departure_time').then(unwrap),
     ]);
-
-    // Per-resort default allocation for the HOD Reserved Seat Request
-    // self-service feature (hodSeatAssignment.js) - a schedule/date's
-    // actual pool size is fixed at whatever this was when that pool was
-    // first created, so changing this only affects schedules/dates
-    // nobody has requested from yet.
-    const hodAllocations = await Promise.all(resorts.map((r) => getHodSeatAllocation(r.resort_id)));
-    const hodAllocationHtml = `<div class="card shadow-sm mb-3">
-    <div class="card-header bg-white"><i class="bi bi-bookmark-star"></i> HOD Reserved Seat Request - Default Allocation per Resort</div>
-    <div class="card-body">
-        <p class="text-muted small">Used by the HOD Reserved Seat Request self-service page (Ferry Booking menu) the first time anyone requests a seat for a given ferry schedule/date. Changing this does not resize a schedule/date that already has requests against it.</p>
-        <form method="post" class="row g-3 align-items-end">
-            ${csrfField(csrfToken)}<input type="hidden" name="action" value="set_hod_allocation">
-            ${resorts.map((r, i) => `<div class="col-md-3"><label class="form-label">${h(r.resort_name)}</label><input type="number" name="hod_allocation_${r.resort_id}" class="form-control" min="0" value="${hodAllocations[i]}"></div>`).join('')}
-            <div class="col-md-3"><button class="btn btn-outline-primary"><i class="bi bi-check-lg"></i> Save Allocation</button></div>
-        </form>
-    </div>
-</div>`;
 
     const typeLabel = (v) => RESERVATION_TYPES.find((t) => t.value === v)?.label ?? v;
 
@@ -211,15 +197,17 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken }) {
     var nameField = document.getElementById('resNameField');
     if (!typeSelect) return;
     var departmentScopedTypes = ['department', 'hod'];
+    var departmentRequiredTypes = ['department'];
     var departmentSelect = departmentField.querySelector('select');
     function sync() {
         employeeField.style.display = typeSelect.value === 'employee_specific' ? '' : 'none';
         var isDepartmentScoped = departmentScopedTypes.indexOf(typeSelect.value) !== -1;
         departmentField.style.display = isDepartmentScoped ? '' : 'none';
         nameField.style.display = isDepartmentScoped ? '' : 'none';
-        // Required only while shown - a hidden required field would block
-        // submission with no visible error explaining why.
-        departmentSelect.required = isDepartmentScoped;
+        // Required only while shown AND actually mandatory for this type -
+        // an HOD reservation may legitimately have no department (the
+        // resort-wide allocation self-service draws from).
+        departmentSelect.required = departmentRequiredTypes.indexOf(typeSelect.value) !== -1;
     }
     typeSelect.addEventListener('change', sync);
     sync();
@@ -227,7 +215,6 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken }) {
 </script>`;
 
     return html`
-${raw(hodAllocationHtml)}
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h5 class="mb-0"><i class="bi bi-bookmark-star"></i> Seat Reservations</h5>
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createReservationModal"><i class="bi bi-plus-lg"></i> New Reservation</button>
@@ -276,19 +263,6 @@ export function registerAdminSeatReservationsRoutes(router) {
         const form = await readFormBody(request);
         if (!verifyCsrf(user.csrf, form.csrf_token)) return notFound();
 
-        if (form.action === 'set_hod_allocation') {
-            const resorts = await getActiveResorts();
-            await Promise.all(
-                resorts.map((r) => {
-                    const key = `hod_allocation_${r.resort_id}`;
-                    if (form[key] === undefined) return null;
-                    return setHodSeatAllocation(r.resort_id, Number(form[key]));
-                })
-            );
-            await logActivity(user.user_id, 'Updated HOD Reserved Seat Request default allocation', null, clientIp(request));
-            return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('success', 'HOD Reserved Seat allocation saved.')].filter(Boolean) });
-        }
-
         if (form.action === 'create') {
             const reservationType = form.reservation_type;
             if (!RESERVATION_TYPES.some((t) => t.value === reservationType)) {
@@ -316,12 +290,40 @@ export function registerAdminSeatReservationsRoutes(router) {
             if (endDate < startDate) {
                 return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'End date must be on or after the start date.')].filter(Boolean) });
             }
-            // A Department/HOD reservation with no department set can never
-            // be assigned to anyone (Security's HOD seat assignment feature
+            // A Department reservation with no department set can never be
+            // assigned to anyone (Security's HOD seat assignment feature
             // scopes candidate search to this exact department) - the form
             // allows leaving it blank, so this must be enforced server-side.
-            if (DEPARTMENT_SCOPED_TYPES.includes(reservationType) && !departmentId) {
-                return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'Department is required for a Department or HOD reservation.')].filter(Boolean) });
+            // An HOD reservation is exempt: leaving it blank is how you
+            // create the resort-wide allocation the HOD Reserved Seat
+            // Request self-service feature draws from.
+            if (DEPARTMENT_REQUIRED_TYPES.includes(reservationType) && !departmentId) {
+                return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'Department is required for a Department reservation.')].filter(Boolean) });
+            }
+
+            // Prevent an exact duplicate HOD allocation for the same
+            // resort+schedule+department, overlapping this date range -
+            // distinct departments (or one department-less resort-wide
+            // row plus several department-specific ones) are still fine
+            // to coexist, only a literal re-creation of the same one is
+            // blocked.
+            if (reservationType === 'hod') {
+                let dupQuery = db()
+                    .from('seat_reservations')
+                    .select('reservation_id')
+                    .eq('reservation_type', 'hod')
+                    .eq('status', 'active')
+                    .eq('schedule_id', scheduleId)
+                    .eq('resort_id', resortId)
+                    .lte('start_date', endDate)
+                    .gte('end_date', startDate);
+                dupQuery = departmentId ? dupQuery.eq('department_id', departmentId) : dupQuery.is('department_id', null);
+                const dup = unwrap(await dupQuery);
+                if (dup.length) {
+                    return redirectTo('/admin/seat_reservations', {
+                        cookies: [auth.setCookie, flashSetCookie('error', 'An HOD Reserved Seat allocation already exists for this resort, schedule, department, and date range - edit the existing one instead.')].filter(Boolean),
+                    });
+                }
             }
 
             const scheduleRows = unwrap(await db().from('ferry_schedule').select('ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1));
