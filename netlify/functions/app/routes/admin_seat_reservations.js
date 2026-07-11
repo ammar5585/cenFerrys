@@ -21,6 +21,7 @@ import { flashSetCookie } from '../flash.js';
 import { getActiveResorts, getAllDepartments } from '../refData.js';
 import { ROLE_ADMIN } from '../session.js';
 import { logActivity, clientIp } from '../activity.js';
+import { getRemainingSeats } from '../seats.js';
 
 const WEEKDAY_OPTIONS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const RESERVATION_TYPES = [
@@ -55,7 +56,7 @@ async function readFormBody(request) {
     return out;
 }
 
-async function recordReservationAudit({ reservation, action, actorUserId, reason }) {
+async function recordReservationAudit({ reservation, action, actorUserId, reason, seatsAvailableBefore = null, seatsAvailableAfter = null }) {
     unwrap(
         await db().from('seat_reservation_log').insert({
             reservation_id: reservation.reservation_id,
@@ -72,6 +73,8 @@ async function recordReservationAudit({ reservation, action, actorUserId, reason
             action,
             actor_user_id: actorUserId,
             reason,
+            seats_available_before: seatsAvailableBefore,
+            seats_available_after: seatsAvailableAfter,
         })
     );
 }
@@ -96,7 +99,7 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken, isA
         getActiveResorts(),
         getAllDepartments(),
         db().from('users').select('user_id, full_name, employee_id').eq('status', 'active').order('full_name').then(unwrap),
-        db().from('ferry_schedule').select('schedule_id, departure_time, ferry_routes(route_name, direction)').eq('status', 'active').order('departure_time').then(unwrap),
+        db().from('ferry_schedule').select('schedule_id, departure_time, capacity, ferry_routes(route_name, direction)').eq('status', 'active').order('departure_time').then(unwrap),
     ]);
 
     const typeLabel = (v) => RESERVATION_TYPES.find((t) => t.value === v)?.label ?? v;
@@ -221,10 +224,127 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken, isA
 })();
 </script>`;
 
+    // Administrator-only multi-ferry bulk reservation - a separate modal
+    // from createModalHtml above (which HR Manager also uses for a
+    // single schedule) rather than reworking that one, since this
+    // feature's access is explicitly narrower (System Administrator
+    // only) than booking.manage_seat_reservations. Applies the same
+    // reservation (type/resort/seats/date range/weekdays/reason) as one
+    // seat_reservations row per selected schedule.
+    const bulkScheduleCheckboxesHtml = schedules
+        .map(
+            (s) =>
+                `<div class="form-check"><input class="form-check-input bulk-schedule-checkbox" type="checkbox" name="schedule_ids" value="${s.schedule_id}" id="bulkSched${s.schedule_id}"><label class="form-check-label" for="bulkSched${s.schedule_id}">${h(s.ferry_routes.route_name)} - ${h(s.ferry_routes.direction)} - ${h(formatTime(s.departure_time))} <span class="text-muted small">(capacity ${s.capacity})</span></label></div>`
+        )
+        .join('');
+    const bulkWeekdayCheckboxesHtml = WEEKDAY_OPTIONS.map(
+        (day) => `<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="weekdays" value="${day}" id="bulkWd${day}" checked><label class="form-check-label" for="bulkWd${day}">${day}</label></div>`
+    ).join('');
+    const bulkResortOptionsHtml =
+        resorts.map((r) => `<option value="${r.resort_id}">${h(r.resort_name)}</option>`).join('') + `<option value="both">Both Resorts</option>`;
+
+    const bulkReservationModalHtml = `<div class="modal fade" id="bulkReservationModal" tabindex="-1"><div class="modal-dialog modal-lg"><form method="post" class="modal-content">
+    ${csrfField(csrfToken)}<input type="hidden" name="action" value="bulk_create">
+    <div class="modal-header"><h5 class="modal-title"><i class="bi bi-collection"></i> Multi-Ferry Seat Reservation</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+        <div class="row g-3">
+            <div class="col-md-6"><label class="form-label">Reservation Type</label><select name="reservation_type" id="bulkResTypeSelect" class="form-select" required>
+                ${RESERVATION_TYPES.map((t) => `<option value="${t.value}">${h(t.label)}</option>`).join('')}
+            </select></div>
+            <div class="col-md-6"><label class="form-label">Resort</label><select name="resort_option" class="form-select" required>${bulkResortOptionsHtml}</select></div>
+            <div class="col-md-12" id="bulkEmployeeField"><label class="form-label">Employee</label><select name="employee_user_id" class="form-select">
+                <option value="">-- None --</option>${employeeOptionsHtml}
+            </select></div>
+            <div class="col-md-12" id="bulkDepartmentField" style="display:none"><label class="form-label">Department</label><select name="department_id" class="form-select">
+                <option value="">-- None --</option>${departmentOptionsHtml}
+            </select></div>
+            <div class="col-md-12" id="bulkNameField" style="display:none"><label class="form-label">Name</label><input type="text" name="contact_name" class="form-control" placeholder="Who within the department this reservation is held for"></div>
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <label class="form-label mb-0">Ferry Schedules</label>
+                    <div><button type="button" class="btn btn-sm btn-link p-0 me-2" id="bulkSelectAllBtn">Select All</button><button type="button" class="btn btn-sm btn-link p-0" id="bulkSelectNoneBtn">Select None</button></div>
+                </div>
+                <div class="border rounded p-2" style="max-height:180px; overflow-y:auto;">${bulkScheduleCheckboxesHtml || '<span class="text-muted small">No active ferry schedules.</span>'}</div>
+            </div>
+            <div class="col-md-4"><label class="form-label">Seats (per schedule)</label><input type="number" name="seats" class="form-control" min="1" value="1" required></div>
+            <div class="col-md-4"><label class="form-label">Start Date</label><input type="date" name="start_date" class="form-control" required value="${new Date().toISOString().slice(0, 10)}"></div>
+            <div class="col-md-4"><label class="form-label">End Date</label><input type="date" name="end_date" class="form-control" required value="${new Date().toISOString().slice(0, 10)}"></div>
+            <div class="col-12">
+                <label class="form-label mb-1">Applies on these days of the week</label>
+                <div class="d-flex flex-wrap gap-2">${bulkWeekdayCheckboxesHtml}</div>
+                <div class="form-text">Check all 7 for a daily reservation, or only specific days for a weekly/custom recurring one over the date range above. True calendar-month recurrence (e.g. "the 1st of every month") isn't supported.</div>
+            </div>
+            <div class="col-12"><label class="form-label">Reason (optional)</label><textarea name="reason" class="form-control" rows="2"></textarea></div>
+            <div class="col-12"><div class="alert alert-info small mb-0" id="bulkSummary">Select ferry schedules above to see a summary.</div></div>
+        </div>
+    </div>
+    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Apply Reservation</button></div>
+</form></div></div>
+<script>
+(function () {
+    var modal = document.getElementById('bulkReservationModal');
+    if (!modal) return;
+    var typeSelect = modal.querySelector('#bulkResTypeSelect');
+    var employeeField = modal.querySelector('#bulkEmployeeField');
+    var departmentField = modal.querySelector('#bulkDepartmentField');
+    var nameField = modal.querySelector('#bulkNameField');
+    var departmentSelect = departmentField.querySelector('select');
+    var departmentScopedTypes = ['department', 'hod'];
+    var departmentRequiredTypes = ['department'];
+    function syncType() {
+        employeeField.style.display = typeSelect.value === 'employee_specific' ? '' : 'none';
+        var isDepartmentScoped = departmentScopedTypes.indexOf(typeSelect.value) !== -1;
+        departmentField.style.display = isDepartmentScoped ? '' : 'none';
+        nameField.style.display = isDepartmentScoped ? '' : 'none';
+        departmentSelect.required = departmentRequiredTypes.indexOf(typeSelect.value) !== -1;
+    }
+    typeSelect.addEventListener('change', syncType);
+    syncType();
+
+    var checkboxes = Array.prototype.slice.call(modal.querySelectorAll('.bulk-schedule-checkbox'));
+    var resortSelect = modal.querySelector('select[name="resort_option"]');
+    var seatsInput = modal.querySelector('input[name="seats"]');
+    var startInput = modal.querySelector('input[name="start_date"]');
+    var endInput = modal.querySelector('input[name="end_date"]');
+    var summary = modal.querySelector('#bulkSummary');
+    function summaryText() {
+        var checkedCount = checkboxes.filter(function (c) { return c.checked; }).length;
+        var seats = Number(seatsInput.value) || 0;
+        var resortLabel = resortSelect.options[resortSelect.selectedIndex] ? resortSelect.options[resortSelect.selectedIndex].text : '';
+        return checkedCount + ' ferry schedule(s) selected · ' + seats + ' seat(s) each · ' + resortLabel + ' · ' + startInput.value + ' to ' + endInput.value;
+    }
+    function updateSummary() { summary.textContent = summaryText(); }
+    checkboxes.forEach(function (c) { c.addEventListener('change', updateSummary); });
+    [resortSelect, seatsInput, startInput, endInput].forEach(function (el) {
+        el.addEventListener('input', updateSummary);
+        el.addEventListener('change', updateSummary);
+    });
+    updateSummary();
+
+    var selectAllBtn = modal.querySelector('#bulkSelectAllBtn');
+    var selectNoneBtn = modal.querySelector('#bulkSelectNoneBtn');
+    if (selectAllBtn) selectAllBtn.addEventListener('click', function () { checkboxes.forEach(function (c) { c.checked = true; }); updateSummary(); });
+    if (selectNoneBtn) selectNoneBtn.addEventListener('click', function () { checkboxes.forEach(function (c) { c.checked = false; }); updateSummary(); });
+
+    modal.querySelector('form').addEventListener('submit', function (e) {
+        var checkedCount = checkboxes.filter(function (c) { return c.checked; }).length;
+        if (!checkedCount) {
+            e.preventDefault();
+            alert('Please select at least one ferry schedule.');
+            return;
+        }
+        if (!confirm('Apply this reservation to ' + summaryText() + '?')) e.preventDefault();
+    });
+})();
+</script>`;
+
     return html`
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h5 class="mb-0"><i class="bi bi-bookmark-star"></i> Seat Reservations</h5>
-    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createReservationModal"><i class="bi bi-plus-lg"></i> New Reservation</button>
+    <div>
+        ${isAdmin ? raw(`<button class="btn btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#bulkReservationModal"><i class="bi bi-collection"></i> Bulk Reservation</button>`) : ''}
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createReservationModal"><i class="bi bi-plus-lg"></i> New Reservation</button>
+    </div>
 </div>
 <div class="card shadow-sm mb-3"><div class="card-body">
     <form method="get" class="row g-2">
@@ -247,7 +367,8 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken, isA
     <tbody>${raw(rowsHtml || '<tr><td colspan="9" class="text-center text-muted py-4">No seat reservations found.</td></tr>')}</tbody>
 </table></div></div>
 ${raw(createModalHtml)}
-${raw(editModalsHtml)}`;
+${raw(editModalsHtml)}
+${isAdmin ? raw(bulkReservationModalHtml) : ''}`;
 }
 
 export function registerAdminSeatReservationsRoutes(router) {
@@ -362,6 +483,152 @@ export function registerAdminSeatReservationsRoutes(router) {
             const reservation = { ...inserted[0], direction, employee_name_snapshot: employeeName, department_name_snapshot: departmentName };
             await recordReservationAudit({ reservation, action: 'created', actorUserId: user.user_id, reason });
             return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('success', 'Seat reservation created.')].filter(Boolean) });
+        }
+
+        if (form.action === 'bulk_create') {
+            // System Administrator only - stricter than the
+            // booking.manage_seat_reservations permission every other
+            // action here uses (HR Manager included).
+            if (user.role_name !== ROLE_ADMIN) return notFound();
+
+            const reservationType = form.reservation_type;
+            if (!RESERVATION_TYPES.some((t) => t.value === reservationType)) {
+                return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'Invalid reservation type.')].filter(Boolean) });
+            }
+
+            const scheduleIdsRaw = form.schedule_ids;
+            const scheduleIds = [...new Set((Array.isArray(scheduleIdsRaw) ? scheduleIdsRaw : scheduleIdsRaw ? [scheduleIdsRaw] : []).map(Number).filter(Boolean))];
+            if (!scheduleIds.length) {
+                return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'Select at least one ferry schedule.')].filter(Boolean) });
+            }
+
+            const resortOption = form.resort_option;
+            const resortId = resortOption === 'both' ? null : Number(resortOption) || null;
+            if (resortOption !== 'both' && !resortId) {
+                return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'Please choose a valid resort.')].filter(Boolean) });
+            }
+
+            const seats = Math.max(1, Number(form.seats) || 0);
+            const startDate = form.start_date;
+            const endDate = form.end_date;
+            const reason = (form.reason || '').trim() || null;
+            const weekdaysRaw = form.weekdays;
+            const weekdays = (Array.isArray(weekdaysRaw) ? weekdaysRaw : weekdaysRaw ? [weekdaysRaw] : []).filter((d) => WEEKDAY_OPTIONS.includes(d));
+
+            if (!startDate || !endDate) {
+                return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'Start and end dates are required.')].filter(Boolean) });
+            }
+            if (endDate < startDate) {
+                return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'End date must be on or after the start date.')].filter(Boolean) });
+            }
+            if (!weekdays.length) {
+                return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'Select at least one day of the week.')].filter(Boolean) });
+            }
+
+            const bulkEmployeeUserId = reservationType === 'employee_specific' && form.employee_user_id ? Number(form.employee_user_id) : null;
+            const bulkDepartmentId = DEPARTMENT_SCOPED_TYPES.includes(reservationType) && form.department_id ? Number(form.department_id) : null;
+            const bulkContactName = DEPARTMENT_SCOPED_TYPES.includes(reservationType) ? (form.contact_name || '').trim() || null : null;
+
+            if (DEPARTMENT_REQUIRED_TYPES.includes(reservationType) && !bulkDepartmentId) {
+                return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'Department is required for a Department reservation.')].filter(Boolean) });
+            }
+
+            let bulkEmployeeName = null;
+            if (bulkEmployeeUserId) {
+                const rows = unwrap(await db().from('users').select('full_name').eq('user_id', bulkEmployeeUserId).limit(1));
+                bulkEmployeeName = rows[0]?.full_name ?? null;
+            }
+            let bulkDepartmentName = null;
+            if (bulkDepartmentId) {
+                const rows = unwrap(await db().from('departments').select('department_name').eq('department_id', bulkDepartmentId).limit(1));
+                bulkDepartmentName = rows[0]?.department_name ?? null;
+            }
+
+            const scheduleRows = unwrap(
+                await db().from('ferry_schedule').select('schedule_id, capacity, status, ferry_routes(direction)').in('schedule_id', scheduleIds)
+            );
+            const scheduleById = new Map(scheduleRows.map((s) => [s.schedule_id, s]));
+            const effectiveReason = reason || 'Bulk reservation (Administrator)';
+
+            let createdCount = 0;
+            const skipped = [];
+
+            for (const scheduleId of scheduleIds) {
+                const schedule = scheduleById.get(scheduleId);
+                if (!schedule || schedule.status !== 'active') {
+                    skipped.push(`#${scheduleId} (not found)`);
+                    continue;
+                }
+                if (seats > schedule.capacity) {
+                    skipped.push(`#${scheduleId} (exceeds capacity of ${schedule.capacity})`);
+                    continue;
+                }
+
+                // Generalized duplicate guard: an active reservation of the
+                // exact same type+resort+department/employee already
+                // overlapping this date range for this specific schedule -
+                // other types/resorts/departments are still free to coexist.
+                let dupQuery = db()
+                    .from('seat_reservations')
+                    .select('reservation_id')
+                    .eq('reservation_type', reservationType)
+                    .eq('status', 'active')
+                    .eq('schedule_id', scheduleId)
+                    .lte('start_date', endDate)
+                    .gte('end_date', startDate);
+                dupQuery = resortId ? dupQuery.eq('resort_id', resortId) : dupQuery.is('resort_id', null);
+                if (reservationType === 'employee_specific') {
+                    dupQuery = bulkEmployeeUserId ? dupQuery.eq('employee_user_id', bulkEmployeeUserId) : dupQuery.is('employee_user_id', null);
+                } else if (DEPARTMENT_SCOPED_TYPES.includes(reservationType)) {
+                    dupQuery = bulkDepartmentId ? dupQuery.eq('department_id', bulkDepartmentId) : dupQuery.is('department_id', null);
+                }
+                const dup = unwrap(await dupQuery);
+                if (dup.length) {
+                    skipped.push(`#${scheduleId} (duplicate reservation)`);
+                    continue;
+                }
+
+                const before = await getRemainingSeats(scheduleId, startDate);
+
+                const bulkInserted = unwrap(
+                    await db()
+                        .from('seat_reservations')
+                        .insert({
+                            schedule_id: scheduleId, resort_id: resortId, reservation_type: reservationType,
+                            employee_user_id: bulkEmployeeUserId, department_id: bulkDepartmentId, contact_name: bulkContactName, seats,
+                            start_date: startDate, end_date: endDate, weekdays, reason: effectiveReason,
+                            created_by_user_id: user.user_id,
+                        })
+                        .select('*')
+                );
+
+                const after = await getRemainingSeats(scheduleId, startDate);
+
+                const reservation = {
+                    ...bulkInserted[0],
+                    direction: schedule.ferry_routes?.direction ?? null,
+                    employee_name_snapshot: bulkEmployeeName,
+                    department_name_snapshot: bulkDepartmentName,
+                };
+                await recordReservationAudit({
+                    reservation,
+                    action: 'created',
+                    actorUserId: user.user_id,
+                    reason: effectiveReason,
+                    seatsAvailableBefore: before.remaining,
+                    seatsAvailableAfter: after.remaining,
+                });
+                createdCount++;
+            }
+
+            await logActivity(user.user_id, 'Bulk seat reservation', `schedules=${scheduleIds.length} created=${createdCount} skipped=${skipped.length}`, clientIp(request));
+
+            const message = createdCount
+                ? `Created ${createdCount} reservation(s).${skipped.length ? ' Skipped: ' + skipped.join(', ') : ''}`
+                : `No reservations created. Skipped: ${skipped.join(', ')}`;
+            return redirectTo('/admin/seat_reservations', {
+                cookies: [auth.setCookie, flashSetCookie(createdCount ? 'success' : 'error', message)].filter(Boolean),
+            });
         }
 
         if (form.action === 'edit') {
