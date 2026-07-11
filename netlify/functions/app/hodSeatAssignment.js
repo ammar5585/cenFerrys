@@ -662,22 +662,26 @@ async function findOrCreateHodPool({ resortId, scheduleId, travelDate, createdBy
     return reservation;
 }
 
-/** Read-only status for the HOD Reserved Seat Request page: pool total/assigned/available for this resort+schedule+date, plus the caller's own current booking against it (if any), so the page can show a Request or Cancel button. */
+/** True if this employee already holds an active HOD-assigned seat ANYWHERE on this date - across every ferry schedule that day, not just one - since an HOD may only request one reserved seat per day. */
+async function employeeHasHodAssignmentOnDate(userId, travelDate, excludeBookingId = null) {
+    const rows = unwrap(
+        await db()
+            .from('bookings')
+            .select('booking_id, schedule_id, booking_status(status_name), ferry_schedule(ferry_routes(direction))')
+            .eq('user_id', userId)
+            .eq('travel_date', travelDate)
+            .not('source_reservation_id', 'is', null)
+    );
+    return rows.find((r) => r.booking_id !== excludeBookingId && !OCCUPIED_EXCLUDED_STATUSES.includes(r.booking_status.status_name)) ?? null;
+}
+
+/** Read-only status for the HOD Reserved Seat Request page: pool total/assigned/available for this resort+schedule+date, plus the caller's own current booking for this DATE (any schedule - one reserved seat per day, not per schedule), so the page can show a Request or Cancel button and explain when the existing booking is for a different departure. */
 export async function getOwnHodSeatStatus({ resortId, scheduleId, travelDate, userId }) {
     const pool = await findHodPool({ resortId, scheduleId, travelDate });
     const allocation = pool ? pool.seats : await getHodSeatAllocation(resortId);
     const assignedCount = pool ? await countActiveAssignments(pool.reservation_id, travelDate) : 0;
 
-    const myBookingRows = unwrap(
-        await db()
-            .from('bookings')
-            .select('booking_id, source_reservation_id, booking_status(status_name)')
-            .eq('user_id', userId)
-            .eq('schedule_id', scheduleId)
-            .eq('travel_date', travelDate)
-            .not('source_reservation_id', 'is', null)
-    );
-    const myActive = myBookingRows.find((b) => !OCCUPIED_EXCLUDED_STATUSES.includes(b.booking_status.status_name));
+    const myActive = await employeeHasHodAssignmentOnDate(userId, travelDate);
 
     return {
         seatsTotal: allocation,
@@ -685,6 +689,7 @@ export async function getOwnHodSeatStatus({ resortId, scheduleId, travelDate, us
         seatsAvailable: Math.max(0, allocation - assignedCount),
         myBookingId: myActive?.booking_id ?? null,
         myStatus: myActive?.booking_status?.status_name ?? null,
+        myScheduleDirection: myActive && myActive.schedule_id !== scheduleId ? (myActive.ferry_schedule?.ferry_routes?.direction ?? null) : null,
     };
 }
 
@@ -692,9 +697,9 @@ export async function getOwnHodSeatStatus({ resortId, scheduleId, travelDate, us
  * The HOD's own self-request - always books the requester themselves
  * against the resort-wide pool, never another employee and never a
  * department-scoped reservation. Re-validates everything server-side
- * (resort match, schedule validity, no existing HOD seat for this
- * date, remaining capacity) rather than trusting the page's own status
- * check.
+ * (resort match, schedule validity, no existing HOD seat anywhere on
+ * this date - one per day, not per schedule - remaining capacity)
+ * rather than trusting the page's own status check.
  */
 export async function requestOwnHodSeat({ resortId, scheduleId, travelDate, userId, remarks }) {
     const employeeRows = unwrap(await db().from('users').select('user_id, full_name, employee_id, department_id, resort_id, status').eq('user_id', userId).limit(1));
@@ -705,7 +710,7 @@ export async function requestOwnHodSeat({ resortId, scheduleId, travelDate, user
     const schedule = scheduleRows[0];
     if (!schedule || schedule.status !== 'active' || !schedule.weekdays.includes(weekdayFor(travelDate))) return { ok: false, reason: 'invalid_schedule' };
 
-    if (await employeeHasHodAssignment(userId, scheduleId, travelDate)) return { ok: false, reason: 'already_requested' };
+    if (await employeeHasHodAssignmentOnDate(userId, travelDate)) return { ok: false, reason: 'already_requested' };
 
     const pool = await findOrCreateHodPool({ resortId, scheduleId, travelDate, createdByUserId: userId });
     const assignedCount = await countActiveAssignments(pool.reservation_id, travelDate);

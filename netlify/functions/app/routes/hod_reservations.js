@@ -111,7 +111,11 @@ async function hodSeatRequestPageBody({ date, scheduleId, schedules, resortId, r
             <div class="col-4"><div class="text-muted small">Available</div><div class="fs-4">${status.seatsAvailable}</div></div>
         </div>
         ${status.myBookingId
-            ? html`<p class="mb-2">You currently have a reserved seat for this trip - status: <span class="badge bg-primary">${h(status.myStatus)}</span></p>
+            ? html`<p class="mb-2">
+                    ${status.myScheduleDirection
+                        ? html`You already have a reserved seat on this date for a different departure (<strong>${h(status.myScheduleDirection)}</strong>) - status: <span class="badge bg-primary">${h(status.myStatus)}</span>. An HOD may only reserve one seat per day.`
+                        : html`You currently have a reserved seat for this trip - status: <span class="badge bg-primary">${h(status.myStatus)}</span>`}
+                </p>
                 ${canCancel
                     ? html`<form method="post" data-confirm="Cancel your reserved seat request?">${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="cancel_request"><input type="hidden" name="booking_id" value="${status.myBookingId}"><input type="hidden" name="date" value="${date}"><input type="hidden" name="schedule_id" value="${scheduleId}"><button class="btn btn-outline-danger btn-sm"><i class="bi bi-x-circle"></i> Cancel My Request</button></form>`
                     : ''}`
