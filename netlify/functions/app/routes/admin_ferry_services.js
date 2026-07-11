@@ -136,7 +136,7 @@ async function servicesListBody({ statusFilter, csrfToken }) {
         <div class="row g-3">
             <div class="col-12"><label class="form-label">Ferry Name</label><input type="text" name="service_name" class="form-control" value="${h(s.service_name ?? '')}" required></div>
             <div class="col-md-6"><label class="form-label">Maximum Passenger Capacity</label><input type="number" name="capacity" class="form-control" min="1" value="${s.capacity}" required></div>
-            <div class="col-md-6"></div>
+            <div class="col-md-6"><label class="form-label">Ferry Code</label><input type="text" name="service_code" class="form-control" value="${h(s.service_code ?? '')}" required></div>
             <div class="col-md-6"><label class="form-label">Effective Date</label><input type="date" name="effective_date" class="form-control" value="${s.effective_date ?? ''}" required></div>
             <div class="col-md-6"><label class="form-label">Expiry Date (optional)</label><input type="date" name="expiry_date" class="form-control" value="${s.expiry_date ?? ''}"></div>
             <div class="col-12"><label class="form-label mb-1">Operating Days</label><div class="d-flex flex-wrap gap-2">${WEEKDAY_OPTIONS.map((day) => `<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="weekdays" value="${day}" id="editWd${day}${s.schedule_id}" ${(s.weekdays || []).includes(day) ? 'checked' : ''}><label class="form-check-label" for="editWd${day}${s.schedule_id}">${day}</label></div>`).join('')}</div></div>
@@ -324,6 +324,7 @@ export function registerAdminFerryServicesRoutes(router) {
             const result = await updateFerryService({
                 scheduleId,
                 serviceName: form.service_name,
+                serviceCode: form.service_code,
                 weekdays: weekdaysFromForm(form),
                 capacity: Number(form.capacity),
                 effectiveDate: form.effective_date,

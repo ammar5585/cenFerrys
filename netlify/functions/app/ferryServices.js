@@ -266,26 +266,33 @@ export async function createFerryService({ serviceName, serviceCode, weekdays, c
     return { ok: true, service };
 }
 
-export async function updateFerryService({ scheduleId, serviceName, weekdays, capacity, effectiveDate, expiryDate, actorUserId, reason }) {
+export async function updateFerryService({ scheduleId, serviceName, serviceCode, weekdays, capacity, effectiveDate, expiryDate, actorUserId, reason }) {
     const existing = await getServiceWithStops(scheduleId);
     if (!existing) return { ok: false, reason: 'not_found' };
     if (!serviceName?.trim()) return { ok: false, reason: 'invalid_name' };
+    if (!serviceCode?.trim()) return { ok: false, reason: 'invalid_code' };
     if (!Number.isInteger(capacity) || capacity < 1) return { ok: false, reason: 'invalid_capacity' };
     if (!weekdays?.length) return { ok: false, reason: 'invalid_weekdays' };
     if (!effectiveDate) return { ok: false, reason: 'invalid_effective_date' };
     if (expiryDate && expiryDate < effectiveDate) return { ok: false, reason: 'invalid_expiry_date' };
 
+    const trimmedCode = serviceCode.trim();
+    if (trimmedCode !== existing.service_code) {
+        const existingCode = unwrap(await db().from('ferry_schedule').select('schedule_id').eq('service_code', trimmedCode).neq('schedule_id', scheduleId).limit(1));
+        if (existingCode.length) return { ok: false, reason: 'duplicate_code' };
+    }
+
     unwrap(
         await db()
             .from('ferry_schedule')
-            .update({ service_name: serviceName.trim(), capacity, weekdays, effective_date: effectiveDate, expiry_date: expiryDate || null })
+            .update({ service_name: serviceName.trim(), service_code: trimmedCode, capacity, weekdays, effective_date: effectiveDate, expiry_date: expiryDate || null })
             .eq('schedule_id', scheduleId)
     );
 
     await insertServiceLog({
         schedule_id: scheduleId,
         service_name_snapshot: serviceName.trim(),
-        service_code_snapshot: existing.service_code,
+        service_code_snapshot: trimmedCode,
         route_snapshot: existing.routeSnapshot,
         action: 'modified',
         actor_user_id: actorUserId,
