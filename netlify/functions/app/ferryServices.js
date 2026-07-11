@@ -103,15 +103,21 @@ export async function getServiceWithStops(scheduleId) {
 
 /**
  * Every active Ferry Service with a configured route (>= 2 stops),
- * expressed as a bookable "First Stop to Last Stop" direction - the
- * whole configured journey, not a sub-segment (segment-level booking
- * is Phase 2, since it needs a real segment-aware capacity model;
- * booking the full route still uses the existing flat per-schedule
- * capacity correctly, since it's still "the whole schedule, booked as
- * a whole"). This is what connects a Ferry Service (admin_ferry_
- * services.js) to the booking flow (staff.js/ajax.js) - a service
- * created there has no ferry_routes row at all (route_id is NULL by
- * design), so it would otherwise never appear as a bookable direction.
+ * bookable as a whole journey (not a sub-segment - segment-level
+ * booking is Phase 2, since it needs a real segment-aware capacity
+ * model; booking the full route still uses the existing flat per-
+ * schedule capacity correctly, since it's still "the whole schedule,
+ * booked as a whole"). This is what connects a Ferry Service
+ * (admin_ferry_services.js) to the booking flow (staff.js/ajax.js) - a
+ * service created there has no ferry_routes row at all (route_id is
+ * NULL by design), so it would otherwise never appear as bookable.
+ *
+ * The bookable label is the service's own name (e.g. "The Atollia
+ * Evening") rather than a derived "First Stop to Last Stop" string -
+ * for a round-trip route that's the same stop at both ends ("CGLM to
+ * CGLM"), which reads as meaningless/confusing to an employee booking
+ * a seat. Falls back to the stop-chain string only if the service
+ * somehow has no name.
  */
 export async function getWholeRouteDirections() {
     const services = unwrap(
@@ -144,7 +150,7 @@ export async function getWholeRouteDirections() {
         const last = stops[stops.length - 1];
         results.push({
             scheduleId: service.schedule_id,
-            direction: `${first.stop_name} to ${last.stop_name}`,
+            direction: service.service_name || `${first.stop_name} to ${last.stop_name}`,
             boardingStopName: first.stop_name,
             destinationStopName: last.stop_name,
             boardingTime: first.departure_time,

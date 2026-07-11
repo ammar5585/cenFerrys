@@ -166,16 +166,16 @@ ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `
                             <input type="date" name="travel_date" id="travelDate" class="form-control" required min="${new Date().toISOString().slice(0, 10)}">
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label">Direction *</label>
+                            <label class="form-label">Ferry *</label>
                             <select name="direction_select" id="direction" class="form-select" required>
-                                <option value="">-- Select Direction --</option>
+                                <option value="">-- Select Ferry --</option>
                                 ${raw(routes.map((r) => `<option value="${h(r.direction)}">${h(r.direction)}</option>`).join(''))}
                             </select>
                         </div>
                         <div class="col-12">
                             <label class="form-label">Ferry Time *</label>
                             <div id="scheduleOptions" class="row g-2">
-                                <div class="col-12 text-muted small">Select a date and direction to view available ferry times.</div>
+                                <div class="col-12 text-muted small">Select a date and ferry to view available times.</div>
                             </div>
                             <input type="hidden" name="schedule_id" id="scheduleId" required>
                         </div>
@@ -228,7 +228,7 @@ const BOOKING_PAGE_SCRIPT = `
         submitBtn.disabled = true;
         var date = dateInput.value, direction = directionSelect.value;
         if (!date || !direction) {
-            container.innerHTML = '<div class="col-12 text-muted small">Select a date and direction to view available ferry times.</div>';
+            container.innerHTML = '<div class="col-12 text-muted small">Select a date and ferry to view available times.</div>';
             return;
         }
         container.innerHTML = '<div class="col-12 text-muted small"><span class="spinner-border spinner-border-sm"></span> Loading...</div>';
@@ -246,7 +246,7 @@ const BOOKING_PAGE_SCRIPT = `
                     return;
                 }
                 if (!res.schedules || res.schedules.length === 0) {
-                    container.innerHTML = '<div class="col-12 text-muted small">No ferries operate on the selected date/direction.</div>';
+                    container.innerHTML = '<div class="col-12 text-muted small">No ferries operate on the selected date.</div>';
                     return;
                 }
                 container.innerHTML = '';
@@ -352,7 +352,7 @@ async function myBookingsBody(userId, statusFilter, csrfToken) {
 <div class="card shadow-sm">
     <div class="table-responsive">
         <table class="table table-hover mb-0 align-middle">
-            <thead><tr><th>Date</th><th>Time</th><th>Direction</th><th>Purpose</th><th>Seats</th><th>Status</th><th>Submitted</th><th></th></tr></thead>
+            <thead><tr><th>Date</th><th>Time</th><th>Ferry</th><th>Purpose</th><th>Seats</th><th>Status</th><th>Submitted</th><th></th></tr></thead>
             <tbody>${raw(rows || '<tr><td colspan="8" class="text-center text-muted py-4">No bookings yet.</td></tr>')}</tbody>
         </table>
     </div>
@@ -567,7 +567,10 @@ export function registerStaffRoutes(router) {
             }
         }
 
-        const routes = unwrap(await db().from('ferry_routes').select('direction').eq('status', 'active').order('direction'));
+        const errorPathLegacyRoutes = unwrap(await db().from('ferry_routes').select('direction').eq('status', 'active').order('direction'));
+        const errorPathServiceDirections = await getWholeRouteDirections();
+        const errorPathDirectionNames = [...new Set([...errorPathLegacyRoutes.map((r) => r.direction), ...errorPathServiceDirections.map((d) => d.direction)])].sort();
+        const routes = errorPathDirectionNames.map((direction) => ({ direction }));
         const errorPathBookerRows = unwrap(await db().from('users').select('department_id, resort_id').eq('user_id', user.user_id).limit(1));
         const workflowInfo = await getApprovalWorkflowInfo(errorPathBookerRows[0]?.resort_id ?? null, errorPathBookerRows[0]?.department_id ?? null);
         const body = bookingFormBody({ errors, maxSeats, routes, workflowInfo, csrfToken: user.csrf });
@@ -704,7 +707,7 @@ export function registerStaffRoutes(router) {
         <tr><th>Employee</th><td>${booking.users.full_name} (${booking.users.employee_id})</td></tr>
         <tr><th>Travel Date</th><td>${formatDate(booking.travel_date)}</td></tr>
         <tr><th>Departure Time</th><td>${formatTime(booking.ferry_schedule.departure_time)}</td></tr>
-        <tr><th>Direction</th><td>${booking.direction}</td></tr>
+        <tr><th>Ferry</th><td>${booking.direction}</td></tr>
         <tr><th>Seats</th><td>${booking.seats}</td></tr>
         <tr><th>Purpose</th><td>${booking.purpose}</td></tr>
         <tr><th>Status</th><td>${booking.booking_status.status_name}</td></tr>
