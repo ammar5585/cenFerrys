@@ -13,17 +13,16 @@ import { requirePermission } from '../guards.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
-import { getOwnHodSeatStatus, requestOwnHodSeat, cancelOwnHodSeatRequest, listOwnHodSeatRequests } from '../hodSeatAssignment.js';
+import { getOwnHodSeatStatus, requestOwnHodSeat, cancelOwnHodSeatRequest, listOwnHodSeatRequests, HOD_SELF_CANCELLABLE_STATUSES } from '../hodSeatAssignment.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatDate, formatTime, statusBadgeClass } from '../format.js';
 
 const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const REASSIGNABLE_STATUSES = ['Approved', 'Checked-In'];
 
 const ACTION_SUCCESS = {
-    request_seat: 'Your reserved seat request has been confirmed.',
+    request_seat: 'Your reserved seat request has been submitted and is awaiting GM/RM/HR approval.',
     cancel_request: 'Your reserved seat request has been cancelled.',
 };
 const ACTION_ERROR = {
@@ -100,7 +99,7 @@ async function hodSeatRequestPageBody({ date, scheduleId, schedules, resortId, r
     if (scheduleId) {
         const status = await getOwnHodSeatStatus({ resortId, scheduleId, travelDate: date, userId });
         const canRequest = !status.myBookingId && status.seatsAvailable > 0;
-        const canCancel = status.myBookingId && REASSIGNABLE_STATUSES.includes(status.myStatus);
+        const canCancel = status.myBookingId && HOD_SELF_CANCELLABLE_STATUSES.includes(status.myStatus);
 
         statusHtml = html`<div class="card shadow-sm mb-3">
     <div class="card-header bg-white">Reserved Seat Availability - ${h(resortName)}</div>
@@ -113,8 +112,8 @@ async function hodSeatRequestPageBody({ date, scheduleId, schedules, resortId, r
         ${status.myBookingId
             ? html`<p class="mb-2">
                     ${status.myScheduleDirection
-                        ? html`You already have a reserved seat on this date for a different departure (<strong>${h(status.myScheduleDirection)}</strong>) - status: <span class="badge bg-primary">${h(status.myStatus)}</span>. An HOD may only reserve one seat per day.`
-                        : html`You currently have a reserved seat for this trip - status: <span class="badge bg-primary">${h(status.myStatus)}</span>`}
+                        ? html`You already have a reserved seat request on this date for a different departure (<strong>${h(status.myScheduleDirection)}</strong>) - status: <span class="badge bg-primary">${h(status.myStatus)}</span>. An HOD may only reserve one seat per day.`
+                        : html`You have a reserved seat request for this trip - status: <span class="badge bg-primary">${h(status.myStatus)}</span>${status.myStatus === 'Approved' ? '' : ' (awaiting GM/RM/HR approval)'}`}
                 </p>
                 ${canCancel
                     ? html`<form method="post" data-confirm="Cancel your reserved seat request?">${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="cancel_request"><input type="hidden" name="booking_id" value="${status.myBookingId}"><input type="hidden" name="date" value="${date}"><input type="hidden" name="schedule_id" value="${scheduleId}"><button class="btn btn-outline-danger btn-sm"><i class="bi bi-x-circle"></i> Cancel My Request</button></form>`

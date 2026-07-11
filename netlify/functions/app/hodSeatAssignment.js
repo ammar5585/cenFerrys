@@ -17,7 +17,7 @@
 // below, which only maintains the audit trail for that case).
 
 import { db, unwrap } from './db.js';
-import { getStatusId } from './approval.js';
+import { getStatusId, routeBookingApproval } from './approval.js';
 import { createNotification } from './notifications.js';
 import { getSetting, setSetting } from './settings.js';
 
@@ -28,6 +28,12 @@ const RESERVABLE_TYPES = ['hod', 'department'];
 const OCCUPIED_EXCLUDED_STATUSES = ['Rejected', 'Cancelled', 'Expired', 'No Show'];
 const REASSIGNABLE_STATUSES = ['Approved', 'Checked-In'];
 const DEFAULT_HOD_SEAT_ALLOCATION = 2;
+// The HOD Reserved Seat Request self-service flow always routes through
+// the legacy GM -> RM -> HR chain (never the department hierarchy - an
+// HOD approving their own request, or routing it to their own
+// department's tiers, doesn't make sense), so these are the only
+// pre-departure statuses a self-requested booking can ever be in.
+export const HOD_SELF_CANCELLABLE_STATUSES = ['Pending', 'Waiting GM Approval', 'Waiting RM Approval', 'Waiting HR Approval', 'Approved', 'Checked-In'];
 
 function weekdayFor(travelDate) {
     return WEEKDAY_ABBR[new Date(`${travelDate}T00:00:00Z`).getUTCDay()];
@@ -700,6 +706,16 @@ export async function getOwnHodSeatStatus({ resortId, scheduleId, travelDate, us
  * (resort match, schedule validity, no existing HOD seat anywhere on
  * this date - one per day, not per schedule - remaining capacity)
  * rather than trusting the page's own status check.
+ *
+ * Not auto-approved: the booking is inserted Pending and immediately
+ * routed through the legacy GM -> RM -> HR chain (routeBookingApproval),
+ * same as it would notify/assign for any other booking - an HOD
+ * reserving a seat for themselves still needs GM/RM/HR sign-off, it
+ * just skips the department-hierarchy tiers (which would otherwise ask
+ * the HOD to approve their own request). The seat is still held in the
+ * pool immediately (every pre-departure status counts toward
+ * countActiveAssignments()), so approval delay never risks losing the
+ * reservation to someone else.
  */
 export async function requestOwnHodSeat({ resortId, scheduleId, travelDate, userId, remarks }) {
     const employeeRows = unwrap(await db().from('users').select('user_id, full_name, employee_id, department_id, resort_id, status').eq('user_id', userId).limit(1));
@@ -716,7 +732,7 @@ export async function requestOwnHodSeat({ resortId, scheduleId, travelDate, user
     const assignedCount = await countActiveAssignments(pool.reservation_id, travelDate);
     if (assignedCount >= pool.seats) return { ok: false, reason: 'seat_unavailable' };
 
-    const approvedId = await getStatusId('Approved');
+    const pendingId = await getStatusId('Pending');
     const direction = schedule.ferry_routes?.direction ?? null;
     const inserted = unwrap(
         await db()
@@ -729,13 +745,16 @@ export async function requestOwnHodSeat({ resortId, scheduleId, travelDate, user
                 purpose: HOD_BOOKING_PURPOSE,
                 remarks: remarks || null,
                 seats: 1,
-                status_id: approvedId,
+                status_id: pendingId,
                 booking_method: 'hod_seat_assignment',
                 source_reservation_id: pool.reservation_id,
             })
             .select('*')
     );
     const booking = inserted[0];
+
+    await routeBookingApproval(booking.booking_id);
+    await createNotification(userId, 'Your HOD reserved seat request has been submitted and is awaiting GM/RM/HR approval.', 'booking', booking.booking_id);
 
     await insertHodAssignmentLog({
         reservation_id: pool.reservation_id,
@@ -751,13 +770,13 @@ export async function requestOwnHodSeat({ resortId, scheduleId, travelDate, user
         employee_assigned_name_snapshot: employee.full_name,
         employee_assigned_id_snapshot: employee.employee_id,
         assigned_by_user_id: userId,
-        remarks: remarks || 'Self-requested via HOD Reserved Seat Request',
+        remarks: remarks || 'Self-requested via HOD Reserved Seat Request - awaiting GM/RM/HR approval',
     });
 
     return { ok: true, booking };
 }
 
-/** The HOD cancelling their own request - refuses any booking that isn't theirs, and reuses the same before-departure guard as every other release in this file. */
+/** The HOD cancelling their own request - refuses any booking that isn't theirs, and allows it any time before departure, whether still awaiting GM/RM/HR approval or already Approved. */
 export async function cancelOwnHodSeatRequest({ bookingId, userId, remarks }) {
     const rows = unwrap(
         await db()
@@ -768,7 +787,7 @@ export async function cancelOwnHodSeatRequest({ bookingId, userId, remarks }) {
     );
     const booking = rows[0];
     if (!booking || booking.user_id !== userId || !booking.source_reservation_id) return { ok: false, reason: 'not_hod_assignment' };
-    if (!REASSIGNABLE_STATUSES.includes(booking.booking_status.status_name)) return { ok: false, reason: 'too_late_to_release' };
+    if (!HOD_SELF_CANCELLABLE_STATUSES.includes(booking.booking_status.status_name)) return { ok: false, reason: 'too_late_to_release' };
 
     const reservation = await loadReservationForWrite(booking.source_reservation_id);
 
