@@ -30,6 +30,7 @@ import {
     updateRouteStop,
     removeRouteStop,
     moveRouteStop,
+    getStopNameOptions,
 } from '../ferryServices.js';
 
 const WEEKDAY_OPTIONS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -213,6 +214,10 @@ ${raw(perServiceModalsHtml)}
 // Manage Stops page (one service)
 // ---------------------------------------------------------------------
 async function manageStopsBody({ service, csrfToken }) {
+    const stopNameOptions = await getStopNameOptions();
+    const stopNameOptionsHtml = (selected) =>
+        `<option value="">-- Select Stop --</option>` +
+        stopNameOptions.map((name) => `<option value="${h(name)}" ${name === selected ? 'selected' : ''}>${h(name)}</option>`).join('');
     const stopsHtml = service.stops
         .map((stop, i) => {
             const isFirst = i === 0;
@@ -244,7 +249,7 @@ async function manageStopsBody({ service, csrfToken }) {
     ${csrfField(csrfToken)}<input type="hidden" name="action" value="update_stop"><input type="hidden" name="stop_id" value="${stop.stop_id}"><input type="hidden" name="schedule_id" value="${service.schedule_id}">
     <div class="modal-header"><h5 class="modal-title">Edit Stop - ${h(stop.stop_name)}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <div class="modal-body">
-        <div class="mb-3"><label class="form-label">Stop Name</label><input type="text" name="stop_name" class="form-control" value="${h(stop.stop_name)}" required></div>
+        <div class="mb-3"><label class="form-label">Stop Name</label><select name="stop_name" class="form-select" required>${stopNameOptionsHtml(stop.stop_name)}</select><div class="form-text">Managed on the <a href="/admin/directions" target="_blank">Direction Management</a> page.</div></div>
         <div class="row g-2 mb-3">
             <div class="col-6"><label class="form-label">Arrival Time</label><input type="time" name="arrival_time" class="form-control" value="${stop.arrival_time ? stop.arrival_time.slice(0, 5) : ''}"></div>
             <div class="col-6"><label class="form-label">Departure Time</label><input type="time" name="departure_time" class="form-control" value="${stop.departure_time ? stop.departure_time.slice(0, 5) : ''}"></div>
@@ -270,7 +275,7 @@ async function manageStopsBody({ service, csrfToken }) {
 <div class="card shadow-sm"><div class="card-header bg-white">Add Stop</div><div class="card-body">
     <form method="post" class="row g-3">
         ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="add_stop"><input type="hidden" name="schedule_id" value="${service.schedule_id}">
-        <div class="col-md-4"><label class="form-label">Stop Name</label><input type="text" name="stop_name" class="form-control" required></div>
+        <div class="col-md-4"><label class="form-label">Stop Name</label><select name="stop_name" class="form-select" required>${raw(stopNameOptionsHtml(null))}</select></div>
         <div class="col-md-3"><label class="form-label">Arrival Time</label><input type="time" name="arrival_time" class="form-control"></div>
         <div class="col-md-3"><label class="form-label">Departure Time</label><input type="time" name="departure_time" class="form-control"></div>
         <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100"><i class="bi bi-plus-lg"></i> Add</button></div>

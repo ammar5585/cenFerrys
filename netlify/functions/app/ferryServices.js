@@ -101,6 +101,28 @@ export async function getServiceWithStops(scheduleId) {
     return { ...service, stops, routeSnapshot: routeSnapshotFromStops(stops) };
 }
 
+/**
+ * Individual stop/location names for the "Stop Name" picker, derived
+ * from Direction Management (directions.name, e.g. "CGLM to CMLM") -
+ * there's no separate "locations" table, and directions are already
+ * the app's one admin-curated source of location names, so a stop's
+ * name is picked from here rather than free-typed (avoiding
+ * inconsistent spelling like "Hulhumale" vs "Hulhumalé" across stops).
+ * Every direction name is split on " to " and both halves are kept as
+ * candidates, deduplicated and sorted.
+ */
+export async function getStopNameOptions() {
+    const rows = unwrap(await db().from('directions').select('name').eq('status', 'active'));
+    const names = new Set();
+    for (const row of rows) {
+        for (const part of row.name.split(' to ')) {
+            const trimmed = part.trim();
+            if (trimmed) names.add(trimmed);
+        }
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+}
+
 /** Non-blocking duplicate-service check: other ACTIVE services with the same stop-name chain and an overlapping effective/expiry range. Returns a warning string, or null. */
 export async function findSimilarActiveServiceWarning(scheduleId) {
     const service = await getServiceWithStops(scheduleId);
