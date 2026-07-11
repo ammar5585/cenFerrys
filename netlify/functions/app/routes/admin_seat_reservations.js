@@ -19,6 +19,8 @@ import { formatTime } from '../format.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { getActiveResorts, getAllDepartments } from '../refData.js';
+import { ROLE_ADMIN } from '../session.js';
+import { logActivity, clientIp } from '../activity.js';
 
 const WEEKDAY_OPTIONS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const RESERVATION_TYPES = [
@@ -74,7 +76,7 @@ async function recordReservationAudit({ reservation, action, actorUserId, reason
     );
 }
 
-async function reservationsPageBody({ statusFilter, resortFilter, csrfToken }) {
+async function reservationsPageBody({ statusFilter, resortFilter, csrfToken, isAdmin }) {
     let query = db()
         .from('seat_reservations')
         .select(
@@ -123,7 +125,12 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken }) {
                         ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="cancel"><input type="hidden" name="reservation_id" value="${r.reservation_id}">
                         <button class="btn btn-sm btn-outline-danger"><i class="bi bi-x-circle"></i></button>
                     </form>`
-                    : ''}
+                    : isAdmin
+                      ? html`<form method="post" class="d-inline" data-confirm="Permanently delete this reservation? This cannot be undone (its audit log entry is kept).">
+                        ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="delete"><input type="hidden" name="reservation_id" value="${r.reservation_id}">
+                        <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i> Delete</button>
+                    </form>`
+                      : ''}
             </td>
         </tr>`;
         })
@@ -252,6 +259,7 @@ export function registerAdminSeatReservationsRoutes(router) {
             statusFilter: url.searchParams.get('status') || '',
             resortFilter: Number(url.searchParams.get('resort') || 0),
             csrfToken: auth.user.csrf,
+            isAdmin: auth.user.role_name === ROLE_ADMIN,
         });
         return renderShellForRequest({ request, auth, pageTitle: 'Seat Reservations', path: '/admin/seat_reservations', bodyHtml: body });
     });
@@ -434,6 +442,44 @@ export function registerAdminSeatReservationsRoutes(router) {
             return redirectTo('/admin/seat_reservations', {
                 cookies: [auth.setCookie, flashSetCookie('success', newStatus === 'released' ? 'Reservation released.' : 'Reservation cancelled.')].filter(Boolean),
             });
+        }
+
+        if (form.action === 'delete') {
+            // Administrator-only, and only once already Released/Cancelled/
+            // Expired - forces a deliberate two-step (cancel/release, then
+            // delete) rather than ever instantly purging a live,
+            // capacity-holding reservation. Hard SQL DELETE - the only such
+            // delete in this app - is safe here because
+            // seat_reservation_log.reservation_id now uses ON DELETE SET
+            // NULL (0026_seat_reservation_delete.sql), so the audit trail
+            // (with its own denormalized snapshots) survives; a final
+            // 'deleted' log row is written first, while the FK is still valid.
+            if (user.role_name !== ROLE_ADMIN) return notFound();
+            const reservationId = Number(form.reservation_id);
+            const rows = unwrap(
+                await db()
+                    .from('seat_reservations')
+                    .select(
+                        'reservation_id, schedule_id, resort_id, reservation_type, seats, start_date, end_date, status, contact_name, ' +
+                            'employee:users!seat_reservations_employee_user_id_fkey(full_name), department:departments(department_name), ferry_schedule(ferry_routes(direction))'
+                    )
+                    .eq('reservation_id', reservationId)
+                    .limit(1)
+            );
+            if (!rows.length || rows[0].status === 'active') {
+                return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('error', 'Reservation not found, or still active - release or cancel it first.')].filter(Boolean) });
+            }
+            const existing = rows[0];
+            const reservation = {
+                ...existing,
+                direction: existing.ferry_schedule?.ferry_routes?.direction ?? null,
+                employee_name_snapshot: existing.employee?.full_name ?? null,
+                department_name_snapshot: existing.department?.department_name ?? null,
+            };
+            await recordReservationAudit({ reservation, action: 'deleted', actorUserId: user.user_id, reason: 'Deleted by Administrator from the Seat Reservations page' });
+            unwrap(await db().from('seat_reservations').delete().eq('reservation_id', reservationId));
+            await logActivity(user.user_id, 'Deleted seat reservation', `reservation_id=${reservationId}`, clientIp(request));
+            return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie, flashSetCookie('success', 'Reservation permanently deleted.')].filter(Boolean) });
         }
 
         return redirectTo('/admin/seat_reservations', { cookies: [auth.setCookie] });
