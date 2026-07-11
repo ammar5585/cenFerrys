@@ -3,6 +3,7 @@
 
 import { db, unwrap } from '../db.js';
 import { requirePermission, requireLogin } from '../guards.js';
+import { hasPermission } from '../permissions.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
@@ -13,9 +14,6 @@ import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatDate, formatTime, greeting } from '../format.js';
-import { ROLE_GM, ROLE_RM, ROLE_HR, ROLE_DEPT_MGR } from '../session.js';
-
-const APPROVER_ROLES = [ROLE_GM, ROLE_RM, ROLE_HR];
 
 /** Maps a booking's "waiting/pending" status_name to a human hierarchy-level label for the audit trail. */
 const LEVEL_BY_STATUS_NAME = {
@@ -28,10 +26,18 @@ const LEVEL_BY_STATUS_NAME = {
 };
 
 // ---------------------------------------------------------------------
-// Dashboard - shared by GM/RM/HR (approvers) and Department Manager
+// Dashboard - shared by GM/RM/HR-equivalent approvers and Department
+// Managers. Gated by permission, not literal role name - any custom
+// department role (the ~47 job-title roles from 0020_add_department_
+// roles.sql) that an Administrator has granted approver/department
+// permissions to must see the matching dashboard content, exactly like
+// the sidebar's own nav links already do (renderSidebar), not just the
+// built-in General Manager/Resident Manager/HR Manager/Department
+// Manager roles.
 // ---------------------------------------------------------------------
 async function managerDashboardBody(user) {
-    const isApprover = APPROVER_ROLES.includes(user.role_name);
+    const isApprover = hasPermission(user.perms, 'approval_workflow.view_history') || hasPermission(user.perms, 'approval_workflow.manage_own_availability');
+    const canViewDepartmentSummary = hasPermission(user.perms, 'approval_workflow.view_department_requests');
     let pendingCount = 0;
     let approvedCount = 0;
     let rejectedCount = 0;
@@ -77,7 +83,7 @@ async function managerDashboardBody(user) {
     }
 
     let deptSummaryHtml = '';
-    if (user.role_name === ROLE_DEPT_MGR) {
+    if (canViewDepartmentSummary) {
         const selfRows = unwrap(await db().from('users').select('department_id, resort_id').eq('user_id', user.user_id).limit(1));
         const departmentId = selfRows[0]?.department_id;
         const resortId = selfRows[0]?.resort_id;
@@ -115,7 +121,7 @@ ${isApprover
     </div>
 </div>`
     : ''}
-${user.role_name === ROLE_DEPT_MGR
+${canViewDepartmentSummary
     ? html`
 <div class="card shadow-sm"><div class="card-header bg-white"><i class="bi bi-people"></i> Department Booking Summary</div>
     <div class="table-responsive"><table class="table mb-0"><thead><tr><th>Status</th><th>Total</th></tr></thead>
