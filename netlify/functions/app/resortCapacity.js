@@ -14,6 +14,33 @@ async function insertLog(row) {
     unwrap(await db().from('ferry_resort_capacity_log').insert(row));
 }
 
+/**
+ * The seat limit a Seat Reservation for this schedule+resort must
+ * respect - the resort's own Resort Capacity Allocator allocation if
+ * one is configured for this schedule AND the reservation is for a
+ * specific resort, otherwise the ferry's raw total capacity (today's
+ * behavior, unchanged). A "Both Resorts" reservation (resortId null)
+ * isn't tied to one resort's own sub-pool, so it keeps checking
+ * against the ferry-wide total either way - only a resort-specific
+ * reservation on a split-configured service gets the stricter, correct
+ * limit instead of silently being allowed to exceed what that resort
+ * actually has.
+ */
+/** Whether this schedule has any Resort Capacity Allocator split configured at all - used to gate the new resort-aware check to split-configured services only, leaving unsplit services' reservation validation exactly as it was before this check existed. */
+export async function hasCapacitySplit(scheduleId) {
+    const rows = unwrap(await db().from('ferry_resort_capacity').select('allocation_id').eq('schedule_id', scheduleId).limit(1));
+    return rows.length > 0;
+}
+
+export async function getEffectiveCapacityLimit(scheduleId, resortId) {
+    const scheduleRows = unwrap(await db().from('ferry_schedule').select('capacity').eq('schedule_id', scheduleId).limit(1));
+    const totalCapacity = scheduleRows[0]?.capacity ?? null;
+    if (resortId == null) return totalCapacity;
+    const allocationRows = unwrap(await db().from('ferry_resort_capacity').select('allocated_seats').eq('schedule_id', scheduleId).eq('resort_id', resortId).limit(1));
+    if (!allocationRows.length) return totalCapacity;
+    return allocationRows[0].allocated_seats;
+}
+
 export async function getAllocationForService(scheduleId) {
     const rows = unwrap(
         await db().from('ferry_resort_capacity').select('resort_id, allocated_seats, resorts(resort_name)').eq('schedule_id', scheduleId).order('resort_id')

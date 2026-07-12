@@ -22,6 +22,7 @@ import { getActiveResorts, getAllDepartments } from '../refData.js';
 import { ROLE_ADMIN } from '../session.js';
 import { logActivity, clientIp } from '../activity.js';
 import { getRemainingSeats } from '../seats.js';
+import { getEffectiveCapacityLimit, hasCapacitySplit } from '../resortCapacity.js';
 
 const WEEKDAY_OPTIONS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const RESERVATION_TYPES = [
@@ -460,6 +461,24 @@ export function registerAdminSeatReservationsRoutes(router) {
                 }
             }
 
+            // If this ferry has a Resort Capacity Allocator split
+            // configured (0031_resort_capacity_allocation.sql), a
+            // resort-specific reservation must respect THAT resort's own
+            // allocated seats, not the ferry's raw total capacity -
+            // otherwise CGLM could reserve more seats than CGLM was ever
+            // actually allocated. Gated to split-configured services only -
+            // an unsplit service never had a capacity check on this
+            // single-create path at all, and this fix doesn't introduce
+            // one where none existed before.
+            if (await hasCapacitySplit(scheduleId)) {
+                const capacityLimit = await getEffectiveCapacityLimit(scheduleId, resortId);
+                if (capacityLimit != null && seats > capacityLimit) {
+                    return redirectTo('/admin/seat_reservations', {
+                        cookies: [auth.setCookie, flashSetCookie('error', `Exceeds the ${resortId ? 'allocated' : 'ferry'} capacity of ${capacityLimit} seat(s)${resortId ? ' for this resort' : ''}.`)].filter(Boolean),
+                    });
+                }
+            }
+
             const scheduleRows = unwrap(await db().from('ferry_schedule').select('service_name, ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1));
             const direction = scheduleRows[0]?.service_name ?? scheduleRows[0]?.ferry_routes?.direction ?? null;
 
@@ -564,8 +583,13 @@ export function registerAdminSeatReservationsRoutes(router) {
                     skipped.push(`#${scheduleId} (not found)`);
                     continue;
                 }
-                if (seats > schedule.capacity) {
-                    skipped.push(`#${scheduleId} (exceeds capacity of ${schedule.capacity})`);
+                // Resort-aware: if this service has a Resort Capacity
+                // Allocator split configured, a resort-specific bulk
+                // reservation is checked against that resort's own
+                // allocated seats, not the ferry's raw total.
+                const bulkCapacityLimit = await getEffectiveCapacityLimit(scheduleId, resortId);
+                if (bulkCapacityLimit != null && seats > bulkCapacityLimit) {
+                    skipped.push(`#${scheduleId} (exceeds ${resortId ? 'allocated' : 'ferry'} capacity of ${bulkCapacityLimit})`);
                     continue;
                 }
 
@@ -666,6 +690,19 @@ export function registerAdminSeatReservationsRoutes(router) {
             }
             const existing = rows[0];
             const contactName = DEPARTMENT_SCOPED_TYPES.includes(existing.reservation_type) ? (form.contact_name || '').trim() || null : null;
+
+            // Same resort-aware capacity check as create (gated to
+            // split-configured services only - see the create action's
+            // comment) - a seat increase here could just as easily push a
+            // resort past its own Resort Capacity Allocator allocation.
+            if (await hasCapacitySplit(existing.schedule_id)) {
+                const editCapacityLimit = await getEffectiveCapacityLimit(existing.schedule_id, existing.resort_id);
+                if (editCapacityLimit != null && seats > editCapacityLimit) {
+                    return redirectTo('/admin/seat_reservations', {
+                        cookies: [auth.setCookie, flashSetCookie('error', `Exceeds the ${existing.resort_id ? 'allocated' : 'ferry'} capacity of ${editCapacityLimit} seat(s)${existing.resort_id ? ' for this resort' : ''}.`)].filter(Boolean),
+                    });
+                }
+            }
 
             const update = { seats, start_date: startDate, end_date: endDate, weekdays, reason };
             if (DEPARTMENT_SCOPED_TYPES.includes(existing.reservation_type)) update.contact_name = contactName;
