@@ -19,7 +19,9 @@ import { redirectTo, htmlResponse, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatDate, formatDateTime, formatTime, statusBadgeClass, greeting } from '../format.js';
 import { ROLE_ADMIN } from '../session.js';
-import { getWholeRouteDirections, getLegacyOnlyDirections } from '../ferryServices.js';
+import { getStopNameOptions } from '../ferryServices.js';
+import { getLiveFerryAvailability, getStopTimeWindow, findOverlappingBooking } from '../seatAvailability.js';
+import { getActiveResorts } from '../refData.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -148,66 +150,129 @@ function approvalWorkflowInfoHtml(workflowInfo) {
 <ul class="ps-3">${raw(execListHtml || '<li class="text-muted">No General Manager, Resident Manager, or HR Manager is currently active.</li>')}</ul>`;
 }
 
-function bookingFormBody({ errors, maxSeats, routes, workflowInfo, csrfToken, prefillDate = '', prefillDirection = '' }) {
+/**
+ * Renders one ferry as a selectable `.schedule-card` (existing CSS,
+ * public/assets/css/style.css - a <label>/<input type=radio> combo
+ * where the whole card is clickable) - `legPrefix` is 'outbound' or
+ * 'return', giving each leg's radios their own `name` so a page can
+ * hold both grids without them fighting over selection. data-*
+ * attributes carry everything the client-side Booking Summary panel
+ * needs, so no extra fetch is required once a card is selected.
+ */
+export function bookingCardHtml(card, legPrefix) {
+    const full = card.available <= 0;
+    const stopChips = card.stopProgress
+        .map((s) => `<span class="${s.stopState === 'completed' ? 'text-muted text-decoration-line-through' : s.stopState === 'current' ? 'fw-bold text-primary' : ''}">${h(s.stop_name)}</span>`)
+        .join(' <span class="text-muted">&rarr;</span> ');
+    return `<div class="col-12 col-md-6 col-xl-4">
+    <label class="schedule-card d-block" for="${legPrefix}${card.scheduleId}">
+        <input type="radio" name="${legPrefix}_radio" id="${legPrefix}${card.scheduleId}" value="${card.scheduleId}"
+            data-full="${full}" data-label="${h(card.label)}" data-departure="${h(formatTime(card.departureTime))}"
+            data-arrival="${card.arrivalTime ? h(formatTime(card.arrivalTime)) : ''}" data-duration="${card.journeyDurationMinutes ?? ''}"
+            data-status="${h(card.ferryStatus)}" data-available="${card.available}">
+        <div class="d-flex justify-content-between align-items-start">
+            <div><span class="schedule-card-time">${h(card.serviceName ?? card.label)}</span><div class="text-muted small">${h(card.serviceCode ?? '')} &middot; ${h(card.tripType)}</div></div>
+            <span class="badge bg-secondary">${h(card.ferryStatus)}</span>
+        </div>
+        <div class="small text-muted my-1">${raw(stopChips)}</div>
+        <div class="d-flex justify-content-between align-items-center my-1">
+            <span>${formatTime(card.departureTime)}${card.arrivalTime ? ' &rarr; ' + formatTime(card.arrivalTime) : ''}${card.journeyDurationMinutes ? ' (' + card.journeyDurationMinutes + ' min)' : ''}</span>
+            <span>${card.utilization.emoji} ${card.utilization.percentFull}% full</span>
+        </div>
+        <span class="${full ? 'schedule-card-seats-waitlist' : 'schedule-card-seats-ok'}">${full ? 'Full - Join Waiting List' : card.available + ' seats left'}</span>
+        <span class="schedule-card-booked">${card.booked} booked${card.reserved > 0 ? ' &middot; ' + card.reserved + ' reserved' : ''}${card.statusSeats.waitingList > 0 ? ' &middot; ' + card.statusSeats.waitingList + ' waiting' : ''}</span>
+    </label>
+</div>`;
+}
+
+/** A grid fragment for either leg - the same shape returned by GET /ajax/booking_cards for polling/return-candidate refreshes, so the initial page render and every later refresh use identical markup. */
+export function bookingCardsFragment(cards, legPrefix) {
+    if (!cards.length) return `<div class="col-12 text-muted small">No ferries match the selected date/filters.</div>`;
+    return cards.map((c) => bookingCardHtml(c, legPrefix)).join('');
+}
+
+/**
+ * Candidate return ferries for a chosen outbound card - "opposite
+ * direction, same date, departure later than outbound arrival, active,
+ * available capacity" (available capacity is inherent: getLiveFerryAvailability
+ * already only returns active/bookable services, and a full one still
+ * shows here exactly like the outbound grid does, offering Join Waiting
+ * List rather than being hidden). Matched by boarding/destination stop
+ * name rather than requiring the full stop chain to reverse exactly -
+ * real production data already has exactly this pair today (schedule 8
+ * CGLM->CMLM->Hulhumale->Male / schedule 15 Male->Hulhumale->CMLM->CGLM).
+ */
+export async function getReturnCandidateCards({ outboundScheduleId, travelDate, filters = {} }) {
+    const allCards = await getLiveFerryAvailability({ travelDate, filters });
+    const outbound = allCards.find((c) => c.scheduleId === outboundScheduleId);
+    if (!outbound || !outbound.arrivalTime) return [];
+    return allCards.filter(
+        (c) =>
+            c.scheduleId !== outboundScheduleId &&
+            c.boardingStopName === outbound.destinationStopName &&
+            c.destinationStopName === outbound.boardingStopName &&
+            c.departureTime > outbound.arrivalTime
+    );
+}
+
+function bookingFormBody({ errors, maxSeats, workflowInfo, csrfToken, filters, stopNameOptions, resorts, outboundCardsHtml, prefillScheduleId = '', prefillReturnScheduleId = '', prefillBookingType = 'one_way' }) {
+    const today = new Date().toISOString().slice(0, 10);
+    const resortOptionsHtml = resorts.map((r) => `<option value="${h(r.resort_name)}" ${filters.resortName === r.resort_name ? 'selected' : ''}>${h(r.resort_name)}</option>`).join('');
+    const stopOptionsHtml = (selected) => stopNameOptions.map((name) => `<option value="${h(name)}" ${selected === name ? 'selected' : ''}>${h(name)}</option>`).join('');
+
     return html`
 <h5 class="mb-3"><i class="bi bi-plus-circle"></i> New Ferry Booking</h5>
-
 ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `${e}<br>`).join(''))}</div>` : ''}
 
-<div class="row">
-    <div class="col-lg-8">
-        <div class="card shadow-sm">
-            <div class="card-body">
-                <form method="post" id="bookingForm">
-                    ${raw(csrfField(csrfToken))}
-                    <div class="row g-3">
-                        <div class="col-md-6">
-                            <label class="form-label">Travel Date *</label>
-                            <input type="date" name="travel_date" id="travelDate" class="form-control" required min="${new Date().toISOString().slice(0, 10)}" value="${prefillDate}">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label">Ferry *</label>
-                            <select name="direction_select" id="direction" class="form-select" required>
-                                <option value="">-- Select Ferry --</option>
-                                ${raw(routes.map((r) => `<option value="${h(r.direction)}" ${r.direction === prefillDirection ? 'selected' : ''}>${h(r.direction)}</option>`).join(''))}
-                            </select>
-                        </div>
-                        <div class="col-12">
-                            <label class="form-label">Ferry Time *</label>
-                            <div id="scheduleOptions" class="row g-2">
-                                <div class="col-12 text-muted small">Select a date and ferry to view available times.</div>
-                            </div>
-                            <input type="hidden" name="schedule_id" id="scheduleId" required>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label">Seats</label>
-                            <select name="seats" class="form-select">
-                                ${raw(Array.from({ length: maxSeats }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join(''))}
-                            </select>
-                        </div>
-                        <div class="col-md-8">
-                            <label class="form-label">Purpose of Travel *</label>
-                            <input type="text" name="purpose" class="form-control" required placeholder="e.g. Medical appointment, Day off, Bank errand">
-                        </div>
-                        <div class="col-12">
-                            <label class="form-label">Remarks</label>
-                            <textarea name="remarks" class="form-control" rows="2"></textarea>
-                        </div>
-                    </div>
-                    <button type="submit" class="btn btn-primary mt-3" id="submitBtn" disabled>Submit Booking Request</button>
-                </form>
-            </div>
-        </div>
+<div class="card shadow-sm mb-3"><div class="card-body">
+    <form method="get" id="filterForm" class="row g-2">
+        <div class="col-6 col-md-2"><label class="form-label small mb-1">Travel Date</label><input type="date" name="date" id="travelDate" class="form-control form-control-sm" required min="${today}" value="${filters.travelDate}"></div>
+        <div class="col-6 col-md-2"><label class="form-label small mb-1">Search</label><input type="text" name="q" class="form-control form-control-sm" placeholder="Name, code, route" value="${h(filters.q)}"></div>
+        <div class="col-6 col-md-2"><label class="form-label small mb-1">Resort</label><select name="resort" class="form-select form-select-sm"><option value="">All Resorts</option>${raw(resortOptionsHtml)}</select></div>
+        <div class="col-6 col-md-2"><label class="form-label small mb-1">Boarding</label><select name="boarding" class="form-select form-select-sm"><option value="">Any</option>${raw(stopOptionsHtml(filters.boardingLocation))}</select></div>
+        <div class="col-6 col-md-2"><label class="form-label small mb-1">Destination</label><select name="destination" class="form-select form-select-sm"><option value="">Any</option>${raw(stopOptionsHtml(filters.destination))}</select></div>
+        <div class="col-6 col-md-2 d-flex align-items-end"><button class="btn btn-sm btn-outline-primary w-100" type="submit"><i class="bi bi-search"></i> Filter</button></div>
+    </form>
+</div></div>
+
+<form method="post" id="bookingForm">
+    ${raw(csrfField(csrfToken))}
+    <input type="hidden" name="travel_date" value="${filters.travelDate}">
+    <input type="hidden" name="schedule_id" id="scheduleIdInput" value="${prefillScheduleId}">
+    <input type="hidden" name="return_schedule_id" id="returnScheduleIdInput" value="${prefillReturnScheduleId}">
+    <input type="hidden" name="booking_type" id="bookingTypeInput" value="${prefillBookingType}">
+
+    <div class="card shadow-sm mb-3"><div class="card-body">
+        <label class="form-label d-block">Booking Type</label>
+        <div class="form-check form-check-inline"><input class="form-check-input" type="radio" name="booking_type_radio" id="bookingTypeOneWay" value="one_way" ${prefillBookingType !== 'same_day_return' ? 'checked' : ''}><label class="form-check-label" for="bookingTypeOneWay">One Way</label></div>
+        <div class="form-check form-check-inline"><input class="form-check-input" type="radio" name="booking_type_radio" id="bookingTypeReturn" value="same_day_return" ${prefillBookingType === 'same_day_return' ? 'checked' : ''}><label class="form-check-label" for="bookingTypeReturn">Same-Day Return</label></div>
+    </div></div>
+
+    <h6 class="mb-2">Select Outbound Ferry</h6>
+    <div class="row g-3 mb-3" id="outboundGrid">${raw(outboundCardsHtml)}</div>
+
+    <div id="returnSection" style="${prefillBookingType === 'same_day_return' ? '' : 'display:none'}">
+        <h6 class="mb-2">Select Return Ferry</h6>
+        <div class="row g-3 mb-3" id="returnGrid"><div class="col-12 text-muted small">Select an outbound ferry first.</div></div>
     </div>
-    <div class="col-lg-4">
-        <div class="card shadow-sm">
-            <div class="card-body small text-muted">
-                ${approvalWorkflowInfoHtml(workflowInfo)}
-                <p class="mb-0">Maximum ${maxSeats} seat(s) per booking.</p>
-            </div>
+
+    <div class="card shadow-sm mb-3" id="bookingSummaryCard" style="display:none"><div class="card-header bg-white">Booking Summary</div><div class="card-body" id="bookingSummaryBody"></div></div>
+
+    <div class="card shadow-sm mb-3"><div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-4"><label class="form-label">Seats</label><select name="seats" class="form-select">${raw(Array.from({ length: maxSeats }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join(''))}</select></div>
+            <div class="col-md-8"><label class="form-label">Purpose of Travel *</label><input type="text" name="purpose" class="form-control" required placeholder="e.g. Medical appointment, Day off, Bank errand"></div>
+            <div class="col-12"><label class="form-label">Remarks</label><textarea name="remarks" class="form-control" rows="2"></textarea></div>
         </div>
-    </div>
-</div>`;
+    </div></div>
+
+    <div class="card shadow-sm mb-3"><div class="card-body small text-muted">
+        ${approvalWorkflowInfoHtml(workflowInfo)}
+        <p class="mb-0">Maximum ${maxSeats} seat(s) per booking.</p>
+    </div></div>
+
+    <button type="submit" class="btn btn-primary" id="submitBtn" disabled>Submit Booking Request</button>
+</form>`;
 }
 
 const BOOKING_PAGE_SCRIPT = `
@@ -217,85 +282,172 @@ const BOOKING_PAGE_SCRIPT = `
     // multi-tenant subpath deployment - so there's no reason a missing
     // global should ever break this fetch).
     var baseUrl = window.BASE_URL || '/';
-    var dateInput = document.getElementById('travelDate');
-    var directionSelect = document.getElementById('direction');
-    var container = document.getElementById('scheduleOptions');
-    var scheduleIdInput = document.getElementById('scheduleId');
+    var form = document.getElementById('bookingForm');
+    var filterForm = document.getElementById('filterForm');
+    var bookingTypeRadios = Array.prototype.slice.call(document.querySelectorAll('input[name="booking_type_radio"]'));
+    var bookingTypeInput = document.getElementById('bookingTypeInput');
+    var outboundGrid = document.getElementById('outboundGrid');
+    var returnSection = document.getElementById('returnSection');
+    var returnGrid = document.getElementById('returnGrid');
+    var scheduleIdInput = document.getElementById('scheduleIdInput');
+    var returnScheduleIdInput = document.getElementById('returnScheduleIdInput');
     var submitBtn = document.getElementById('submitBtn');
+    var summaryCard = document.getElementById('bookingSummaryCard');
+    var summaryBody = document.getElementById('bookingSummaryBody');
+    if (!form || !outboundGrid) return;
 
-    function loadSchedules() {
-        scheduleIdInput.value = '';
-        submitBtn.disabled = true;
-        var date = dateInput.value, direction = directionSelect.value;
-        if (!date || !direction) {
-            container.innerHTML = '<div class="col-12 text-muted small">Select a date and ferry to view available times.</div>';
-            return;
-        }
-        container.innerHTML = '<div class="col-12 text-muted small"><span class="spinner-border spinner-border-sm"></span> Loading...</div>';
+    function isReturnMode() { return bookingTypeInput.value === 'same_day_return'; }
+    function currentFilterQuery() { return new URLSearchParams(new FormData(filterForm)).toString(); }
 
-        fetch(baseUrl + 'ajax/get_schedule_seats?date=' + encodeURIComponent(date) + '&direction=' + encodeURIComponent(direction))
-            .then(function (r) { return r.json(); })
-            .then(function (res) {
-                if (!res.success && res.message === 'Not authenticated') {
-                    container.innerHTML = '<div class="col-12 text-danger small">Your session has expired. Please <a href="' + baseUrl + 'auth/login">log in again</a>.</div>';
-                    return;
+    function wireOutboundRadios() {
+        outboundGrid.querySelectorAll('input[name="outbound_radio"]').forEach(function (radio) {
+            radio.addEventListener('change', onOutboundChange);
+        });
+    }
+    function wireReturnRadios() {
+        returnGrid.querySelectorAll('input[name="return_radio"]').forEach(function (radio) {
+            radio.addEventListener('change', onReturnChange);
+        });
+    }
+
+    function onOutboundChange() {
+        var checked = outboundGrid.querySelector('input[name="outbound_radio"]:checked');
+        scheduleIdInput.value = checked ? checked.value : '';
+        returnScheduleIdInput.value = '';
+        updateSummary();
+        updateSubmitState();
+        if (isReturnMode() && checked) loadReturnCards(checked.value);
+    }
+    function onReturnChange() {
+        var checked = returnGrid.querySelector('input[name="return_radio"]:checked');
+        returnScheduleIdInput.value = checked ? checked.value : '';
+        updateSummary();
+        updateSubmitState();
+    }
+
+    function loadReturnCards(outboundScheduleId) {
+        var desiredReturnValue = returnScheduleIdInput.value;
+        returnGrid.innerHTML = '<div class="col-12 text-muted small"><span class="spinner-border spinner-border-sm"></span> Loading return ferries...</div>';
+        var qs = currentFilterQuery() + '&leg=return&outbound_schedule_id=' + encodeURIComponent(outboundScheduleId);
+        fetch(baseUrl + 'ajax/booking_cards?' + qs)
+            .then(function (r) { return r.text(); })
+            .then(function (htmlText) {
+                returnGrid.innerHTML = htmlText;
+                wireReturnRadios();
+                if (desiredReturnValue) {
+                    var pre = returnGrid.querySelector('input[name="return_radio"][value="' + desiredReturnValue + '"]');
+                    if (pre) pre.checked = true;
                 }
-                if (!res.success) {
-                    container.innerHTML = '<div class="col-12 text-danger small">' + (res.message || 'Could not load ferry schedules.') +
-                        ' <a href="#" class="retry-schedules">Retry</a></div>';
-                    return;
-                }
-                if (!res.schedules || res.schedules.length === 0) {
-                    container.innerHTML = '<div class="col-12 text-muted small">No ferries operate on the selected date.</div>';
-                    return;
-                }
-                container.innerHTML = '';
-                res.schedules.forEach(function (s) {
-                    // A full schedule is still selectable - book_ferry_seat()
-                    // auto-waitlists rather than rejecting, so blocking
-                    // selection here would make the waiting list
-                    // unreachable from self-service booking entirely.
-                    var full = s.remaining <= 0;
-                    var col = document.createElement('div');
-                    col.className = 'col-md-4';
-                    col.innerHTML =
-                        '<label class="schedule-card" for="sch' + s.schedule_id + '">' +
-                        '<input type="radio" name="schedule_radio" value="' + s.schedule_id + '" id="sch' + s.schedule_id + '" data-full="' + full + '">' +
-                        '<span class="schedule-card-time">Departs ' + s.time_label + (s.arrival_label ? ' &middot; Arrives ' + s.arrival_label : '') + '</span>' +
-                        '<span class="' + (full ? 'schedule-card-seats-waitlist' : 'schedule-card-seats-ok') + '">' + (full ? 'Full - Join Waiting List' : s.remaining + ' seats left') + '</span>' +
-                        '<span class="schedule-card-booked">' + s.booked + ' / ' + s.capacity + ' booked</span>' +
-                        (s.reserved > 0 ? '<span class="schedule-card-reserved">' + s.reserved + ' reserved</span>' : '') +
-                        '</label>';
-                    container.appendChild(col);
-                });
-                container.querySelectorAll('input[name="schedule_radio"]').forEach(function (radio) {
-                    radio.addEventListener('change', function () {
-                        scheduleIdInput.value = this.value;
-                        submitBtn.textContent = this.getAttribute('data-full') === 'true' ? 'Join Waiting List' : 'Submit Booking Request';
-                        submitBtn.disabled = false;
-                    });
-                });
+                updateSummary();
+                updateSubmitState();
             })
             .catch(function () {
-                container.innerHTML = '<div class="col-12 text-danger small">Unable to reach the server. Check your connection and ' +
-                    '<a href="#" class="retry-schedules">retry</a>.</div>';
+                returnGrid.innerHTML = '<div class="col-12 text-danger small">Unable to load return ferries. <a href="#" class="retry-return">Retry</a></div>';
             });
     }
 
-    container.addEventListener('click', function (e) {
-        if (e.target.closest('.retry-schedules')) {
+    function refreshOutboundCards() {
+        var previouslyChecked = outboundGrid.querySelector('input[name="outbound_radio"]:checked');
+        var previousValue = previouslyChecked ? previouslyChecked.value : null;
+        var qs = currentFilterQuery() + '&leg=outbound';
+        fetch(baseUrl + 'ajax/booking_cards?' + qs)
+            .then(function (r) { return r.text(); })
+            .then(function (htmlText) {
+                outboundGrid.innerHTML = htmlText;
+                wireOutboundRadios();
+                if (previousValue) {
+                    var stillThere = outboundGrid.querySelector('input[name="outbound_radio"][value="' + previousValue + '"]');
+                    if (stillThere) stillThere.checked = true;
+                }
+            })
+            .catch(function () { /* keep showing the last good data - a transient poll failure shouldn't blank the page */ });
+    }
+
+    function updateSubmitState() {
+        var hasOutbound = !!scheduleIdInput.value;
+        var hasReturn = !isReturnMode() || !!returnScheduleIdInput.value;
+        submitBtn.disabled = !(hasOutbound && hasReturn);
+        var anyFull = false;
+        [outboundGrid, returnGrid].forEach(function (grid) {
+            var checked = grid.querySelector('input:checked');
+            if (checked && checked.getAttribute('data-full') === 'true') anyFull = true;
+        });
+        submitBtn.textContent = anyFull ? 'Join Waiting List' : 'Submit Booking Request';
+    }
+
+    function cardSummaryLine(prefix, radioName, gridEl) {
+        var checked = gridEl.querySelector('input[name="' + radioName + '"]:checked');
+        if (!checked) return '';
+        return '<div class="mb-2"><strong>' + prefix + ':</strong> ' + checked.getAttribute('data-label') +
+            '<br>' + checked.getAttribute('data-departure') + (checked.getAttribute('data-arrival') ? ' &rarr; ' + checked.getAttribute('data-arrival') : '') +
+            (checked.getAttribute('data-duration') ? ' (' + checked.getAttribute('data-duration') + ' min)' : '') +
+            '<br><span class="text-muted small">' + checked.getAttribute('data-available') + ' seat(s) available &middot; ' + checked.getAttribute('data-status') + '</span></div>';
+    }
+    function updateSummary() {
+        var outboundLine = cardSummaryLine('Outbound Ferry', 'outbound_radio', outboundGrid);
+        var returnLine = isReturnMode() ? cardSummaryLine('Return Ferry', 'return_radio', returnGrid) : '';
+        if (!outboundLine && !returnLine) {
+            summaryCard.style.display = 'none';
+            return;
+        }
+        summaryBody.innerHTML = outboundLine + returnLine;
+        summaryCard.style.display = '';
+    }
+
+    bookingTypeRadios.forEach(function (radio) {
+        radio.addEventListener('change', function () {
+            bookingTypeInput.value = radio.value;
+            returnSection.style.display = isReturnMode() ? '' : 'none';
+            returnScheduleIdInput.value = '';
+            updateSummary();
+            updateSubmitState();
+            if (isReturnMode()) {
+                var checkedOutbound = outboundGrid.querySelector('input[name="outbound_radio"]:checked');
+                if (checkedOutbound) loadReturnCards(checkedOutbound.value);
+            }
+        });
+    });
+
+    outboundGrid.addEventListener('click', function (e) {
+        if (e.target.closest('.retry-schedules')) { e.preventDefault(); refreshOutboundCards(); }
+    });
+    returnGrid.addEventListener('click', function (e) {
+        if (e.target.closest('.retry-return')) {
             e.preventDefault();
-            loadSchedules();
+            var checkedOutbound = outboundGrid.querySelector('input[name="outbound_radio"]:checked');
+            if (checkedOutbound) loadReturnCards(checkedOutbound.value);
         }
     });
 
-    dateInput.addEventListener('change', loadSchedules);
-    directionSelect.addEventListener('change', loadSchedules);
+    wireOutboundRadios();
 
-    // Pre-filled from the Live Ferry Seat Availability Dashboard's "Book
-    // Now"/"Join Waiting List" links - load the ferry-time cards
-    // immediately rather than waiting for the user to touch a field.
-    if (dateInput.value && directionSelect.value) loadSchedules();
+    // Restore state - either from a "Book Now" prefill or an error-path
+    // re-render (prefillScheduleId/prefillReturnScheduleId/
+    // prefillBookingType are already server-rendered into the hidden
+    // inputs/checked radios at this point).
+    if (scheduleIdInput.value) {
+        var pre = outboundGrid.querySelector('input[name="outbound_radio"][value="' + scheduleIdInput.value + '"]');
+        if (pre) pre.checked = true;
+    }
+    if (isReturnMode()) {
+        returnSection.style.display = '';
+        var checkedOutbound = outboundGrid.querySelector('input[name="outbound_radio"]:checked');
+        if (checkedOutbound) loadReturnCards(checkedOutbound.value);
+    }
+    updateSummary();
+    updateSubmitState();
+
+    form.addEventListener('submit', function (e) {
+        if (!scheduleIdInput.value) { e.preventDefault(); alert('Please select an outbound ferry.'); return; }
+        if (isReturnMode() && !returnScheduleIdInput.value) { e.preventDefault(); alert('Please select a return ferry.'); return; }
+    });
+
+    // Lightweight auto-refresh of the outbound grid, paused while the
+    // tab isn't visible - same pattern as the Live Ferry Availability
+    // Dashboard's polling (routes/seat_availability.js).
+    var REFRESH_MS = 20000;
+    var timer = setInterval(function () { if (document.visibilityState === 'visible') refreshOutboundCards(); }, REFRESH_MS);
+    window.addEventListener('beforeunload', function () { clearInterval(timer); });
 })();`;
 
 // ---------------------------------------------------------------------
@@ -430,29 +582,43 @@ export function registerStaffRoutes(router) {
         if (auth.response) return auth.response;
 
         const maxSeats = Number(await getSetting('max_seats_per_booking', 4));
-        // Legacy ferry_routes-linked directions merged with Ferry Services'
-        // whole-route directions (a service has no ferry_routes row at all,
-        // route_id being NULL by design - see ferryServices.js's
-        // getWholeRouteDirections header comment) - both are real, bookable
-        // directions today.
-        const legacyDirections = await getLegacyOnlyDirections();
-        const serviceDirections = await getWholeRouteDirections();
-        const directionNames = [...new Set([...legacyDirections, ...serviceDirections.map((d) => d.direction)])].sort();
-        const routes = directionNames.map((direction) => ({ direction }));
+        const url = new URL(request.url);
+        const today = new Date().toISOString().slice(0, 10);
+        const filters = {
+            travelDate: url.searchParams.get('date') || today,
+            q: url.searchParams.get('q') || '',
+            resortName: url.searchParams.get('resort') || '',
+            boardingLocation: url.searchParams.get('boarding') || '',
+            destination: url.searchParams.get('destination') || '',
+        };
+
         const bookerRows = unwrap(await db().from('users').select('department_id, resort_id').eq('user_id', auth.user.user_id).limit(1));
-        const workflowInfo = await getApprovalWorkflowInfo(bookerRows[0]?.resort_id ?? null, bookerRows[0]?.department_id ?? null);
+        const [workflowInfo, outboundCards, stopNameOptions, resorts] = await Promise.all([
+            getApprovalWorkflowInfo(bookerRows[0]?.resort_id ?? null, bookerRows[0]?.department_id ?? null),
+            getLiveFerryAvailability({ travelDate: filters.travelDate, filters }),
+            getStopNameOptions(),
+            getActiveResorts(),
+        ]);
 
         // Optional pre-fill from the Live Ferry Seat Availability
-        // Dashboard's "Book Now"/"Join Waiting List" links - only
-        // applied if the value is actually one of today's real bookable
-        // options, so a stale/tampered query param can't silently
+        // Dashboard's "Book Now"/"Join Waiting List" links (?date=&direction=)
+        // - only applied if it actually matches one of today's real
+        // bookable cards, so a stale/tampered query param can't silently
         // pre-select something invalid.
-        const url = new URL(request.url);
-        const prefillDate = url.searchParams.get('date') || '';
         const prefillDirectionRaw = url.searchParams.get('direction') || '';
-        const prefillDirection = directionNames.includes(prefillDirectionRaw) ? prefillDirectionRaw : '';
+        const prefillCard = prefillDirectionRaw ? outboundCards.find((c) => c.label === prefillDirectionRaw) : null;
 
-        const body = bookingFormBody({ errors: [], maxSeats, routes, workflowInfo, csrfToken: auth.user.csrf, prefillDate, prefillDirection });
+        const body = bookingFormBody({
+            errors: [],
+            maxSeats,
+            workflowInfo,
+            csrfToken: auth.user.csrf,
+            filters,
+            stopNameOptions,
+            resorts,
+            outboundCardsHtml: bookingCardsFragment(outboundCards, 'outbound'),
+            prefillScheduleId: prefillCard ? String(prefillCard.scheduleId) : '',
+        });
         return renderShellForRequest({
             request,
             auth,
@@ -472,8 +638,10 @@ export function registerStaffRoutes(router) {
         if (!verifyCsrf(user.csrf, form.csrf_token)) return notFound();
 
         const maxSeats = Number(await getSetting('max_seats_per_booking', 4));
-        const scheduleId = Number(form.schedule_id || 0);
         const travelDate = form.travel_date || '';
+        const bookingType = form.booking_type === 'same_day_return' ? 'same_day_return' : 'one_way';
+        const outboundScheduleId = Number(form.schedule_id || 0);
+        const returnScheduleId = Number(form.return_schedule_id || 0);
         const seats = Math.max(1, Math.min(maxSeats, Number(form.seats || 1)));
         const purpose = (form.purpose || '').trim();
         const remarks = (form.remarks || '').trim();
@@ -484,115 +652,155 @@ export function registerStaffRoutes(router) {
             errors.push('Please choose a valid, future travel date.');
         }
         if (!purpose) errors.push('Purpose of travel is required.');
+        if (!outboundScheduleId) errors.push('Please select an outbound ferry.');
+        if (bookingType === 'same_day_return' && !returnScheduleId) errors.push('Please select a return ferry.');
 
-        let schedule = null;
-        if (scheduleId) {
-            const rows = unwrap(
-                await db()
-                    .from('ferry_schedule')
-                    .select('schedule_id, departure_time, weekdays, service_name, ferry_routes(direction, route_name)')
-                    .eq('schedule_id', scheduleId)
-                    .eq('status', 'active')
-                    .limit(1)
-            );
-            schedule = rows[0] ?? null;
-        }
-        if (!schedule) {
-            errors.push('Please select a valid ferry schedule.');
-        } else if (!errors.length) {
-            const weekdayAbbr = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(`${travelDate}T00:00:00Z`).getUTCDay()];
-            if (!schedule.weekdays.includes(weekdayAbbr)) {
-                errors.push('The selected ferry does not operate on that day.');
+        // Re-validate both legs server-side - the client-side card grids
+        // are advisory UI only, never trusted for the actual decision.
+        let outboundCard = null;
+        let returnCard = null;
+        if (!errors.length) {
+            const allCards = await getLiveFerryAvailability({ travelDate, filters: {} });
+            outboundCard = allCards.find((c) => c.scheduleId === outboundScheduleId) ?? null;
+            if (!outboundCard) errors.push('Please select a valid, active outbound ferry.');
+
+            if (bookingType === 'same_day_return' && outboundCard) {
+                returnCard = allCards.find((c) => c.scheduleId === returnScheduleId) ?? null;
+                if (!returnCard) {
+                    errors.push('Please select a valid, active return ferry.');
+                } else {
+                    const validReturn =
+                        returnCard.boardingStopName === outboundCard.destinationStopName &&
+                        returnCard.destinationStopName === outboundCard.boardingStopName &&
+                        outboundCard.arrivalTime &&
+                        returnCard.departureTime > outboundCard.arrivalTime;
+                    if (!validReturn) errors.push('The selected return ferry is not a valid return for this outbound journey.');
+                }
             }
         }
 
-        // A Ferry Service (admin_ferry_services.js) has no ferry_routes row
-        // at all - route_id is NULL by design - so schedule.ferry_routes is
-        // null for one. direction_select is what the employee actually
-        // picked (and what the AJAX seat-check already validated against),
-        // so it's the authoritative source. service_name comes before the
-        // legacy ferry_routes join - a schedule that was migrated into a
-        // Ferry Service keeps its old ferry_routes link, which goes stale
-        // the moment the ferry is renamed via the Ferry Services page, so
-        // showing it over the current service_name would display the
-        // wrong ferry name.
-        const directionLabel = schedule ? (form.direction_select || '').trim() || schedule.service_name || schedule.ferry_routes?.direction || '' : '';
-        const routeNameLabel = schedule ? schedule.service_name || schedule.ferry_routes?.route_name || '' : '';
+        // Overlap guard: a passenger can't be on two ferries whose
+        // boarding-to-destination windows overlap on the same date.
+        if (!errors.length) {
+            const legsToCheck = bookingType === 'same_day_return' ? [outboundCard, returnCard] : [outboundCard];
+            for (const leg of legsToCheck) {
+                const window = await getStopTimeWindow(leg.scheduleId, travelDate);
+                const overlap = await findOverlappingBooking({
+                    userId: user.user_id,
+                    travelDate,
+                    firstDepartureInstant: window.firstDepartureInstant,
+                    lastArrivalInstant: window.lastArrivalInstant,
+                });
+                if (overlap) {
+                    errors.push(`This overlaps with an existing booking of yours on ${formatDate(travelDate)}.`);
+                    break;
+                }
+            }
+        }
 
         if (!errors.length) {
             try {
-                const booking = await bookFerrySeat({
-                    userId: user.user_id,
-                    scheduleId,
-                    travelDate,
-                    direction: directionLabel,
-                    purpose,
-                    remarks,
-                    seats,
-                });
+                const bookerRows = unwrap(await db().from('users').select('department_id, resort_id, full_name, email').eq('user_id', user.user_id).limit(1));
+                const legs =
+                    bookingType === 'same_day_return'
+                        ? [
+                              { card: outboundCard, legLabel: 'Outbound' },
+                              { card: returnCard, legLabel: 'Return' },
+                          ]
+                        : [{ card: outboundCard, legLabel: null }];
 
-                // book_ferry_seat() waitlists (rather than rejects) a booking
-                // that can't get a seat - skip approval routing entirely for
-                // those; a waiting-list passenger only reaches Approved via
-                // a Security/Admin/HR promotion (see security.js).
+                let anyWaitlisted = false;
                 const waitingListStatusId = await getStatusId('Waiting List');
-                if (booking.status_id === waitingListStatusId) {
-                    await createNotification(
-                        user.user_id,
-                        'This ferry is full - your booking has been placed on the waiting list and you will be notified if a seat opens up.',
-                        'booking',
-                        booking.booking_id
-                    );
-                    await logActivity(user.user_id, 'Ferry booking placed on waiting list', `booking_id=${booking.booking_id}`, clientIp(request));
-                    return redirectTo('/staff/my_bookings', {
-                        cookies: [auth.setCookie, flashSetCookie('success', 'This ferry is full - your booking has been placed on the waiting list.')].filter(Boolean),
+                for (const leg of legs) {
+                    const legRemarks = leg.legLabel ? `Same-Day Return - ${leg.legLabel} leg.${remarks ? ' ' + remarks : ''}` : remarks;
+                    const booking = await bookFerrySeat({
+                        userId: user.user_id,
+                        scheduleId: leg.card.scheduleId,
+                        travelDate,
+                        direction: leg.card.label,
+                        purpose,
+                        remarks: legRemarks,
+                        seats,
                     });
+
+                    // book_ferry_seat() waitlists (rather than rejects) a
+                    // booking that can't get a seat - skip approval routing
+                    // entirely for those; a waiting-list passenger only
+                    // reaches Approved via a Security/Admin/HR promotion.
+                    if (booking.status_id === waitingListStatusId) {
+                        anyWaitlisted = true;
+                        await createNotification(
+                            user.user_id,
+                            `This ferry (${leg.card.label}) is full - your booking has been placed on the waiting list and you will be notified if a seat opens up.`,
+                            'booking',
+                            booking.booking_id
+                        );
+                        await logActivity(user.user_id, 'Ferry booking placed on waiting list', `booking_id=${booking.booking_id}`, clientIp(request));
+                        continue;
+                    }
+
+                    // Department-hierarchy routing if the booker's department
+                    // has opted in; routeDepartmentApproval delegates to the
+                    // untouched legacy GM->RM->HR chain otherwise.
+                    await routeDepartmentApproval(booking.booking_id, bookerRows[0]?.resort_id ?? null, bookerRows[0]?.department_id ?? null);
+                    await createNotification(user.user_id, 'Your ferry booking request has been submitted and is awaiting approval.', 'booking', booking.booking_id);
+                    await logActivity(user.user_id, 'Submitted ferry booking', `booking_id=${booking.booking_id}`, clientIp(request));
+                    deferBestEffort(
+                        sendTemplatedEmail(
+                            'booking_confirmation',
+                            bookerRows[0]?.email,
+                            {
+                                full_name: bookerRows[0]?.full_name ?? '',
+                                route_name: leg.card.label,
+                                direction: leg.card.label,
+                                travel_date: formatDate(travelDate),
+                                departure_time: formatTime(leg.card.departureTime),
+                                booking_id: booking.booking_id,
+                            },
+                            { relatedBookingId: booking.booking_id }
+                        ),
+                        'sendTemplatedEmail:booking_confirmation'
+                    );
                 }
 
-                // Department-hierarchy routing if the booker's department has opted
-                // in; routeDepartmentApproval delegates to the untouched legacy
-                // GM->RM->HR chain otherwise (departmentId null also falls through
-                // to legacy - nothing to look up).
-                const bookerRows = unwrap(await db().from('users').select('department_id, resort_id, full_name, email').eq('user_id', user.user_id).limit(1));
-                await routeDepartmentApproval(booking.booking_id, bookerRows[0]?.resort_id ?? null, bookerRows[0]?.department_id ?? null);
-                await createNotification(user.user_id, 'Your ferry booking request has been submitted and is awaiting approval.', 'booking', booking.booking_id);
-                await logActivity(user.user_id, 'Submitted ferry booking', `booking_id=${booking.booking_id}`, clientIp(request));
-                deferBestEffort(
-                    sendTemplatedEmail(
-                        'booking_confirmation',
-                        bookerRows[0]?.email,
-                        {
-                            full_name: bookerRows[0]?.full_name ?? '',
-                            route_name: routeNameLabel,
-                            direction: directionLabel,
-                            travel_date: formatDate(travelDate),
-                            departure_time: formatTime(schedule.departure_time),
-                            booking_id: booking.booking_id,
-                        },
-                        { relatedBookingId: booking.booking_id }
-                    ),
-                    'sendTemplatedEmail:booking_confirmation'
-                );
-
-                return redirectTo('/staff/my_bookings', {
-                    cookies: [auth.setCookie, flashSetCookie('success', 'Booking submitted successfully and routed for approval.')].filter(Boolean),
-                });
+                const message = anyWaitlisted
+                    ? bookingType === 'same_day_return'
+                        ? 'Booking submitted - one or both legs were placed on the waiting list where full.'
+                        : 'This ferry is full - your booking has been placed on the waiting list.'
+                    : bookingType === 'same_day_return'
+                      ? 'Both legs of your same-day return booking were submitted and routed for approval.'
+                      : 'Booking submitted successfully and routed for approval.';
+                return redirectTo('/staff/my_bookings', { cookies: [auth.setCookie, flashSetCookie('success', message)].filter(Boolean) });
             } catch (err) {
                 if (err.message === 'CAPACITY_EXCEEDED') {
-                    errors.push('Not enough seats remaining on this ferry. Please choose another time.');
+                    errors.push('Not enough seats remaining on one of the selected ferries. Please choose another time.');
                 } else {
                     errors.push(`Could not create booking: ${err.message}`);
                 }
             }
         }
 
-        const errorPathLegacyDirections = await getLegacyOnlyDirections();
-        const errorPathServiceDirections = await getWholeRouteDirections();
-        const errorPathDirectionNames = [...new Set([...errorPathLegacyDirections, ...errorPathServiceDirections.map((d) => d.direction)])].sort();
-        const routes = errorPathDirectionNames.map((direction) => ({ direction }));
-        const errorPathBookerRows = unwrap(await db().from('users').select('department_id, resort_id').eq('user_id', user.user_id).limit(1));
-        const workflowInfo = await getApprovalWorkflowInfo(errorPathBookerRows[0]?.resort_id ?? null, errorPathBookerRows[0]?.department_id ?? null);
-        const body = bookingFormBody({ errors, maxSeats, routes, workflowInfo, csrfToken: user.csrf });
+        const errorFilters = { travelDate: travelDate || today, q: '', resortName: '', boardingLocation: '', destination: '' };
+        const errorBookerRows = unwrap(await db().from('users').select('department_id, resort_id').eq('user_id', user.user_id).limit(1));
+        const [workflowInfo, outboundCards, stopNameOptions, resorts] = await Promise.all([
+            getApprovalWorkflowInfo(errorBookerRows[0]?.resort_id ?? null, errorBookerRows[0]?.department_id ?? null),
+            getLiveFerryAvailability({ travelDate: errorFilters.travelDate, filters: errorFilters }),
+            getStopNameOptions(),
+            getActiveResorts(),
+        ]);
+        const body = bookingFormBody({
+            errors,
+            maxSeats,
+            workflowInfo,
+            csrfToken: user.csrf,
+            filters: errorFilters,
+            stopNameOptions,
+            resorts,
+            outboundCardsHtml: bookingCardsFragment(outboundCards, 'outbound'),
+            prefillScheduleId: outboundScheduleId ? String(outboundScheduleId) : '',
+            prefillReturnScheduleId: returnScheduleId ? String(returnScheduleId) : '',
+            prefillBookingType: bookingType,
+        });
         return renderShellForRequest({
             request,
             auth,

@@ -6,8 +6,10 @@ import { formatTime } from '../format.js';
 import { getSession } from '../session.js';
 import { verifyCsrf } from '../csrf.js';
 import { markAllNotificationsRead } from '../notifications.js';
-import { jsonResponse } from '../response.js';
+import { jsonResponse, htmlResponse } from '../response.js';
 import { getWholeRouteDirections } from '../ferryServices.js';
+import { getLiveFerryAvailability } from '../seatAvailability.js';
+import { bookingCardsFragment, getReturnCandidateCards } from './staff.js';
 
 const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -94,6 +96,41 @@ export function registerAjaxRoutes(router) {
             return jsonResponse({ success: true, schedules: result });
         } catch (err) {
             return jsonResponse({ success: false, message: `Could not load ferry schedules: ${err.message}`, schedules: [] });
+        }
+    });
+
+    // GET - returns a rendered HTML fragment (this app has no client-side
+    // templating anywhere - see routes/seat_availability.js's own
+    // fragment endpoint for the established precedent), used both for
+    // the New Ferry Booking page's initial render's polling refresh and
+    // for loading return-ferry candidates once an outbound is picked.
+    router.get('/ajax/booking_cards', async (request) => {
+        const { user } = await getSession(request);
+        if (!user) return htmlResponse('<div class="col-12 text-danger small">Your session has expired. Please <a href="/auth/login">log in again</a>.</div>', { status: 401 });
+
+        const url = new URL(request.url);
+        const travelDate = url.searchParams.get('date') || '';
+        const leg = url.searchParams.get('leg') === 'return' ? 'return' : 'outbound';
+        const filters = {
+            q: url.searchParams.get('q') || '',
+            resortName: url.searchParams.get('resort') || '',
+            boardingLocation: url.searchParams.get('boarding') || '',
+            destination: url.searchParams.get('destination') || '',
+        };
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(travelDate)) return htmlResponse('<div class="col-12 text-muted small">Please choose a valid travel date.</div>');
+
+        try {
+            if (leg === 'return') {
+                const outboundScheduleId = Number(url.searchParams.get('outbound_schedule_id') || 0);
+                if (!outboundScheduleId) return htmlResponse('<div class="col-12 text-muted small">Select an outbound ferry first.</div>');
+                const cards = await getReturnCandidateCards({ outboundScheduleId, travelDate, filters });
+                return htmlResponse(bookingCardsFragment(cards, 'return'));
+            }
+            const cards = await getLiveFerryAvailability({ travelDate, filters });
+            return htmlResponse(bookingCardsFragment(cards, 'outbound'));
+        } catch (err) {
+            console.error('booking_cards fragment failed:', err?.message || err);
+            return htmlResponse(`<div class="col-12 text-danger small">Could not load ferry schedules. <a href="#" class="retry-schedules retry-return">Retry</a></div>`);
         }
     });
 

@@ -57,6 +57,22 @@ function seatIndicator(remaining) {
 }
 
 /**
+ * A differently-scaled indicator for the booking page (percent-full
+ * rather than absolute remaining seats) - the two live side by side
+ * since each page's spec published its own thresholds: 0-60% full is
+ * green, 61-85% yellow, 86-99% orange, 100%/full is red.
+ */
+export function utilizationIndicator(capacity, occupiedSeats) {
+    const percentFull = capacity > 0 ? Math.round((occupiedSeats / capacity) * 100) : 0;
+    let indicator;
+    if (percentFull >= 100) indicator = { emoji: '🔴', label: 'Full', class: 'danger' };
+    else if (percentFull >= 86) indicator = { emoji: '🟠', label: 'Nearly Full', class: 'warning' };
+    else if (percentFull >= 61) indicator = { emoji: '🟡', label: 'Filling Up', class: 'warning-light' };
+    else indicator = { emoji: '🟢', label: 'Available', class: 'success' };
+    return { ...indicator, percentFull };
+}
+
+/**
  * Derives an operational status with no stored field at all - purely
  * from scheduled stop times vs the current instant, plus whether
  * Security has actually recorded a departure yet (the one real
@@ -83,7 +99,7 @@ function deriveFerryStatus({ travelDate, todayMaldives, firstDepartureInstant, l
 }
 
 /** Completed / current / upcoming per stop, for the route progress display. "Current" is the stop right after the last one whose scheduled departure has already passed - before any departure at all, that's stop 0 (still boarding there). */
-function computeStopProgress(stops, travelDate, todayMaldives) {
+export function computeStopProgress(stops, travelDate, todayMaldives) {
     if (travelDate > todayMaldives) return stops.map((s) => ({ ...s, stopState: 'upcoming' }));
     if (travelDate < todayMaldives) return stops.map((s) => ({ ...s, stopState: 'completed' }));
 
@@ -108,6 +124,48 @@ function statusBucketFor(statusName) {
     if (statusName === 'No Show') return 'noShow';
     if (PENDING_APPROVAL_STATUSES.includes(statusName)) return 'pendingApproval';
     return 'confirmed'; // Approved, Completed
+}
+
+/** First-departure/last-arrival instants (and boarding/destination stop names) for one schedule+date - the same shape getLiveFerryAvailability() computes per card, but standalone for a single schedule (the booking page's POST handler only ever deals with 1-2 specific schedules, not the whole active list). */
+export async function getStopTimeWindow(scheduleId, travelDate) {
+    const stops = unwrap(
+        await db().from('route_stops').select('stop_order, stop_name, arrival_time, departure_time').eq('schedule_id', scheduleId).eq('status', 'active').order('stop_order', { ascending: true })
+    );
+    const first = stops[0] ?? null;
+    const last = stops[stops.length - 1] ?? null;
+    return {
+        boardingStopName: first?.stop_name ?? null,
+        destinationStopName: last?.stop_name ?? null,
+        firstDepartureInstant: first ? scheduledInstant(travelDate, first.departure_time) : null,
+        lastArrivalInstant: last ? scheduledInstant(travelDate, last.arrival_time) : null,
+    };
+}
+
+/**
+ * The user's other non-terminal booking (if any) on this travelDate
+ * whose own boarding-to-destination window overlaps [firstDepartureInstant,
+ * lastArrivalInstant] - a new, additive guard (nothing in the booking
+ * flow checked this before). A No-Show booking is excluded - the
+ * passenger already missed that sailing, so it no longer represents a
+ * real conflicting commitment.
+ */
+export async function findOverlappingBooking({ userId, travelDate, firstDepartureInstant, lastArrivalInstant }) {
+    if (firstDepartureInstant == null || lastArrivalInstant == null) return null;
+    const rows = unwrap(
+        await db()
+            .from('bookings')
+            .select('booking_id, schedule_id, booking_status(status_name)')
+            .eq('user_id', userId)
+            .eq('travel_date', travelDate)
+    );
+    const candidates = rows.filter((r) => !RESERVATION_ASSIGNMENT_EXCLUDED_STATUSES.includes(r.booking_status?.status_name));
+    for (const b of candidates) {
+        const window = await getStopTimeWindow(b.schedule_id, travelDate);
+        if (window.firstDepartureInstant == null || window.lastArrivalInstant == null) continue;
+        const overlaps = Math.max(window.firstDepartureInstant, firstDepartureInstant) < Math.min(window.lastArrivalInstant, lastArrivalInstant);
+        if (overlaps) return b;
+    }
+    return null;
 }
 
 /**
@@ -258,6 +316,12 @@ export async function getLiveFerryAvailability({ travelDate, filters = {} }) {
             ferryStatus,
             bookingStatus: remainingRow.remaining <= 0 ? 'Full' : 'Open',
             indicator: seatIndicator(remainingRow.remaining),
+            utilization: utilizationIndicator(remainingRow.capacity, remainingRow.booked + remainingRow.reserved),
+            // "Direct" vs "Via N stop(s)" - this app has no vessel/boat-type
+            // data anywhere, so that part of a commercial ferry app's
+            // "Ferry Type" is intentionally not fabricated here.
+            tripType: stops.length <= 2 ? 'Direct' : `Via ${stops.length - 2} stop(s)`,
+            journeyDurationMinutes: firstDepartureInstant != null && lastArrivalInstant != null ? Math.round((lastArrivalInstant - firstDepartureInstant) / 60000) : null,
             stopProgress: computeStopProgress(stops, travelDate, todayMaldives),
             statusSeats,
             resortBreakdown,
