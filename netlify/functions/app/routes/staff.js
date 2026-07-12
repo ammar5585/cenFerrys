@@ -170,6 +170,7 @@ export function bookingCardHtml(card, legPrefix) {
             data-full="${full}" data-label="${h(card.label)}" data-departure="${h(formatTime(card.departureTime))}"
             data-arrival="${card.arrivalTime ? h(formatTime(card.arrivalTime)) : ''}" data-duration="${card.journeyDurationMinutes ?? ''}"
             data-status="${h(card.ferryStatus)}" data-available="${card.available}">
+        <img src="${h(card.imageUrl)}" alt="${h(card.serviceName ?? 'Ferry')}" loading="lazy" style="width:calc(100% + 2rem);margin:-1rem -1rem 0.75rem;height:140px;object-fit:cover;border-radius:12px 12px 0 0;display:block;">
         <div class="d-flex justify-content-between align-items-start">
             <div><span class="schedule-card-time">${h(card.serviceName ?? card.label)}</span><div class="text-muted small">${h(card.serviceCode ?? '')} &middot; ${h(card.tripType)}</div></div>
             <span class="badge bg-secondary">${h(card.ferryStatus)}</span>

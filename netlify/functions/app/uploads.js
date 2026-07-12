@@ -49,12 +49,12 @@ const BACKGROUND_TYPES = new Set(['jpg', 'jpeg', 'png', 'webp']);
  * Supabase Storage bucket. Returns the public URL, or throws an Error
  * with a user-facing message on validation failure.
  */
-export async function handleUpload(file, { bucket, allowedExt, prefix, maxWidth, maxHeight }) {
+export async function handleUpload(file, { bucket, allowedExt, prefix, maxWidth, maxHeight, maxBytes = MAX_BYTES }) {
     if (!file || typeof file.arrayBuffer !== 'function') {
         throw new Error('No file was uploaded.');
     }
-    if (file.size > MAX_BYTES) {
-        throw new Error('File must be smaller than 2MB.');
+    if (file.size > maxBytes) {
+        throw new Error(`File must be smaller than ${Math.round(maxBytes / (1024 * 1024))}MB.`);
     }
 
     const ext = (file.name.split('.').pop() || '').toLowerCase();
@@ -148,4 +148,46 @@ export function uploadBannerImage(file) {
         allowedExt: BACKGROUND_TYPES,
         prefix: 'banner',
     });
+}
+
+// Ferry display images - photographic, shown as a 16:9 hero on ferry
+// cards throughout the portal. Reuses the existing 'portal-assets'
+// bucket rather than provisioning a new Supabase Storage bucket.
+const FERRY_IMAGE_TYPES = new Set(['jpg', 'jpeg', 'png', 'webp']);
+const FERRY_IMAGE_MAX_BYTES = 10 * 1024 * 1024; // 10MB, per spec
+
+export function uploadFerryImage(file, scheduleId) {
+    return handleUpload(file, {
+        bucket: 'portal-assets',
+        allowedExt: FERRY_IMAGE_TYPES,
+        prefix: `ferry_${scheduleId}`,
+        // Full-HD cap at the 16:9 aspect ratio the cards display at -
+        // large enough for a crisp hero image, small enough to not ship
+        // an unnecessarily huge original on every card render.
+        maxWidth: 1920,
+        maxHeight: 1080,
+        maxBytes: FERRY_IMAGE_MAX_BYTES,
+    });
+}
+
+/**
+ * Best-effort delete of a previously-uploaded file, given its public
+ * URL - used when replacing/removing a ferry image so the old file
+ * doesn't linger as an orphan in storage. Failure here doesn't throw:
+ * by the time this runs the new image (or the fallback to the default)
+ * is already live, so a stray leftover file is a minor cleanup miss,
+ * not a broken feature.
+ */
+export async function deleteUploadedFile(bucket, publicUrl) {
+    if (!publicUrl) return;
+    try {
+        const marker = `/storage/v1/object/public/${bucket}/`;
+        const idx = publicUrl.indexOf(marker);
+        if (idx === -1) return;
+        const filename = publicUrl.slice(idx + marker.length);
+        if (!filename) return;
+        await db().storage.from(bucket).remove([filename]);
+    } catch (err) {
+        console.error('deleteUploadedFile failed:', err?.message || err);
+    }
 }

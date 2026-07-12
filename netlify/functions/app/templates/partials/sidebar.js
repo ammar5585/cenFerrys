@@ -60,7 +60,7 @@ export function renderSidebar(permsHex, currentPath, isDeptApprover = false, com
         if (can('approval_workflow.executive_override')) links.push(navLink('/hr/overview', 'bi-globe', 'Executive Overview', currentPath));
         if (can('booking.view_all')) links.push(navLink('/admin/bookings', 'bi-journal-check', 'All Bookings', currentPath));
         if (can('reports.view_admin')) links.push(navLink('/admin/reports', 'bi-graph-up', 'Reports', currentPath));
-        if (can('audit_logs.view_activity') || can('audit_logs.view_permission_changes') || can('audit_logs.view_hr_manual_bookings') || can('audit_logs.view_seat_reservations') || can('audit_logs.view_email_log')) {
+        if (can('audit_logs.view_activity') || can('audit_logs.view_permission_changes') || can('audit_logs.view_hr_manual_bookings') || can('audit_logs.view_seat_reservations') || can('audit_logs.view_email_log') || can('audit_logs.view_hod_seat_assignments') || can('audit_logs.view_ferry_transfers') || can('audit_logs.view_resort_capacity') || can('audit_logs.view_ferry_services')) {
             links.push(navLink('/admin/activity_logs', 'bi-clock-history', 'Activity Logs', currentPath));
         }
         if (can('branding.manage')) links.push(navLink('/admin/branding', 'bi-palette', 'Website Branding', currentPath));

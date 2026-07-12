@@ -14,6 +14,10 @@ import { getFerryServices, getWholeRouteDirections } from './ferryServices.js';
 import { getActiveResorts } from './refData.js';
 
 const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// Shown on every ferry card that has no custom image uploaded via the
+// Ferry Services admin page's Ferry Image section - a bundled static
+// SVG (public/assets/images/), not a Supabase Storage round-trip.
+export const DEFAULT_FERRY_IMAGE_URL = '/assets/images/default-ferry.svg';
 const MALDIVES_OFFSET_MS = 5 * 60 * 60 * 1000;
 const BOARDING_WINDOW_MS = 30 * 60 * 1000;
 const DEPARTED_LABEL_WINDOW_MS = 10 * 60 * 1000;
@@ -331,6 +335,7 @@ export async function getLiveFerryAvailability({ travelDate, filters = {} }) {
             // showing only the shared-pool resortBreakdown above exactly
             // as before this field was added.
             resortAllocation: resortAllocationByScheduleId.get(service.schedule_id) ?? null,
+            imageUrl: service.image_url || DEFAULT_FERRY_IMAGE_URL,
         };
     });
 

@@ -12,6 +12,7 @@
 // is purely additive).
 
 import { db, unwrap } from './db.js';
+import { deleteUploadedFile } from './uploads.js';
 
 const STOP_ORDER_ASC = { ascending: true };
 
@@ -73,7 +74,7 @@ function validateStopChronology(stops) {
 export async function getFerryServices({ statusFilter } = {}) {
     let query = db()
         .from('ferry_schedule')
-        .select('schedule_id, service_name, service_code, departure_time, capacity, weekdays, effective_date, expiry_date, status, created_at')
+        .select('schedule_id, service_name, service_code, departure_time, capacity, weekdays, effective_date, expiry_date, status, created_at, image_url')
         .order('schedule_id', { ascending: false });
     if (statusFilter) query = query.eq('status', statusFilter);
     const services = unwrap(await query);
@@ -321,6 +322,69 @@ export async function updateFerryService({ scheduleId, serviceName, serviceCode,
         actor_user_id: actorUserId,
         reason: reason || null,
     });
+
+    return { ok: true };
+}
+
+/**
+ * Sets (uploads or replaces) a ferry service's display image. The
+ * caller (admin_ferry_services.js) has already run the file through
+ * uploadFerryImage() and passes the resulting public URL - this
+ * function is purely the DB update + audit + old-file cleanup, mirroring
+ * every other Ferry Service mutation's shape in this file.
+ */
+export async function setFerryServiceImage({ scheduleId, imageUrl, actorUserId, reason }) {
+    const existing = await getServiceWithStops(scheduleId);
+    if (!existing) return { ok: false, reason: 'not_found' };
+
+    const previousImageUrl = existing.image_url;
+    unwrap(await db().from('ferry_schedule').update({ image_url: imageUrl }).eq('schedule_id', scheduleId));
+
+    await insertServiceLog({
+        schedule_id: scheduleId,
+        service_name_snapshot: existing.service_name,
+        service_code_snapshot: existing.service_code,
+        route_snapshot: existing.routeSnapshot,
+        previous_image_url: previousImageUrl,
+        new_image_url: imageUrl,
+        action: previousImageUrl ? 'image_replaced' : 'image_uploaded',
+        actor_user_id: actorUserId,
+        reason: reason || null,
+    });
+
+    if (previousImageUrl) await deleteUploadedFile('portal-assets', previousImageUrl);
+
+    return { ok: true };
+}
+
+/**
+ * "Remove Image" and "Restore Default" have the identical effect on
+ * data (image_url -> NULL, falling back to the shared default image
+ * everywhere it's displayed) - they're kept as two distinct UI actions
+ * only so the audit trail records which button the admin actually
+ * clicked (`action` is 'image_removed' or 'image_restored').
+ */
+export async function clearFerryServiceImage({ scheduleId, actorUserId, reason, action }) {
+    const existing = await getServiceWithStops(scheduleId);
+    if (!existing) return { ok: false, reason: 'not_found' };
+    if (!existing.image_url) return { ok: false, reason: 'already_default' };
+
+    const previousImageUrl = existing.image_url;
+    unwrap(await db().from('ferry_schedule').update({ image_url: null }).eq('schedule_id', scheduleId));
+
+    await insertServiceLog({
+        schedule_id: scheduleId,
+        service_name_snapshot: existing.service_name,
+        service_code_snapshot: existing.service_code,
+        route_snapshot: existing.routeSnapshot,
+        previous_image_url: previousImageUrl,
+        new_image_url: null,
+        action,
+        actor_user_id: actorUserId,
+        reason: reason || null,
+    });
+
+    await deleteUploadedFile('portal-assets', previousImageUrl);
 
     return { ok: true };
 }

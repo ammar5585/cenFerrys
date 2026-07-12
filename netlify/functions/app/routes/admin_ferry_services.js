@@ -31,7 +31,11 @@ import {
     removeRouteStop,
     moveRouteStop,
     getStopNameOptions,
+    setFerryServiceImage,
+    clearFerryServiceImage,
 } from '../ferryServices.js';
+import { uploadFerryImage } from '../uploads.js';
+import { DEFAULT_FERRY_IMAGE_URL } from '../seatAvailability.js';
 
 const WEEKDAY_OPTIONS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -48,6 +52,7 @@ const ACTION_ERROR = {
     invalid_chronology: null, // uses result.message directly - see flash() below
     not_found: 'Not found.',
     cannot_move: 'This stop cannot be moved further in that direction.',
+    already_default: 'This service is already using the default image.',
 };
 
 function flash(result, successMessage) {
@@ -104,6 +109,7 @@ async function servicesListBody({ statusFilter, csrfToken }) {
             const statusBadge = s.status === 'active' ? 'bg-success' : 'bg-secondary';
             return `<tr>
             <td><input type="checkbox" class="form-check-input bulk-service-checkbox" name="schedule_ids" value="${s.schedule_id}" form="bulkServiceForm"></td>
+            <td><img src="${h(s.image_url || DEFAULT_FERRY_IMAGE_URL)}" alt="" loading="lazy" style="width:64px;height:36px;object-fit:cover;border-radius:4px;"></td>
             <td>${h(s.service_name ?? '-')}<div class="text-muted small">${h(s.service_code ?? '-')}</div></td>
             <td>${h(s.routeSnapshot)} <span class="badge bg-light text-dark border">${s.stopCount} stop(s)</span></td>
             <td>${(s.weekdays || []).join(', ')}</td>
@@ -185,8 +191,8 @@ async function servicesListBody({ statusFilter, csrfToken }) {
     </div>
 </form>
 <div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover mb-0 align-middle">
-    <thead><tr><th></th><th>Ferry</th><th>Route</th><th>Operating Days</th><th>Capacity</th><th>Effective / Expiry</th><th>Status</th><th>Actions</th></tr></thead>
-    <tbody>${raw(rowsHtml || '<tr><td colspan="8" class="text-center text-muted py-4">No ferry services found.</td></tr>')}</tbody>
+    <thead><tr><th></th><th>Image</th><th>Ferry</th><th>Route</th><th>Operating Days</th><th>Capacity</th><th>Effective / Expiry</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>${raw(rowsHtml || '<tr><td colspan="9" class="text-center text-muted py-4">No ferry services found.</td></tr>')}</tbody>
 </table></div></div>
 ${raw(createModalHtml)}
 ${raw(perServiceModalsHtml)}
@@ -264,10 +270,61 @@ async function manageStopsBody({ service, csrfToken }) {
         )
         .join('');
 
+    const currentImageUrl = service.image_url || DEFAULT_FERRY_IMAGE_URL;
+    const ferryImageSectionHtml = `<div class="card shadow-sm mb-3"><div class="card-header bg-white">Ferry Image</div><div class="card-body">
+        <div class="row g-3 align-items-start">
+            <div class="col-md-5">
+                <div class="small text-muted mb-1">Current Image</div>
+                <img src="${h(currentImageUrl)}" alt="Current ferry image" id="currentFerryImage" style="width:100%;max-width:320px;aspect-ratio:16/9;object-fit:cover;border-radius:8px;border:1px solid #e2e5ea;">
+                ${!service.image_url ? '<div class="form-text">Using the default image - no custom image uploaded yet.</div>' : ''}
+            </div>
+            <div class="col-md-7">
+                <form method="post" enctype="multipart/form-data" id="ferryImageForm">
+                    ${csrfField(csrfToken)}<input type="hidden" name="action" value="upload_image"><input type="hidden" name="schedule_id" value="${service.schedule_id}">
+                    <div class="mb-2"><label class="form-label">${service.image_url ? 'Replace Image' : 'Upload New Image'}</label>
+                        <input type="file" name="image_file" id="ferryImageFileInput" class="form-control" accept=".png,.jpg,.jpeg,.webp" required>
+                        <div class="form-text">PNG, JPG, JPEG, or WebP. Max 10MB. Recommended: at least 1280&times;720, 16:9 aspect ratio.</div>
+                    </div>
+                    <div class="mb-2" id="ferryImagePreviewWrap" style="display:none">
+                        <div class="small text-muted mb-1">New Image Preview</div>
+                        <img id="ferryImagePreview" style="width:100%;max-width:320px;aspect-ratio:16/9;object-fit:cover;border-radius:8px;border:1px solid #e2e5ea;">
+                    </div>
+                    <div class="mb-2"><label class="form-label">Reason (optional)</label><input type="text" name="reason" class="form-control"></div>
+                    <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-upload"></i> ${service.image_url ? 'Replace Image' : 'Upload Image'}</button>
+                </form>
+                ${service.image_url ? `<div class="d-flex gap-2 mt-2">
+                    <form method="post" data-confirm="Remove this ferry's custom image? It will fall back to the default image.">${csrfField(csrfToken)}<input type="hidden" name="action" value="remove_image"><input type="hidden" name="schedule_id" value="${service.schedule_id}">
+                        <button class="btn btn-sm btn-outline-danger"><i class="bi bi-x-circle"></i> Remove Image</button></form>
+                    <form method="post" data-confirm="Restore the default ferry image for this service?">${csrfField(csrfToken)}<input type="hidden" name="action" value="restore_default_image"><input type="hidden" name="schedule_id" value="${service.schedule_id}">
+                        <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-counterclockwise"></i> Restore Default</button></form>
+                </div>` : ''}
+            </div>
+        </div>
+    </div></div>
+    <script>
+    (function () {
+        var fileInput = document.getElementById('ferryImageFileInput');
+        var previewWrap = document.getElementById('ferryImagePreviewWrap');
+        var preview = document.getElementById('ferryImagePreview');
+        if (!fileInput) return;
+        fileInput.addEventListener('change', function () {
+            var file = fileInput.files[0];
+            if (!file) { previewWrap.style.display = 'none'; return; }
+            var reader = new FileReader();
+            reader.onload = function (e) {
+                preview.src = e.target.result;
+                previewWrap.style.display = '';
+            };
+            reader.readAsDataURL(file);
+        });
+    })();
+    </script>`;
+
     return html`
 <h5 class="mb-1"><i class="bi bi-signpost-split"></i> Manage Stops - ${h(service.service_name ?? '')}</h5>
 <p class="text-muted mb-3">${h(service.service_code ?? '')} &middot; ${h(service.routeSnapshot)}</p>
 <a href="/admin/ferry_services" class="btn btn-sm btn-outline-secondary mb-3"><i class="bi bi-arrow-left"></i> Back to Ferry Services</a>
+${raw(ferryImageSectionHtml)}
 <div class="card shadow-sm mb-3"><div class="table-responsive"><table class="table table-hover mb-0 align-middle small">
     <thead><tr><th>#</th><th>Stop</th><th>Arrival</th><th>Departure</th><th>Boarding</th><th>Drop-off</th><th>Status</th><th>Actions</th></tr></thead>
     <tbody>${raw(stopsHtml || '<tr><td colspan="8" class="text-center text-muted py-4">No stops configured yet - add the first one below.</td></tr>')}</tbody>
@@ -436,6 +493,34 @@ export function registerAdminFerryServicesRoutes(router) {
         if (form.action === 'move_stop') {
             const result = await moveRouteStop({ stopId: Number(form.stop_id), direction: form.direction, actorUserId: user.user_id });
             const f = flash(result, 'Stop order updated.');
+            return redirectTo(backTo, { cookies: [auth.setCookie, flashSetCookie(f.type, f.message)].filter(Boolean) });
+        }
+
+        if (form.action === 'upload_image') {
+            const file = form.image_file;
+            if (!file || typeof file.arrayBuffer !== 'function' || file.size === 0) {
+                return redirectTo(backTo, { cookies: [auth.setCookie, flashSetCookie('error', 'Please choose an image file to upload.')].filter(Boolean) });
+            }
+            try {
+                const imageUrl = await uploadFerryImage(file, scheduleId);
+                const result = await setFerryServiceImage({ scheduleId, imageUrl, actorUserId: user.user_id, reason: form.reason || null });
+                await logActivity(user.user_id, 'Uploaded ferry image', `schedule_id=${scheduleId}`, clientIp(request));
+                const f = flash(result, 'Ferry image updated.');
+                return redirectTo(backTo, { cookies: [auth.setCookie, flashSetCookie(f.type, f.message)].filter(Boolean) });
+            } catch (err) {
+                return redirectTo(backTo, { cookies: [auth.setCookie, flashSetCookie('error', err.message)].filter(Boolean) });
+            }
+        }
+
+        if (form.action === 'remove_image' || form.action === 'restore_default_image') {
+            const result = await clearFerryServiceImage({
+                scheduleId,
+                actorUserId: user.user_id,
+                reason: form.reason || null,
+                action: form.action === 'remove_image' ? 'image_removed' : 'image_restored',
+            });
+            await logActivity(user.user_id, form.action === 'remove_image' ? 'Removed ferry image' : 'Restored default ferry image', `schedule_id=${scheduleId}`, clientIp(request));
+            const f = flash(result, form.action === 'remove_image' ? 'Ferry image removed - now using the default image.' : 'Default ferry image restored.');
             return redirectTo(backTo, { cookies: [auth.setCookie, flashSetCookie(f.type, f.message)].filter(Boolean) });
         }
 

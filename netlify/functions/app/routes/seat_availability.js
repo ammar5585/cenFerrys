@@ -94,6 +94,7 @@ function ferryCardHtml(card, { travelDate, canBook }) {
 
     return `<div class="col-12 col-md-6 col-xl-4">
     <div class="card shadow-sm h-100">
+        <img src="${h(card.imageUrl)}" alt="${h(card.serviceName ?? 'Ferry')}" loading="lazy" class="card-img-top" style="height:160px;object-fit:cover;">
         <div class="card-header bg-white d-flex justify-content-between align-items-start">
             <div>
                 <div class="fw-bold">${h(card.serviceName ?? '-')}</div>
