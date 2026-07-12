@@ -61,7 +61,7 @@ export async function promoteWaitingListBooking(bookingId, { promotedByUserId, m
             .from('bookings')
             .select(
                 'user_id, schedule_id, travel_date, status_id, users!bookings_user_id_fkey(department_id, resort_id, full_name, email), ' +
-                    'ferry_schedule(departure_time, ferry_routes(route_name, direction))'
+                    'ferry_schedule(departure_time, service_name, ferry_routes(route_name, direction))'
             )
             .eq('booking_id', bookingId)
             .limit(1)
@@ -110,8 +110,8 @@ export async function promoteWaitingListBooking(bookingId, { promotedByUserId, m
             booking.users?.email,
             {
                 full_name: booking.users?.full_name ?? '',
-                route_name: booking.ferry_schedule?.ferry_routes?.route_name ?? '',
-                direction: booking.ferry_schedule?.ferry_routes?.direction ?? '',
+                route_name: booking.ferry_schedule?.ferry_routes?.route_name ?? booking.ferry_schedule?.service_name ?? '',
+                direction: booking.ferry_schedule?.ferry_routes?.direction ?? booking.ferry_schedule?.service_name ?? '',
                 travel_date: formatDate(booking.travel_date),
                 departure_time: booking.ferry_schedule ? formatTime(booking.ferry_schedule.departure_time) : '',
                 booking_id: bookingId,

@@ -17,7 +17,7 @@ import { notifySecurityIfWaitingList } from '../security.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
-import { formatDate, formatTime, statusBadgeClass } from '../format.js';
+import { formatDate, formatTime, statusBadgeClass, scheduleLabel } from '../format.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -107,7 +107,7 @@ async function bookingsPageBody({ dateFrom, dateTo, statusFilter, deptFilter, re
             ${activeUsersWithResort.map((u) => `<option value="${u.user_id}" data-resort-id="${u.resort_id ?? ''}">${h(u.full_name)} (${h(u.employee_id)})</option>`).join('')}
         </select></div>
         <div class="mb-3"><label class="form-label">Ferry Schedule</label><select name="schedule_id" class="form-select" required>
-            ${schedulesForHr.map((s) => `<option value="${s.schedule_id}">${h(s.ferry_routes?.route_name ?? s.service_name ?? '-')} - ${h(s.ferry_routes?.direction ?? '')} - ${h(formatTime(s.departure_time))}</option>`).join('')}
+            ${schedulesForHr.map((s) => `<option value="${s.schedule_id}">${h(scheduleLabel(s))} - ${h(formatTime(s.departure_time))}</option>`).join('')}
         </select></div>
         <div class="mb-3"><label class="form-label">Travel Date</label><input type="date" name="travel_date" class="form-control" required value="${new Date().toISOString().slice(0, 10)}"></div>
         <div class="mb-3"><label class="form-label">Seats</label><input type="number" name="seats" class="form-control" min="1" value="1" required></div>

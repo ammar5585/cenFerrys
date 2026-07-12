@@ -228,7 +228,7 @@ export async function deleteHodReservation({ reservationId, deletedByUserId, rea
     const rows = unwrap(
         await db()
             .from('seat_reservations')
-            .select('reservation_id, schedule_id, department_id, resort_id, reservation_type, status, seats, start_date, end_date, departments(department_name), ferry_schedule(ferry_routes(direction))')
+            .select('reservation_id, schedule_id, department_id, resort_id, reservation_type, status, seats, start_date, end_date, departments(department_name), ferry_schedule(service_name, ferry_routes(direction))')
             .eq('reservation_id', reservationId)
             .limit(1)
     );
@@ -242,7 +242,7 @@ export async function deleteHodReservation({ reservationId, deletedByUserId, rea
         await db().from('seat_reservation_log').insert({
             reservation_id: reservationId,
             schedule_id: reservation.schedule_id,
-            direction: reservation.ferry_schedule?.ferry_routes?.direction ?? null,
+            direction: reservation.ferry_schedule?.ferry_routes?.direction ?? reservation.ferry_schedule?.service_name ?? null,
             resort_id: reservation.resort_id,
             reservation_type: reservation.reservation_type,
             department_name_snapshot: reservation.departments?.department_name ?? null,
@@ -277,9 +277,9 @@ export async function createHodReservation({ scheduleId, travelDate, departmentI
     const resortRows = unwrap(await db().from('resorts').select('resort_id, resort_name').eq('resort_id', resortId).limit(1));
     if (!resortRows.length) return { ok: false, reason: 'invalid_resort' };
 
-    const scheduleRows = unwrap(await db().from('ferry_schedule').select('schedule_id, ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1));
+    const scheduleRows = unwrap(await db().from('ferry_schedule').select('schedule_id, service_name, ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1));
     if (!scheduleRows.length) return { ok: false, reason: 'invalid_schedule' };
-    const direction = scheduleRows[0].ferry_routes?.direction ?? null;
+    const direction = scheduleRows[0].ferry_routes?.direction ?? scheduleRows[0].service_name ?? null;
 
     // Prevent an exact duplicate of this same resort+schedule+
     // department+date - other departments (or a department-less
@@ -345,7 +345,7 @@ async function loadReservationForWrite(reservationId) {
             .from('seat_reservations')
             .select(
                 'reservation_id, schedule_id, department_id, resort_id, reservation_type, seats, status, start_date, end_date, weekdays, ' +
-                    'departments(department_name), ferry_schedule(ferry_routes(direction))'
+                    'departments(department_name), ferry_schedule(service_name, ferry_routes(direction))'
             )
             .eq('reservation_id', reservationId)
             .limit(1)
@@ -391,7 +391,7 @@ export async function assignEmployeeToHodSeat({ reservationId, travelDate, emplo
     }
 
     const approvedId = await getStatusId('Approved');
-    const direction = reservation.ferry_schedule?.ferry_routes?.direction ?? null;
+    const direction = reservation.ferry_schedule?.ferry_routes?.direction ?? reservation.ferry_schedule?.service_name ?? null;
     const inserted = unwrap(
         await db()
             .from('bookings')
@@ -469,7 +469,7 @@ export async function reassignEmployeeToHodSeat({ bookingId, newEmployeeUserId, 
     unwrap(await db().from('bookings').update({ status_id: cancelledId }).eq('booking_id', bookingId));
 
     const approvedId = await getStatusId('Approved');
-    const direction = reservation.ferry_schedule?.ferry_routes?.direction ?? null;
+    const direction = reservation.ferry_schedule?.ferry_routes?.direction ?? reservation.ferry_schedule?.service_name ?? null;
     const inserted = unwrap(
         await db()
             .from('bookings')
@@ -539,7 +539,7 @@ export async function releaseHodSeatAssignment({ bookingId, releasedByUserId, re
     await insertHodAssignmentLog({
         reservation_id: booking.source_reservation_id,
         schedule_id: booking.schedule_id,
-        direction: reservation?.ferry_schedule?.ferry_routes?.direction ?? null,
+        direction: reservation?.ferry_schedule?.ferry_routes?.direction ?? reservation?.ferry_schedule?.service_name ?? null,
         travel_date: booking.travel_date,
         resort_id: reservation?.resort_id ?? null,
         department_id: reservation?.department_id ?? null,
@@ -574,7 +574,7 @@ export async function recordHodSeatAutoRelease(bookingId, booking) {
     await insertHodAssignmentLog({
         reservation_id: booking.source_reservation_id,
         schedule_id: booking.schedule_id,
-        direction: reservation?.ferry_schedule?.ferry_routes?.direction ?? null,
+        direction: reservation?.ferry_schedule?.ferry_routes?.direction ?? reservation?.ferry_schedule?.service_name ?? null,
         travel_date: booking.travel_date,
         resort_id: reservation?.resort_id ?? null,
         department_id: reservation?.department_id ?? null,
@@ -629,7 +629,7 @@ async function employeeHasHodAssignmentOnDate(userId, travelDate, excludeBooking
     const rows = unwrap(
         await db()
             .from('bookings')
-            .select('booking_id, schedule_id, booking_status(status_name), ferry_schedule(ferry_routes(direction))')
+            .select('booking_id, schedule_id, booking_status(status_name), ferry_schedule(service_name, ferry_routes(direction))')
             .eq('user_id', userId)
             .eq('travel_date', travelDate)
             .not('source_reservation_id', 'is', null)
@@ -653,7 +653,7 @@ export async function getOwnHodSeatStatus({ resortId, scheduleId, travelDate, us
         poolConfigured: poolRows.length > 0,
         myBookingId: myActive?.booking_id ?? null,
         myStatus: myActive?.booking_status?.status_name ?? null,
-        myScheduleDirection: myActive && myActive.schedule_id !== scheduleId ? (myActive.ferry_schedule?.ferry_routes?.direction ?? null) : null,
+        myScheduleDirection: myActive && myActive.schedule_id !== scheduleId ? (myActive.ferry_schedule?.ferry_routes?.direction ?? myActive.ferry_schedule?.service_name ?? null) : null,
     };
 }
 
@@ -680,7 +680,7 @@ export async function requestOwnHodSeat({ resortId, scheduleId, travelDate, user
     const employee = employeeRows[0];
     if (!employee || employee.status !== 'active' || employee.resort_id !== resortId) return { ok: false, reason: 'invalid_resort' };
 
-    const scheduleRows = unwrap(await db().from('ferry_schedule').select('schedule_id, status, weekdays, ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1));
+    const scheduleRows = unwrap(await db().from('ferry_schedule').select('schedule_id, status, weekdays, service_name, ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1));
     const schedule = scheduleRows[0];
     if (!schedule || schedule.status !== 'active' || !schedule.weekdays.includes(weekdayFor(travelDate))) return { ok: false, reason: 'invalid_schedule' };
 
@@ -706,7 +706,7 @@ export async function requestOwnHodSeat({ resortId, scheduleId, travelDate, user
     if (!targetRow) return { ok: false, reason: 'seat_unavailable' };
 
     const pendingId = await getStatusId('Pending');
-    const direction = schedule.ferry_routes?.direction ?? null;
+    const direction = schedule.ferry_routes?.direction ?? schedule.service_name ?? null;
     const inserted = unwrap(
         await db()
             .from('bookings')
@@ -770,7 +770,7 @@ export async function cancelOwnHodSeatRequest({ bookingId, userId, remarks }) {
     await insertHodAssignmentLog({
         reservation_id: booking.source_reservation_id,
         schedule_id: booking.schedule_id,
-        direction: reservation?.ferry_schedule?.ferry_routes?.direction ?? null,
+        direction: reservation?.ferry_schedule?.ferry_routes?.direction ?? reservation?.ferry_schedule?.service_name ?? null,
         travel_date: booking.travel_date,
         resort_id: reservation?.resort_id ?? null,
         department_id: reservation?.department_id ?? null,
