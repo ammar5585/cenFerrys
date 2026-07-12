@@ -82,18 +82,23 @@ export function statusBadgeClass(color) {
 /**
  * Ferry Schedule label for dropdowns/checkboxes. `schedule` must have
  * `service_name` and a joined `ferry_routes(route_name, direction)`.
- * route_name and direction frequently end up as the exact same string
- * (whoever set up the route typed the same label into both fields),
- * so showing "X - X" back to back reads as a duplicated/broken label -
- * only join them with a dash when they actually differ. Falls back to
- * service_name for a Ferry Service (route_id NULL, no ferry_routes row
- * at all).
+ * service_name wins whenever it's set - it's the name managed today
+ * from the Ferry Services admin page, which never even reads
+ * ferry_routes. A schedule kept its legacy ferry_routes link when it
+ * was migrated into a Ferry Service (0028_ferry_service_routes.sql),
+ * so both can be populated at once with the ferry_routes side now
+ * stale/vestigial (its own admin page was deliberately unlinked from
+ * the sidebar) - showing it instead of the current service_name is
+ * exactly the bug reported ("CMLM To Hulhumale" shown instead of the
+ * ferry's real current name "The Atollia"). Only falls through to
+ * ferry_routes for a schedule that somehow has no service_name at all.
  */
 export function scheduleLabel(schedule) {
+    if (schedule.service_name) return schedule.service_name;
     const routeName = schedule.ferry_routes?.route_name ?? null;
     const direction = schedule.ferry_routes?.direction ?? null;
     if (routeName && direction) {
         return routeName.trim().toLowerCase() === direction.trim().toLowerCase() ? routeName : `${routeName} - ${direction}`;
     }
-    return routeName || direction || schedule.service_name || '-';
+    return routeName || direction || '-';
 }

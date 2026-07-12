@@ -278,8 +278,8 @@ export function registerManagerRoutes(router) {
                     booking.users?.email,
                     {
                         full_name: booking.users?.full_name ?? '',
-                        route_name: booking.ferry_schedule?.ferry_routes?.route_name ?? booking.ferry_schedule?.service_name ?? '',
-                        direction: booking.ferry_schedule?.ferry_routes?.direction ?? booking.ferry_schedule?.service_name ?? '',
+                        route_name: booking.ferry_schedule?.service_name ?? booking.ferry_schedule?.ferry_routes?.route_name ?? '',
+                        direction: booking.ferry_schedule?.service_name ?? booking.ferry_schedule?.ferry_routes?.direction ?? '',
                         travel_date: formatDate(booking.travel_date),
                         departure_time: booking.ferry_schedule ? formatTime(booking.ferry_schedule.departure_time) : '',
                         booking_id: bookingId,

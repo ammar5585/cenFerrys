@@ -102,6 +102,29 @@ export async function getServiceWithStops(scheduleId) {
 }
 
 /**
+ * Direction names from truly legacy, never-migrated schedules only - a
+ * schedule that was migrated into a Ferry Service (0028_ferry_service_
+ * routes.sql) keeps its old ferry_routes link for backward
+ * compatibility, but also gets a service_name, and from then on
+ * getWholeRouteDirections() (below) is what surfaces it for booking.
+ * Without this filter, that same physical ferry would show up TWICE in
+ * the booking dropdown - once under its current service_name, once
+ * under its now-stale legacy route direction - both resolving to the
+ * exact same schedule_id.
+ */
+export async function getLegacyOnlyDirections() {
+    const rows = unwrap(
+        await db()
+            .from('ferry_schedule')
+            .select('ferry_routes(direction)')
+            .not('route_id', 'is', null)
+            .is('service_name', null)
+            .eq('status', 'active')
+    );
+    return [...new Set(rows.map((r) => r.ferry_routes?.direction).filter(Boolean))];
+}
+
+/**
  * Every active Ferry Service with a configured route (>= 2 stops),
  * bookable as a whole journey (not a sub-segment - segment-level
  * booking is Phase 2, since it needs a real segment-aware capacity

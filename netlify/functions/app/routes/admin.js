@@ -153,7 +153,7 @@ async function adminDashboardBody(fullName) {
     const tripsHtml = tripRows
         .map(
             (t) => html`<tr>
-            <td>${formatTime(t.departure_time)}</td><td>${t.ferry_routes?.direction ?? t.service_name ?? '-'}</td><td>${t.capacity}</td><td>${t.booked}</td>
+            <td>${formatTime(t.departure_time)}</td><td>${t.service_name ?? t.ferry_routes?.direction ?? '-'}</td><td>${t.capacity}</td><td>${t.booked}</td>
             <td class="${t.remaining <= 0 ? 'seat-full' : 'seat-ok'}">${t.remaining <= 0 ? 'FULL' : t.remaining}</td>
         </tr>`
         )
@@ -590,7 +590,7 @@ async function schedulesPageBody(csrfToken) {
     const rowsHtml = schedules
         .map(
             (s) => html`<tr>
-            <td>${s.ferry_routes?.direction ?? s.service_name ?? '-'}</td><td>${formatTime(s.departure_time)}</td><td>${s.capacity}</td>
+            <td>${s.service_name ?? s.ferry_routes?.direction ?? '-'}</td><td>${formatTime(s.departure_time)}</td><td>${s.capacity}</td>
             <td><small>${s.weekdays.join(',')}</small></td>
             <td>${s.is_holiday_schedule ? html`<span class="badge bg-info text-dark">Holiday</span>` : '-'}</td>
             <td><span class="badge ${s.status === 'active' ? 'bg-success' : 'bg-secondary'}">${s.status.charAt(0).toUpperCase() + s.status.slice(1)}</span></td>

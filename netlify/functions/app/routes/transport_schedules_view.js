@@ -25,7 +25,7 @@ export function registerTransportSchedulesViewRoutes(router) {
                 .select('schedule_id, departure_time, capacity, notes, weekdays, service_name, ferry_routes(direction)')
                 .eq('status', 'active')
         );
-        const directionLabel = (s) => s.ferry_routes?.direction ?? s.service_name ?? '-';
+        const directionLabel = (s) => s.service_name ?? s.ferry_routes?.direction ?? '-';
         const todays = schedules.filter((s) => s.weekdays.includes(weekday)).sort((a, b) => (directionLabel(a) + a.departure_time).localeCompare(directionLabel(b) + b.departure_time));
 
         const seatInfoById = await getRemainingSeatsBatch(todays.map((s) => s.schedule_id), date);

@@ -172,7 +172,7 @@ ${canAdminOverride
         )}</select></div>
         <div class="mb-3"><label class="form-label">Ferry Schedule</label><select name="schedule_id" class="form-select" required>${raw(
             unwrap(await db().from('ferry_schedule').select('schedule_id, departure_time, service_name, ferry_routes(direction)').eq('status', 'active').order('departure_time'))
-                .map((s) => `<option value="${s.schedule_id}">${h(s.ferry_routes?.direction ?? s.service_name ?? '-')} - ${h(formatTime(s.departure_time))}</option>`)
+                .map((s) => `<option value="${s.schedule_id}">${h(s.service_name ?? s.ferry_routes?.direction ?? '-')} - ${h(formatTime(s.departure_time))}</option>`)
                 .join('')
         )}</select></div>
         <div class="mb-3"><label class="form-label">Travel Date</label><input type="date" name="travel_date" class="form-control" required value="${new Date().toISOString().slice(0, 10)}"></div>
@@ -238,7 +238,7 @@ export function registerAdminBookingsRoutes(router) {
             // row at all - route_id is NULL by design - so this join comes
             // back null for one; service_name is the fallback.
             const scheduleRows = unwrap(await db().from('ferry_schedule').select('service_name, ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1));
-            const direction = scheduleRows[0]?.ferry_routes?.direction || scheduleRows[0]?.service_name || null;
+            const direction = scheduleRows[0]?.service_name || scheduleRows[0]?.ferry_routes?.direction || null;
             const approvedId = await getStatusId('Approved');
 
             const inserted = unwrap(
@@ -304,7 +304,7 @@ export function registerAdminBookingsRoutes(router) {
             }
             const schedule = scheduleRows[0];
             // Same Ferry-Service fallback as override_booking above.
-            const direction = schedule.ferry_routes?.direction || schedule.service_name || null;
+            const direction = schedule.service_name || schedule.ferry_routes?.direction || null;
 
             const waitingListStatusId = await getStatusId('Waiting List');
             let booking;

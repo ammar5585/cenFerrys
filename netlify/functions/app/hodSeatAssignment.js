@@ -242,7 +242,7 @@ export async function deleteHodReservation({ reservationId, deletedByUserId, rea
         await db().from('seat_reservation_log').insert({
             reservation_id: reservationId,
             schedule_id: reservation.schedule_id,
-            direction: reservation.ferry_schedule?.ferry_routes?.direction ?? reservation.ferry_schedule?.service_name ?? null,
+            direction: reservation.ferry_schedule?.service_name ?? reservation.ferry_schedule?.ferry_routes?.direction ?? null,
             resort_id: reservation.resort_id,
             reservation_type: reservation.reservation_type,
             department_name_snapshot: reservation.departments?.department_name ?? null,
@@ -279,7 +279,7 @@ export async function createHodReservation({ scheduleId, travelDate, departmentI
 
     const scheduleRows = unwrap(await db().from('ferry_schedule').select('schedule_id, service_name, ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1));
     if (!scheduleRows.length) return { ok: false, reason: 'invalid_schedule' };
-    const direction = scheduleRows[0].ferry_routes?.direction ?? scheduleRows[0].service_name ?? null;
+    const direction = scheduleRows[0].service_name ?? scheduleRows[0].ferry_routes?.direction ?? null;
 
     // Prevent an exact duplicate of this same resort+schedule+
     // department+date - other departments (or a department-less
@@ -391,7 +391,7 @@ export async function assignEmployeeToHodSeat({ reservationId, travelDate, emplo
     }
 
     const approvedId = await getStatusId('Approved');
-    const direction = reservation.ferry_schedule?.ferry_routes?.direction ?? reservation.ferry_schedule?.service_name ?? null;
+    const direction = reservation.ferry_schedule?.service_name ?? reservation.ferry_schedule?.ferry_routes?.direction ?? null;
     const inserted = unwrap(
         await db()
             .from('bookings')
@@ -469,7 +469,7 @@ export async function reassignEmployeeToHodSeat({ bookingId, newEmployeeUserId, 
     unwrap(await db().from('bookings').update({ status_id: cancelledId }).eq('booking_id', bookingId));
 
     const approvedId = await getStatusId('Approved');
-    const direction = reservation.ferry_schedule?.ferry_routes?.direction ?? reservation.ferry_schedule?.service_name ?? null;
+    const direction = reservation.ferry_schedule?.service_name ?? reservation.ferry_schedule?.ferry_routes?.direction ?? null;
     const inserted = unwrap(
         await db()
             .from('bookings')
@@ -539,7 +539,7 @@ export async function releaseHodSeatAssignment({ bookingId, releasedByUserId, re
     await insertHodAssignmentLog({
         reservation_id: booking.source_reservation_id,
         schedule_id: booking.schedule_id,
-        direction: reservation?.ferry_schedule?.ferry_routes?.direction ?? reservation?.ferry_schedule?.service_name ?? null,
+        direction: reservation?.ferry_schedule?.service_name ?? reservation?.ferry_schedule?.ferry_routes?.direction ?? null,
         travel_date: booking.travel_date,
         resort_id: reservation?.resort_id ?? null,
         department_id: reservation?.department_id ?? null,
@@ -574,7 +574,7 @@ export async function recordHodSeatAutoRelease(bookingId, booking) {
     await insertHodAssignmentLog({
         reservation_id: booking.source_reservation_id,
         schedule_id: booking.schedule_id,
-        direction: reservation?.ferry_schedule?.ferry_routes?.direction ?? reservation?.ferry_schedule?.service_name ?? null,
+        direction: reservation?.ferry_schedule?.service_name ?? reservation?.ferry_schedule?.ferry_routes?.direction ?? null,
         travel_date: booking.travel_date,
         resort_id: reservation?.resort_id ?? null,
         department_id: reservation?.department_id ?? null,
@@ -653,7 +653,7 @@ export async function getOwnHodSeatStatus({ resortId, scheduleId, travelDate, us
         poolConfigured: poolRows.length > 0,
         myBookingId: myActive?.booking_id ?? null,
         myStatus: myActive?.booking_status?.status_name ?? null,
-        myScheduleDirection: myActive && myActive.schedule_id !== scheduleId ? (myActive.ferry_schedule?.ferry_routes?.direction ?? myActive.ferry_schedule?.service_name ?? null) : null,
+        myScheduleDirection: myActive && myActive.schedule_id !== scheduleId ? (myActive.ferry_schedule?.service_name ?? myActive.ferry_schedule?.ferry_routes?.direction ?? null) : null,
     };
 }
 
@@ -706,7 +706,7 @@ export async function requestOwnHodSeat({ resortId, scheduleId, travelDate, user
     if (!targetRow) return { ok: false, reason: 'seat_unavailable' };
 
     const pendingId = await getStatusId('Pending');
-    const direction = schedule.ferry_routes?.direction ?? schedule.service_name ?? null;
+    const direction = schedule.service_name ?? schedule.ferry_routes?.direction ?? null;
     const inserted = unwrap(
         await db()
             .from('bookings')
@@ -770,7 +770,7 @@ export async function cancelOwnHodSeatRequest({ bookingId, userId, remarks }) {
     await insertHodAssignmentLog({
         reservation_id: booking.source_reservation_id,
         schedule_id: booking.schedule_id,
-        direction: reservation?.ferry_schedule?.ferry_routes?.direction ?? reservation?.ferry_schedule?.service_name ?? null,
+        direction: reservation?.ferry_schedule?.service_name ?? reservation?.ferry_schedule?.ferry_routes?.direction ?? null,
         travel_date: booking.travel_date,
         resort_id: reservation?.resort_id ?? null,
         department_id: reservation?.department_id ?? null,

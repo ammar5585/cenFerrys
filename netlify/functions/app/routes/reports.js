@@ -134,7 +134,7 @@ const REPORT_TYPES = {
             { header: 'Resort', get: (r) => r.users.resorts?.resort_name ?? '' },
             { header: 'Date', get: (r) => formatDate(r.travel_date) },
             { header: 'Departure Time', get: (r) => formatTime(r.ferry_schedule.departure_time) },
-            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes?.direction ?? r.ferry_schedule.service_name ?? '-' },
+            { header: 'Route', get: (r) => r.ferry_schedule.service_name ?? r.ferry_schedule.ferry_routes?.direction ?? '-' },
             { header: 'Seats', get: (r) => r.seats },
             { header: 'Status', get: (r) => r.booking_status.status_name },
         ],
@@ -148,7 +148,7 @@ const REPORT_TYPES = {
             { header: 'Department', get: (r) => r.users.departments?.department_name ?? '' },
             { header: 'Resort', get: (r) => r.users.resorts?.resort_name ?? '' },
             { header: 'Date', get: (r) => formatDate(r.travel_date) },
-            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes?.direction ?? r.ferry_schedule.service_name ?? '-' },
+            { header: 'Route', get: (r) => r.ferry_schedule.service_name ?? r.ferry_schedule.ferry_routes?.direction ?? '-' },
             { header: 'Arrival Time', get: (r) => (r.arrived_at ? formatDateTime(r.arrived_at) : '-') },
             { header: 'Status', get: (r) => r.booking_status.status_name },
         ],
@@ -163,7 +163,7 @@ const REPORT_TYPES = {
             { header: 'Resort', get: (r) => r.users.resorts?.resort_name ?? '' },
             { header: 'Booking Ref', get: (r) => `BK-${r.booking_id}` },
             { header: 'Date', get: (r) => formatDate(r.travel_date) },
-            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes?.direction ?? r.ferry_schedule.service_name ?? '-' },
+            { header: 'Route', get: (r) => r.ferry_schedule.service_name ?? r.ferry_schedule.ferry_routes?.direction ?? '-' },
             { header: 'Departure Time', get: (r) => formatTime(r.ferry_schedule.departure_time) },
             { header: 'Seats', get: (r) => r.seats },
             { header: 'Status', get: (r) => r.booking_status.status_name },
@@ -178,7 +178,7 @@ const REPORT_TYPES = {
             { header: 'Department', get: (r) => r.users.departments?.department_name ?? '' },
             { header: 'Resort', get: (r) => r.users.resorts?.resort_name ?? '' },
             { header: 'Date', get: (r) => formatDate(r.travel_date) },
-            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes?.direction ?? r.ferry_schedule.service_name ?? '-' },
+            { header: 'Route', get: (r) => r.ferry_schedule.service_name ?? r.ferry_schedule.ferry_routes?.direction ?? '-' },
             { header: 'Seats Requested', get: (r) => r.seats },
         ],
     },
@@ -191,7 +191,7 @@ const REPORT_TYPES = {
             { header: 'Department', get: (r) => r.users.departments?.department_name ?? '' },
             { header: 'Resort', get: (r) => r.users.resorts?.resort_name ?? '' },
             { header: 'Date', get: (r) => formatDate(r.travel_date) },
-            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes?.direction ?? r.ferry_schedule.service_name ?? '-' },
+            { header: 'Route', get: (r) => r.ferry_schedule.service_name ?? r.ferry_schedule.ferry_routes?.direction ?? '-' },
             { header: 'Departure Time', get: (r) => formatTime(r.ferry_schedule.departure_time) },
         ],
     },
@@ -200,7 +200,7 @@ const REPORT_TYPES = {
         fetchRows: (f) => fetchFerryOccupancy(f),
         columns: [
             { header: 'Date', get: (r) => formatDate(r.travelDate) },
-            { header: 'Route', get: (r) => r.schedule.ferry_routes?.direction ?? r.schedule.service_name ?? '-' },
+            { header: 'Route', get: (r) => r.schedule.service_name ?? r.schedule.ferry_routes?.direction ?? '-' },
             { header: 'Departure Time', get: (r) => formatTime(r.schedule.departure_time) },
             { header: 'Capacity', get: (r) => r.capacity },
             { header: 'Booked', get: (r) => r.booked },
@@ -230,7 +230,7 @@ const REPORT_TYPES = {
             { header: 'Employee ID', get: (r) => r.users.employee_id },
             { header: 'Name', get: (r) => r.users.full_name },
             { header: 'Booking Date', get: (r) => formatDate(r.travel_date) },
-            { header: 'Route', get: (r) => r.ferry_schedule.ferry_routes?.direction ?? r.ferry_schedule.service_name ?? '-' },
+            { header: 'Route', get: (r) => r.ferry_schedule.service_name ?? r.ferry_schedule.ferry_routes?.direction ?? '-' },
             { header: 'Checked-In', get: (r) => (r.checked_in_at ? formatDateTime(r.checked_in_at) : '-') },
             { header: 'Departed', get: (r) => (r.departed_at ? formatDateTime(r.departed_at) : '-') },
             { header: 'Arrived', get: (r) => (r.arrived_at ? formatDateTime(r.arrived_at) : '-') },
@@ -314,7 +314,7 @@ function reportPageBody({ rows, filters, filterOptions, scope, basePath, company
             <td>#${r.booking_id}</td><td>${r.users.full_name}</td>
             <td>${r.users.departments?.department_name ?? '-'}</td>
             <td>${formatDate(r.travel_date)}</td><td>${formatTime(r.ferry_schedule.departure_time)}</td>
-            <td>${r.ferry_schedule.ferry_routes?.direction ?? r.ferry_schedule.service_name ?? '-'}</td><td>${r.purpose}</td>
+            <td>${r.ferry_schedule.service_name ?? r.ferry_schedule.ferry_routes?.direction ?? '-'}</td><td>${r.purpose}</td>
             <td>${r.booking_status.status_name}</td><td>${r.seats}</td>
             ${showFullFilters ? html`<td>${r.approver?.full_name ?? '-'}</td>` : ''}
         </tr>`
@@ -379,7 +379,7 @@ function toCsv(rows, includeApprover) {
     const escape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const body = rows
         .map((r) => {
-            const routeLabel = r.ferry_schedule.ferry_routes?.direction ?? r.ferry_schedule.service_name ?? '-';
+            const routeLabel = r.ferry_schedule.service_name ?? r.ferry_schedule.ferry_routes?.direction ?? '-';
             const fields = includeApprover
                 ? [r.booking_id, r.users.full_name, r.users.employee_id ?? '', r.users.departments?.department_name ?? '', r.travel_date, r.ferry_schedule.departure_time, routeLabel, r.purpose, r.booking_status.status_name, r.seats, r.approver?.full_name ?? '']
                 : [r.booking_id, r.users.full_name, r.users.departments?.department_name ?? '', r.travel_date, r.ferry_schedule.departure_time, routeLabel, r.purpose, r.booking_status.status_name, r.seats];

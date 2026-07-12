@@ -19,7 +19,7 @@ import { redirectTo, htmlResponse, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatDate, formatDateTime, formatTime, statusBadgeClass, greeting } from '../format.js';
 import { ROLE_ADMIN } from '../session.js';
-import { getWholeRouteDirections } from '../ferryServices.js';
+import { getWholeRouteDirections, getLegacyOnlyDirections } from '../ferryServices.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -430,9 +430,9 @@ export function registerStaffRoutes(router) {
         // route_id being NULL by design - see ferryServices.js's
         // getWholeRouteDirections header comment) - both are real, bookable
         // directions today.
-        const legacyRoutes = unwrap(await db().from('ferry_routes').select('direction').eq('status', 'active').order('direction'));
+        const legacyDirections = await getLegacyOnlyDirections();
         const serviceDirections = await getWholeRouteDirections();
-        const directionNames = [...new Set([...legacyRoutes.map((r) => r.direction), ...serviceDirections.map((d) => d.direction)])].sort();
+        const directionNames = [...new Set([...legacyDirections, ...serviceDirections.map((d) => d.direction)])].sort();
         const routes = directionNames.map((direction) => ({ direction }));
         const bookerRows = unwrap(await db().from('users').select('department_id, resort_id').eq('user_id', auth.user.user_id).limit(1));
         const workflowInfo = await getApprovalWorkflowInfo(bookerRows[0]?.resort_id ?? null, bookerRows[0]?.department_id ?? null);
@@ -495,10 +495,14 @@ export function registerStaffRoutes(router) {
         // at all - route_id is NULL by design - so schedule.ferry_routes is
         // null for one. direction_select is what the employee actually
         // picked (and what the AJAX seat-check already validated against),
-        // so it's the authoritative source; the legacy join is only a
-        // fallback for older schedules that still rely on it.
-        const directionLabel = schedule ? (form.direction_select || '').trim() || schedule.ferry_routes?.direction || schedule.service_name || '' : '';
-        const routeNameLabel = schedule ? schedule.ferry_routes?.route_name || schedule.service_name || '' : '';
+        // so it's the authoritative source. service_name comes before the
+        // legacy ferry_routes join - a schedule that was migrated into a
+        // Ferry Service keeps its old ferry_routes link, which goes stale
+        // the moment the ferry is renamed via the Ferry Services page, so
+        // showing it over the current service_name would display the
+        // wrong ferry name.
+        const directionLabel = schedule ? (form.direction_select || '').trim() || schedule.service_name || schedule.ferry_routes?.direction || '' : '';
+        const routeNameLabel = schedule ? schedule.service_name || schedule.ferry_routes?.route_name || '' : '';
 
         if (!errors.length) {
             try {
@@ -567,9 +571,9 @@ export function registerStaffRoutes(router) {
             }
         }
 
-        const errorPathLegacyRoutes = unwrap(await db().from('ferry_routes').select('direction').eq('status', 'active').order('direction'));
+        const errorPathLegacyDirections = await getLegacyOnlyDirections();
         const errorPathServiceDirections = await getWholeRouteDirections();
-        const errorPathDirectionNames = [...new Set([...errorPathLegacyRoutes.map((r) => r.direction), ...errorPathServiceDirections.map((d) => d.direction)])].sort();
+        const errorPathDirectionNames = [...new Set([...errorPathLegacyDirections, ...errorPathServiceDirections.map((d) => d.direction)])].sort();
         const routes = errorPathDirectionNames.map((direction) => ({ direction }));
         const errorPathBookerRows = unwrap(await db().from('users').select('department_id, resort_id').eq('user_id', user.user_id).limit(1));
         const workflowInfo = await getApprovalWorkflowInfo(errorPathBookerRows[0]?.resort_id ?? null, errorPathBookerRows[0]?.department_id ?? null);

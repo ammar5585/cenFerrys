@@ -109,7 +109,7 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken, isA
             const who = r.employee ? `${r.employee.full_name} (${r.employee.employee_id})` : r.department ? r.department.department_name : '-';
             const statusBadge = { active: 'bg-success', released: 'bg-secondary', expired: 'bg-dark', cancelled: 'bg-danger' }[r.status] || 'bg-secondary';
             return html`<tr>
-            <td>${r.ferry_schedule?.ferry_routes?.route_name ?? r.ferry_schedule?.service_name ?? '-'} <small class="text-muted">${r.ferry_schedule?.ferry_routes?.direction ?? ''} ${r.ferry_schedule ? formatTime(r.ferry_schedule.departure_time) : ''}</small></td>
+            <td>${r.ferry_schedule?.service_name ?? r.ferry_schedule?.ferry_routes?.route_name ?? '-'} <small class="text-muted">${r.ferry_schedule?.ferry_routes?.direction ?? ''} ${r.ferry_schedule ? formatTime(r.ferry_schedule.departure_time) : ''}</small></td>
             <td>${r.resorts?.resort_name ?? '-'}</td>
             <td>${typeLabel(r.reservation_type)}</td>
             <td>${who}</td>
@@ -456,7 +456,7 @@ export function registerAdminSeatReservationsRoutes(router) {
             }
 
             const scheduleRows = unwrap(await db().from('ferry_schedule').select('service_name, ferry_routes(direction)').eq('schedule_id', scheduleId).limit(1));
-            const direction = scheduleRows[0]?.ferry_routes?.direction ?? scheduleRows[0]?.service_name ?? null;
+            const direction = scheduleRows[0]?.service_name ?? scheduleRows[0]?.ferry_routes?.direction ?? null;
 
             let employeeName = null;
             if (employeeUserId) {
@@ -606,7 +606,7 @@ export function registerAdminSeatReservationsRoutes(router) {
 
                 const reservation = {
                     ...bulkInserted[0],
-                    direction: schedule.ferry_routes?.direction ?? schedule.service_name ?? null,
+                    direction: schedule.service_name ?? schedule.ferry_routes?.direction ?? null,
                     employee_name_snapshot: bulkEmployeeName,
                     department_name_snapshot: bulkDepartmentName,
                 };
@@ -672,7 +672,7 @@ export function registerAdminSeatReservationsRoutes(router) {
                 start_date: startDate,
                 end_date: endDate,
                 contact_name: contactName,
-                direction: existing.ferry_schedule?.ferry_routes?.direction ?? existing.ferry_schedule?.service_name ?? null,
+                direction: existing.ferry_schedule?.service_name ?? existing.ferry_schedule?.ferry_routes?.direction ?? null,
                 employee_name_snapshot: existing.employee?.full_name ?? null,
                 department_name_snapshot: existing.department?.department_name ?? null,
             };
@@ -701,7 +701,7 @@ export function registerAdminSeatReservationsRoutes(router) {
 
             const reservation = {
                 ...existing,
-                direction: existing.ferry_schedule?.ferry_routes?.direction ?? existing.ferry_schedule?.service_name ?? null,
+                direction: existing.ferry_schedule?.service_name ?? existing.ferry_schedule?.ferry_routes?.direction ?? null,
                 employee_name_snapshot: existing.employee?.full_name ?? null,
                 department_name_snapshot: existing.department?.department_name ?? null,
             };
@@ -739,7 +739,7 @@ export function registerAdminSeatReservationsRoutes(router) {
             const existing = rows[0];
             const reservation = {
                 ...existing,
-                direction: existing.ferry_schedule?.ferry_routes?.direction ?? existing.ferry_schedule?.service_name ?? null,
+                direction: existing.ferry_schedule?.service_name ?? existing.ferry_schedule?.ferry_routes?.direction ?? null,
                 employee_name_snapshot: existing.employee?.full_name ?? null,
                 department_name_snapshot: existing.department?.department_name ?? null,
             };
