@@ -148,7 +148,7 @@ function approvalWorkflowInfoHtml(workflowInfo) {
 <ul class="ps-3">${raw(execListHtml || '<li class="text-muted">No General Manager, Resident Manager, or HR Manager is currently active.</li>')}</ul>`;
 }
 
-function bookingFormBody({ errors, maxSeats, routes, workflowInfo, csrfToken }) {
+function bookingFormBody({ errors, maxSeats, routes, workflowInfo, csrfToken, prefillDate = '', prefillDirection = '' }) {
     return html`
 <h5 class="mb-3"><i class="bi bi-plus-circle"></i> New Ferry Booking</h5>
 
@@ -163,13 +163,13 @@ ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label class="form-label">Travel Date *</label>
-                            <input type="date" name="travel_date" id="travelDate" class="form-control" required min="${new Date().toISOString().slice(0, 10)}">
+                            <input type="date" name="travel_date" id="travelDate" class="form-control" required min="${new Date().toISOString().slice(0, 10)}" value="${prefillDate}">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">Ferry *</label>
                             <select name="direction_select" id="direction" class="form-select" required>
                                 <option value="">-- Select Ferry --</option>
-                                ${raw(routes.map((r) => `<option value="${h(r.direction)}">${h(r.direction)}</option>`).join(''))}
+                                ${raw(routes.map((r) => `<option value="${h(r.direction)}" ${r.direction === prefillDirection ? 'selected' : ''}>${h(r.direction)}</option>`).join(''))}
                             </select>
                         </div>
                         <div class="col-12">
@@ -291,6 +291,11 @@ const BOOKING_PAGE_SCRIPT = `
 
     dateInput.addEventListener('change', loadSchedules);
     directionSelect.addEventListener('change', loadSchedules);
+
+    // Pre-filled from the Live Ferry Seat Availability Dashboard's "Book
+    // Now"/"Join Waiting List" links - load the ferry-time cards
+    // immediately rather than waiting for the user to touch a field.
+    if (dateInput.value && directionSelect.value) loadSchedules();
 })();`;
 
 // ---------------------------------------------------------------------
@@ -437,7 +442,17 @@ export function registerStaffRoutes(router) {
         const bookerRows = unwrap(await db().from('users').select('department_id, resort_id').eq('user_id', auth.user.user_id).limit(1));
         const workflowInfo = await getApprovalWorkflowInfo(bookerRows[0]?.resort_id ?? null, bookerRows[0]?.department_id ?? null);
 
-        const body = bookingFormBody({ errors: [], maxSeats, routes, workflowInfo, csrfToken: auth.user.csrf });
+        // Optional pre-fill from the Live Ferry Seat Availability
+        // Dashboard's "Book Now"/"Join Waiting List" links - only
+        // applied if the value is actually one of today's real bookable
+        // options, so a stale/tampered query param can't silently
+        // pre-select something invalid.
+        const url = new URL(request.url);
+        const prefillDate = url.searchParams.get('date') || '';
+        const prefillDirectionRaw = url.searchParams.get('direction') || '';
+        const prefillDirection = directionNames.includes(prefillDirectionRaw) ? prefillDirectionRaw : '';
+
+        const body = bookingFormBody({ errors: [], maxSeats, routes, workflowInfo, csrfToken: auth.user.csrf, prefillDate, prefillDirection });
         return renderShellForRequest({
             request,
             auth,

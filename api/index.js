@@ -42,6 +42,7 @@ import { registerHodReservationRoutes } from '../netlify/functions/app/routes/ho
 import { registerTransportSchedulesViewRoutes } from '../netlify/functions/app/routes/transport_schedules_view.js';
 import { registerMiscRoutes } from '../netlify/functions/app/routes/misc.js';
 import { registerSecurityRoutes } from '../netlify/functions/app/routes/security.js';
+import { registerSeatAvailabilityRoutes } from '../netlify/functions/app/routes/seat_availability.js';
 import { notFound, redirectTo } from '../netlify/functions/app/response.js';
 
 const router = createRouter();
@@ -74,6 +75,7 @@ registerHodReservationRoutes(router);
 registerTransportSchedulesViewRoutes(router);
 registerMiscRoutes(router);
 registerSecurityRoutes(router);
+registerSeatAvailabilityRoutes(router);
 
 // Root path mirrors index.php: send to /dashboard (which itself
 // redirects to /auth/login when not authenticated).

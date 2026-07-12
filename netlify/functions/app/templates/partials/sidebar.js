@@ -24,7 +24,15 @@ function navLink(path, icon, label, currentPath) {
 export function renderSidebar(permsHex, currentPath, isDeptApprover = false, companyName = 'Ferry Portal', siteLogo = '', roleName = null) {
     const can = (key) => hasPermission(permsHex, key);
     const isAdmin = roleName === ROLE_ADMIN;
-    const links = [navLink('/dashboard', 'bi-speedometer2', 'Dashboard', currentPath)];
+    // Live Ferry Seat Availability Dashboard - open to every
+    // authenticated user regardless of role/permission (matches
+    // routes/seat_availability.js's requireLogin-only gate), so it's
+    // listed unconditionally right under Dashboard rather than inside
+    // any permission-gated section below.
+    const links = [
+        navLink('/dashboard', 'bi-speedometer2', 'Dashboard', currentPath),
+        navLink('/ferry_availability', 'bi-broadcast', 'Live Ferry Availability', currentPath),
+    ];
 
     if (can('user_management.access') || can('schedule_management.access') || can('approval_workflow.configure_hierarchy')
         || can('booking.view_all') || can('reports.view_admin') || can('audit_logs.access') || can('branding.access') || can('settings.access') || can('settings.manage_email') || can('booking.bulk_transfer_passengers') || isAdmin) {
