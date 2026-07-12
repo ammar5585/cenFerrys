@@ -90,7 +90,12 @@ async function reservationsPageBody({ statusFilter, resortFilter, csrfToken, isA
         .order('start_date', { ascending: false })
         .limit(300);
     if (statusFilter) query = query.eq('status', statusFilter);
-    if (resortFilter) query = query.eq('resort_id', resortFilter);
+    // resort_id NULL means "Both Resorts" - it should still show up when
+    // filtering by either specific resort, not just when "All Resorts"
+    // is selected. resortFilter is a server-parsed integer (Number() on
+    // a query param), never raw user text, so it's safe to interpolate
+    // into an .or() filter string here.
+    if (resortFilter) query = query.or(`resort_id.eq.${resortFilter},resort_id.is.null`);
 
     // Independent of each other - fetched concurrently rather than
     // 5 round-trips in series.

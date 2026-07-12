@@ -612,16 +612,22 @@ async function findHodPoolRows({ resortId, scheduleId, travelDate }) {
     const rows = unwrap(
         await db()
             .from('seat_reservations')
-            .select('reservation_id, seats, weekdays')
+            .select('reservation_id, seats, weekdays, resort_id')
             .eq('schedule_id', scheduleId)
-            .eq('resort_id', resortId)
             .eq('reservation_type', 'hod')
             .eq('status', 'active')
             .lte('start_date', travelDate)
             .gte('end_date', travelDate)
             .order('reservation_id', { ascending: true })
     );
-    return rows.filter((r) => r.weekdays.includes(weekday));
+    // resort_id NULL means "Both Resorts" (the Administrator Bulk
+    // Reservation feature's "Both Resorts" option) - .eq('resort_id',
+    // resortId) above would never match it (SQL equality never matches
+    // NULL), making a Both-Resorts HOD allocation invisible to every
+    // single resort's own HOD Reserved Seat Request page. Filtered in JS
+    // instead so it counts toward every resort's pool, same as it's
+    // meant to.
+    return rows.filter((r) => (r.resort_id === resortId || r.resort_id === null) && r.weekdays.includes(weekday));
 }
 
 /** True if this employee already holds an active HOD-assigned seat ANYWHERE on this date - across every ferry schedule that day, not just one - since an HOD may only request one reserved seat per day. */
