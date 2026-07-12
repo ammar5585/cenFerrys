@@ -140,12 +140,29 @@ export async function getLiveFerryAvailability({ travelDate, filters = {} }) {
 
     const scheduleIds = services.map((s) => s.schedule_id);
 
-    const [remainingBySchedule, stopsRows, bookingRows, reservationRows] = await Promise.all([
+    const [remainingBySchedule, stopsRows, bookingRows, reservationRows, splitScheduleRows] = await Promise.all([
         getRemainingSeatsBatch(scheduleIds, travelDate),
         db().from('route_stops').select('schedule_id, stop_order, stop_name, arrival_time, departure_time').in('schedule_id', scheduleIds).eq('status', 'active').order('stop_order', { ascending: true }).then(unwrap),
         db().from('bookings').select('schedule_id, seats, source_reservation_id, booking_status(status_name), users!bookings_user_id_fkey(resort_id)').eq('travel_date', travelDate).in('schedule_id', scheduleIds).then(unwrap),
         db().from('seat_reservations').select('reservation_id, schedule_id, seats, resort_id, weekdays').eq('status', 'active').in('schedule_id', scheduleIds).lte('start_date', travelDate).gte('end_date', travelDate).then(unwrap),
+        // Which of these schedules have a Resort Capacity Allocator split
+        // configured (0031_resort_capacity_allocation.sql) - a single
+        // batched existence check rather than one call per schedule.
+        db().from('ferry_resort_capacity').select('schedule_id').in('schedule_id', scheduleIds).then(unwrap),
     ]);
+    const splitScheduleIds = new Set(splitScheduleRows.map((r) => r.schedule_id));
+    // One RPC call per split-configured schedule (typically a small
+    // subset, if any) - the Resort Capacity Allocator's own RPC
+    // (get_remaining_seats_by_resort), reused as-is rather than
+    // duplicating its booked/reserved-per-resort logic here.
+    const resortAllocationByScheduleId = new Map(
+        await Promise.all(
+            [...splitScheduleIds].map(async (scheduleId) => [
+                scheduleId,
+                unwrap(await db().rpc('get_remaining_seats_by_resort', { p_schedule_id: scheduleId, p_travel_date: travelDate })),
+            ])
+        )
+    );
 
     const stopsBySchedule = new Map();
     for (const s of stopsRows) {
@@ -244,6 +261,12 @@ export async function getLiveFerryAvailability({ travelDate, filters = {} }) {
             stopProgress: computeStopProgress(stops, travelDate, todayMaldives),
             statusSeats,
             resortBreakdown,
+            // Only present once an Administrator has configured a split
+            // via the Resort Capacity Allocator (0031_resort_capacity_
+            // allocation.sql) - null for every other service, which keeps
+            // showing only the shared-pool resortBreakdown above exactly
+            // as before this field was added.
+            resortAllocation: resortAllocationByScheduleId.get(service.schedule_id) ?? null,
         };
     });
 

@@ -48,7 +48,20 @@ function statusSeatsHtml(statusSeats) {
     return rows.map(([label, val]) => `<div class="d-flex justify-content-between small"><span class="text-muted">${label}</span><span>${val}</span></div>`).join('');
 }
 
-function resortBreakdownHtml(resortBreakdown) {
+function resortBreakdownHtml(resortBreakdown, resortAllocation) {
+    // Once an Administrator has configured a Resort Capacity Allocator
+    // split for this service, show its authoritative allocated/booked/
+    // reserved/available-per-resort numbers instead of the shared-pool
+    // breakdown - the two are computed by different code paths
+    // (resortCapacity.js's own RPC vs. this dashboard's own grouping),
+    // so showing both would risk looking inconsistent.
+    if (resortAllocation) {
+        return `<div class="table-responsive"><table class="table table-sm mb-0">
+            <thead><tr><th>Resort</th><th>Allocated</th><th>Booked</th><th>Reserved</th><th>Available</th></tr></thead>
+            <tbody>${resortAllocation.map((r) => `<tr><td>${h(r.resort_name)}</td><td>${r.allocated}</td><td>${r.booked}</td><td>${r.reserved}</td><td>${r.remaining}</td></tr>`).join('')}</tbody>
+        </table></div>
+        <div class="form-text">Capacity split via the Resort Capacity Allocator.</div>`;
+    }
     return `<div class="table-responsive"><table class="table table-sm mb-0">
         <thead><tr><th>Resort</th><th>Reserved</th><th>Occupied</th></tr></thead>
         <tbody>${resortBreakdown.map((r) => `<tr><td>${h(r.resortName)}</td><td>${r.reserved}</td><td>${r.occupied}</td></tr>`).join('')}</tbody>
@@ -102,7 +115,7 @@ function ferryCardHtml(card, { travelDate, canBook }) {
                 <div class="col"><div class="fw-bold">${card.reserved}</div><div class="text-muted small">Reserved</div></div>
             </div>
             <details class="mb-2"><summary class="small text-muted" style="cursor:pointer">Passenger Breakdown</summary>${statusSeatsHtml(card.statusSeats)}</details>
-            <details class="mb-2"><summary class="small text-muted" style="cursor:pointer">By Resort</summary>${resortBreakdownHtml(card.resortBreakdown)}</details>
+            <details class="mb-2"><summary class="small text-muted" style="cursor:pointer">By Resort</summary>${resortBreakdownHtml(card.resortBreakdown, card.resortAllocation)}</details>
             <div class="small mb-2">Booking: <span class="badge ${card.bookingStatus === 'Full' ? 'bg-danger' : 'bg-success'}">${h(card.bookingStatus)}</span></div>
             ${bookingArea}
         </div>

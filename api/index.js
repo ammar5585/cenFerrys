@@ -33,6 +33,7 @@ import { registerAdminUserPermissionsRoutes } from '../netlify/functions/app/rou
 import { registerAdminSeatReservationsRoutes } from '../netlify/functions/app/routes/admin_seat_reservations.js';
 import { registerAdminFerryServicesRoutes } from '../netlify/functions/app/routes/admin_ferry_services.js';
 import { registerAdminFerryTransferRoutes } from '../netlify/functions/app/routes/admin_ferry_transfer.js';
+import { registerAdminCapacityAllocatorRoutes } from '../netlify/functions/app/routes/admin_capacity_allocator.js';
 import { registerAdminUserImportRoutes } from '../netlify/functions/app/routes/admin_user_import.js';
 import { registerAdminEmailSettingsRoutes } from '../netlify/functions/app/routes/admin_email_settings.js';
 import { registerReportsRoutes } from '../netlify/functions/app/routes/reports.js';
@@ -66,6 +67,7 @@ registerAdminUserPermissionsRoutes(router);
 registerAdminSeatReservationsRoutes(router);
 registerAdminFerryServicesRoutes(router);
 registerAdminFerryTransferRoutes(router);
+registerAdminCapacityAllocatorRoutes(router);
 registerAdminUserImportRoutes(router);
 registerAdminEmailSettingsRoutes(router);
 registerReportsRoutes(router);

@@ -11,8 +11,8 @@ import { formatDateTime, formatDate, formatTime } from '../format.js';
 
 const PER_PAGE = 25;
 
-function tabsHtml(activeTab, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers) {
-    if (!canViewPermissionChanges && !canViewHrManualBookings && !canViewSeatReservations && !canViewEmailLog && !canViewHodSeatAssignments && !canViewFerryTransfers) return '';
+function tabsHtml(activeTab, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity) {
+    if (!canViewPermissionChanges && !canViewHrManualBookings && !canViewSeatReservations && !canViewEmailLog && !canViewHodSeatAssignments && !canViewFerryTransfers && !canViewResortCapacity) return '';
     const tabs = [`<li class="nav-item"><a class="nav-link ${activeTab === 'activity' ? 'active' : ''}" href="/admin/activity_logs">Activity Logs</a></li>`];
     if (canViewPermissionChanges) {
         tabs.push(`<li class="nav-item"><a class="nav-link ${activeTab === 'permissions' ? 'active' : ''}" href="/admin/activity_logs?tab=permissions">Permission Changes</a></li>`);
@@ -29,13 +29,16 @@ function tabsHtml(activeTab, canViewPermissionChanges, canViewHrManualBookings, 
     if (canViewFerryTransfers) {
         tabs.push(`<li class="nav-item"><a class="nav-link ${activeTab === 'ferry_transfers' ? 'active' : ''}" href="/admin/activity_logs?tab=ferry_transfers">Ferry Transfers</a></li>`);
     }
+    if (canViewResortCapacity) {
+        tabs.push(`<li class="nav-item"><a class="nav-link ${activeTab === 'resort_capacity' ? 'active' : ''}" href="/admin/activity_logs?tab=resort_capacity">Resort Capacity</a></li>`);
+    }
     if (canViewEmailLog) {
         tabs.push(`<li class="nav-item"><a class="nav-link ${activeTab === 'email_log' ? 'active' : ''}" href="/admin/activity_logs?tab=email_log">Email Log</a></li>`);
     }
     return `<ul class="nav nav-tabs mb-3">${tabs.join('')}</ul>`;
 }
 
-async function emailLogBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers) {
+async function emailLogBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity) {
     const { rows: pageRows, total } = unwrapPage(
         await db()
             .from('email_audit_log')
@@ -77,7 +80,7 @@ async function emailLogBody(page, canViewPermissionChanges, canViewHrManualBooki
 
     return html`
 <h5 class="mb-3"><i class="bi bi-envelope-at"></i> Email Log</h5>
-${raw(tabsHtml('email_log', canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers))}
+${raw(tabsHtml('email_log', canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity))}
 <div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover mb-0 align-middle">
     <thead><tr><th>Date/Time</th><th>Event</th><th>By</th><th>Setting / Template</th><th>Recipient</th><th>Error</th></tr></thead>
     <tbody>${raw(rowsHtml || '<tr><td colspan="6" class="text-center text-muted py-4">No email events recorded.</td></tr>')}</tbody>
@@ -85,7 +88,7 @@ ${raw(tabsHtml('email_log', canViewPermissionChanges, canViewHrManualBookings, c
 ${raw(pagination)}`;
 }
 
-async function seatReservationsLogBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers) {
+async function seatReservationsLogBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity) {
     const { rows: pageRows, total } = unwrapPage(
         await db()
             .from('seat_reservation_log')
@@ -129,7 +132,7 @@ async function seatReservationsLogBody(page, canViewPermissionChanges, canViewHr
 
     return html`
 <h5 class="mb-3"><i class="bi bi-bookmark-star"></i> Seat Reservation Log</h5>
-${raw(tabsHtml('seat_reservations', canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers))}
+${raw(tabsHtml('seat_reservations', canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity))}
 <div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover mb-0 align-middle">
     <thead><tr><th>Date/Time</th><th>Action</th><th>Type</th><th>Employee / Department</th><th>Name</th><th>Direction</th><th>Resort</th><th>Seats</th><th>Period</th><th>By</th><th>Reason</th></tr></thead>
     <tbody>${raw(rowsHtml || '<tr><td colspan="11" class="text-center text-muted py-4">No seat reservation actions recorded.</td></tr>')}</tbody>
@@ -137,7 +140,7 @@ ${raw(tabsHtml('seat_reservations', canViewPermissionChanges, canViewHrManualBoo
 ${raw(pagination)}`;
 }
 
-async function hrManualBookingsBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers) {
+async function hrManualBookingsBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity) {
     const { rows: pageRows, total } = unwrapPage(
         await db()
             .from('hr_manual_booking_log')
@@ -181,7 +184,7 @@ async function hrManualBookingsBody(page, canViewPermissionChanges, canViewHrMan
 
     return html`
 <h5 class="mb-3"><i class="bi bi-person-lock"></i> HR Manual Booking Log</h5>
-${raw(tabsHtml('hr_manual', canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers))}
+${raw(tabsHtml('hr_manual', canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity))}
 <div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover mb-0 align-middle">
     <thead><tr><th>Date/Time</th><th>Employee</th><th>Schedule</th><th>Resort</th><th>Created By</th><th>Overrides Used</th><th>Remarks</th></tr></thead>
     <tbody>${raw(rowsHtml || '<tr><td colspan="7" class="text-center text-muted py-4">No HR manual bookings recorded.</td></tr>')}</tbody>
@@ -189,7 +192,7 @@ ${raw(tabsHtml('hr_manual', canViewPermissionChanges, canViewHrManualBookings, c
 ${raw(pagination)}`;
 }
 
-async function permissionChangesBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers) {
+async function permissionChangesBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity) {
     const { rows: pageRows, total } = unwrapPage(
         await db()
             .from('permission_audit_log')
@@ -228,7 +231,7 @@ async function permissionChangesBody(page, canViewPermissionChanges, canViewHrMa
 
     return html`
 <h5 class="mb-3"><i class="bi bi-shield-lock"></i> Permission Change History</h5>
-${raw(tabsHtml('permissions', canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers))}
+${raw(tabsHtml('permissions', canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity))}
 <div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover mb-0 align-middle">
     <thead><tr><th>Date/Time</th><th>Administrator</th><th>Action</th><th>Target</th><th>Change</th></tr></thead>
     <tbody>${raw(rowsHtml || '<tr><td colspan="5" class="text-center text-muted py-4">No permission changes recorded.</td></tr>')}</tbody>
@@ -236,7 +239,7 @@ ${raw(tabsHtml('permissions', canViewPermissionChanges, canViewHrManualBookings,
 ${raw(pagination)}`;
 }
 
-async function hodSeatAssignmentsBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers) {
+async function hodSeatAssignmentsBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity) {
     const { rows: pageRows, total } = unwrapPage(
         await db()
             .from('hod_seat_assignment_log')
@@ -280,7 +283,7 @@ async function hodSeatAssignmentsBody(page, canViewPermissionChanges, canViewHrM
 
     return html`
 <h5 class="mb-3"><i class="bi bi-bookmark-check"></i> HOD Seat Assignment Log</h5>
-${raw(tabsHtml('hod_seat_assignments', canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers))}
+${raw(tabsHtml('hod_seat_assignments', canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity))}
 <div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover mb-0 align-middle">
     <thead><tr><th>Date/Time</th><th>Action</th><th>Department</th><th>Route</th><th>Resort</th><th>Employee Assigned</th><th>Employee Removed</th><th>By</th><th>Remarks</th></tr></thead>
     <tbody>${raw(rowsHtml || '<tr><td colspan="9" class="text-center text-muted py-4">No HOD seat assignment actions recorded.</td></tr>')}</tbody>
@@ -288,7 +291,7 @@ ${raw(tabsHtml('hod_seat_assignments', canViewPermissionChanges, canViewHrManual
 ${raw(pagination)}`;
 }
 
-async function ferryTransfersBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers) {
+async function ferryTransfersBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity) {
     const { rows: pageRows, total } = unwrapPage(
         await db()
             .from('ferry_transfer_log')
@@ -330,10 +333,58 @@ async function ferryTransfersBody(page, canViewPermissionChanges, canViewHrManua
 
     return html`
 <h5 class="mb-3"><i class="bi bi-arrow-left-right"></i> Ferry Transfer Log</h5>
-${raw(tabsHtml('ferry_transfers', canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers))}
+${raw(tabsHtml('ferry_transfers', canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity))}
 <div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover mb-0 align-middle">
     <thead><tr><th>Date/Time</th><th>From</th><th>To</th><th>Travel Date</th><th>Option</th><th>Transferred</th><th>Waiting List</th><th>Skipped</th><th>By</th><th>Reason</th></tr></thead>
     <tbody>${raw(rowsHtml || '<tr><td colspan="10" class="text-center text-muted py-4">No ferry transfers recorded.</td></tr>')}</tbody>
+</table></div></div>
+${raw(pagination)}`;
+}
+
+async function resortCapacityLogBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity) {
+    const { rows: pageRows, total } = unwrapPage(
+        await db()
+            .from('ferry_resort_capacity_log')
+            .select(
+                'log_id, service_name_snapshot, resort_a_name_snapshot, previous_resort_a_seats, new_resort_a_seats, resort_b_name_snapshot, previous_resort_b_seats, new_resort_b_seats, total_capacity, action, reason, created_at, ' +
+                    'actor:users!ferry_resort_capacity_log_actor_user_id_fkey(full_name)',
+                { count: 'exact' }
+            )
+            .order('created_at', { ascending: false })
+            .range((page - 1) * PER_PAGE, page * PER_PAGE - 1)
+    );
+
+    const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
+
+    const rowsHtml = pageRows
+        .map(
+            (r) => html`<tr>
+                <td>${formatDateTime(r.created_at)}</td>
+                <td>${r.service_name_snapshot ?? '-'}</td>
+                <td>${r.action}</td>
+                <td>${r.resort_a_name_snapshot ?? '-'}: ${r.previous_resort_a_seats ?? '-'} &rarr; ${r.new_resort_a_seats ?? '-'}</td>
+                <td>${r.resort_b_name_snapshot ?? '-'}: ${r.previous_resort_b_seats ?? '-'} &rarr; ${r.new_resort_b_seats ?? '-'}</td>
+                <td>${r.total_capacity ?? ''}</td>
+                <td>${r.actor?.full_name ?? 'Unknown'}</td>
+                <td>${r.reason ?? ''}</td>
+            </tr>`
+        )
+        .map((r) => r.toString())
+        .join('');
+
+    const pagination =
+        totalPages > 1
+            ? `<nav class="mt-3"><ul class="pagination pagination-sm">${Array.from({ length: totalPages }, (_, i) => i + 1)
+                  .map((p) => `<li class="page-item ${p === page ? 'active' : ''}"><a class="page-link" href="?tab=resort_capacity&page=${p}">${p}</a></li>`)
+                  .join('')}</ul></nav>`
+            : '';
+
+    return html`
+<h5 class="mb-3"><i class="bi bi-pie-chart"></i> Resort Capacity Allocation Log</h5>
+${raw(tabsHtml('resort_capacity', canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity))}
+<div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+    <thead><tr><th>Date/Time</th><th>Ferry</th><th>Action</th><th>Resort A</th><th>Resort B</th><th>Total Capacity</th><th>By</th><th>Reason</th></tr></thead>
+    <tbody>${raw(rowsHtml || '<tr><td colspan="8" class="text-center text-muted py-4">No resort capacity changes recorded.</td></tr>')}</tbody>
 </table></div></div>
 ${raw(pagination)}`;
 }
@@ -351,7 +402,8 @@ export function registerAdminActivityLogRoutes(router) {
         const canViewEmailLog = hasPermission(auth.user.perms, 'audit_logs.view_email_log');
         const canViewHodSeatAssignments = hasPermission(auth.user.perms, 'audit_logs.view_hod_seat_assignments');
         const canViewFerryTransfers = hasPermission(auth.user.perms, 'audit_logs.view_ferry_transfers');
-        if (!canViewActivity && !canViewPermissionChanges && !canViewHrManualBookings && !canViewSeatReservations && !canViewEmailLog && !canViewHodSeatAssignments && !canViewFerryTransfers) {
+        const canViewResortCapacity = hasPermission(auth.user.perms, 'audit_logs.view_resort_capacity');
+        if (!canViewActivity && !canViewPermissionChanges && !canViewHrManualBookings && !canViewSeatReservations && !canViewEmailLog && !canViewHodSeatAssignments && !canViewFerryTransfers && !canViewResortCapacity) {
             return accessDeniedResponse({ request, auth, pageTitle: 'Activity Logs' });
         }
 
@@ -359,38 +411,44 @@ export function registerAdminActivityLogRoutes(router) {
         if (tab === 'permissions') {
             if (!canViewPermissionChanges) return accessDeniedResponse({ request, auth, pageTitle: 'Permission Changes' });
             const page = Math.max(1, Number(url.searchParams.get('page') || 1));
-            const body = await permissionChangesBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers);
+            const body = await permissionChangesBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity);
             return renderShellForRequest({ request, auth, pageTitle: 'Permission Changes', path: '/admin/activity_logs', bodyHtml: body });
         }
         if (tab === 'hr_manual') {
             if (!canViewHrManualBookings) return accessDeniedResponse({ request, auth, pageTitle: 'HR Manual Bookings' });
             const page = Math.max(1, Number(url.searchParams.get('page') || 1));
-            const body = await hrManualBookingsBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers);
+            const body = await hrManualBookingsBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity);
             return renderShellForRequest({ request, auth, pageTitle: 'HR Manual Bookings', path: '/admin/activity_logs', bodyHtml: body });
         }
         if (tab === 'seat_reservations') {
             if (!canViewSeatReservations) return accessDeniedResponse({ request, auth, pageTitle: 'Seat Reservations' });
             const page = Math.max(1, Number(url.searchParams.get('page') || 1));
-            const body = await seatReservationsLogBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers);
+            const body = await seatReservationsLogBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity);
             return renderShellForRequest({ request, auth, pageTitle: 'Seat Reservations', path: '/admin/activity_logs', bodyHtml: body });
         }
         if (tab === 'hod_seat_assignments') {
             if (!canViewHodSeatAssignments) return accessDeniedResponse({ request, auth, pageTitle: 'HOD Seat Assignments' });
             const page = Math.max(1, Number(url.searchParams.get('page') || 1));
-            const body = await hodSeatAssignmentsBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers);
+            const body = await hodSeatAssignmentsBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity);
             return renderShellForRequest({ request, auth, pageTitle: 'HOD Seat Assignments', path: '/admin/activity_logs', bodyHtml: body });
         }
         if (tab === 'email_log') {
             if (!canViewEmailLog) return accessDeniedResponse({ request, auth, pageTitle: 'Email Log' });
             const page = Math.max(1, Number(url.searchParams.get('page') || 1));
-            const body = await emailLogBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers);
+            const body = await emailLogBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity);
             return renderShellForRequest({ request, auth, pageTitle: 'Email Log', path: '/admin/activity_logs', bodyHtml: body });
         }
         if (tab === 'ferry_transfers') {
             if (!canViewFerryTransfers) return accessDeniedResponse({ request, auth, pageTitle: 'Ferry Transfers' });
             const page = Math.max(1, Number(url.searchParams.get('page') || 1));
-            const body = await ferryTransfersBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers);
+            const body = await ferryTransfersBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity);
             return renderShellForRequest({ request, auth, pageTitle: 'Ferry Transfers', path: '/admin/activity_logs', bodyHtml: body });
+        }
+        if (tab === 'resort_capacity') {
+            if (!canViewResortCapacity) return accessDeniedResponse({ request, auth, pageTitle: 'Resort Capacity' });
+            const page = Math.max(1, Number(url.searchParams.get('page') || 1));
+            const body = await resortCapacityLogBody(page, canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity);
+            return renderShellForRequest({ request, auth, pageTitle: 'Resort Capacity', path: '/admin/activity_logs', bodyHtml: body });
         }
 
         if (!canViewActivity) {
@@ -398,7 +456,7 @@ export function registerAdminActivityLogRoutes(router) {
             // the default Activity Logs tab - send them to whichever tab
             // they do have, rather than a bare Access Denied on a page they
             // partially have rights to.
-            const fallbackTab = canViewPermissionChanges ? 'permissions' : canViewHrManualBookings ? 'hr_manual' : canViewSeatReservations ? 'seat_reservations' : canViewHodSeatAssignments ? 'hod_seat_assignments' : canViewFerryTransfers ? 'ferry_transfers' : 'email_log';
+            const fallbackTab = canViewPermissionChanges ? 'permissions' : canViewHrManualBookings ? 'hr_manual' : canViewSeatReservations ? 'seat_reservations' : canViewHodSeatAssignments ? 'hod_seat_assignments' : canViewFerryTransfers ? 'ferry_transfers' : canViewResortCapacity ? 'resort_capacity' : 'email_log';
             return redirectTo(`/admin/activity_logs?tab=${fallbackTab}`, { cookies: [auth.setCookie].filter(Boolean) });
         }
 
@@ -466,7 +524,7 @@ export function registerAdminActivityLogRoutes(router) {
 
         const body = html`
 <h5 class="mb-3"><i class="bi bi-clock-history"></i> Activity Logs</h5>
-${raw(tabsHtml('activity', canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers))}
+${raw(tabsHtml('activity', canViewPermissionChanges, canViewHrManualBookings, canViewSeatReservations, canViewEmailLog, canViewHodSeatAssignments, canViewFerryTransfers, canViewResortCapacity))}
 <div class="card shadow-sm mb-3"><div class="card-body">
     <form method="get" class="row g-2">
         <div class="col-md-4"><input type="text" name="search" class="form-control" placeholder="Search action, user, or details" value="${search}"></div>

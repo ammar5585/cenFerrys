@@ -35,7 +35,7 @@ export function renderSidebar(permsHex, currentPath, isDeptApprover = false, com
     ];
 
     if (can('user_management.access') || can('schedule_management.access') || can('approval_workflow.configure_hierarchy')
-        || can('booking.view_all') || can('reports.view_admin') || can('audit_logs.access') || can('branding.access') || can('settings.access') || can('settings.manage_email') || can('booking.bulk_transfer_passengers') || isAdmin) {
+        || can('booking.view_all') || can('reports.view_admin') || can('audit_logs.access') || can('branding.access') || can('settings.access') || can('settings.manage_email') || can('booking.bulk_transfer_passengers') || can('booking.view_resort_capacity') || isAdmin) {
         links.push(html`<div class="nav-heading">Administration</div>`);
         if (can('user_management.view')) links.push(navLink('/admin/users', 'bi-people', 'User Management', currentPath));
         if (can('user_management.import')) links.push(navLink('/admin/users/import', 'bi-file-earmark-arrow-up', 'Bulk Import Users', currentPath));
@@ -53,6 +53,7 @@ export function renderSidebar(permsHex, currentPath, isDeptApprover = false, com
         if (can('schedule_management.manage_directions')) links.push(navLink('/admin/directions', 'bi-arrow-left-right', 'Direction Management', currentPath));
         if (can('booking.manage_seat_reservations')) links.push(navLink('/admin/seat_reservations', 'bi-bookmark-star', 'Seat Reservations', currentPath));
         if (can('booking.bulk_transfer_passengers')) links.push(navLink('/admin/ferry_transfer', 'bi-arrow-left-right', 'Bulk Passenger Transfer', currentPath));
+        if (can('booking.view_resort_capacity')) links.push(navLink('/admin/resort_capacity', 'bi-pie-chart', 'Resort Capacity Allocator', currentPath));
         if (can('schedule_management.manage_holidays')) links.push(navLink('/admin/holidays', 'bi-calendar-x', 'Holidays', currentPath));
         if (can('approval_workflow.manage_manager_availability')) links.push(navLink('/admin/manager_availability', 'bi-person-check', 'Manager Availability', currentPath));
         if (can('approval_workflow.configure_hierarchy')) links.push(navLink('/admin/department_approval', 'bi-diagram-3', 'Department Approval Config', currentPath));
