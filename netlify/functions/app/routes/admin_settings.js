@@ -15,13 +15,14 @@ import { flashSetCookie } from '../flash.js';
 const WEEKDAY_OPTIONS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 async function settingsBody({ errors, csrfToken }) {
-    const [maxSeats, workingDaysStr, passwordMinLength, sessionTimeout, notificationsEnabled, maintenanceMode] = await Promise.all([
+    const [maxSeats, workingDaysStr, passwordMinLength, sessionTimeout, notificationsEnabled, maintenanceMode, defaultCutoffMinutes] = await Promise.all([
         getSetting('max_seats_per_booking', 4),
         getSetting('working_days', 'Mon,Tue,Wed,Thu,Fri,Sat,Sun'),
         getSetting('password_min_length', 8),
         getSetting('session_timeout_minutes', 30),
         getSetting('notifications_enabled', '1'),
         getSetting('maintenance_mode', '0'),
+        getSetting('default_booking_cutoff_minutes', 120),
     ]);
     const workingDays = workingDaysStr.split(',');
 
@@ -35,6 +36,9 @@ ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `
         <div class="row g-3">
             <div class="col-md-6"><label class="form-label">Max Seats Per Booking</label><input type="number" min="1" name="max_seats_per_booking" class="form-control" value="${maxSeats}"></div>
             <div class="col-md-6"><label class="form-label">Session Timeout (minutes)</label><input type="number" min="5" name="session_timeout_minutes" class="form-control" value="${sessionTimeout}"></div>
+            <div class="col-md-6"><label class="form-label">Default Booking Cut-Off (minutes)</label><input type="number" min="0" name="default_booking_cutoff_minutes" class="form-control" value="${defaultCutoffMinutes}">
+                <div class="form-text">Employees can no longer book a ferry once it's within this many minutes of departure, unless a Ferry Service overrides it individually.</div>
+            </div>
             <div class="col-12"><label class="form-label">Working Days</label><div class="d-flex flex-wrap gap-3">
                 ${raw(WEEKDAY_OPTIONS.map((day) => `<div class="form-check"><input class="form-check-input" type="checkbox" name="working_days" value="${day}" id="wd${day}" ${workingDays.includes(day) ? 'checked' : ''}><label class="form-check-label" for="wd${day}">${day}</label></div>`).join(''))}
             </div></div>
@@ -68,6 +72,7 @@ export function registerAdminSettingsRoutes(router) {
         await setSetting('working_days', form.getAll('working_days').join(','));
         await setSetting('password_min_length', Math.max(6, Number(form.get('password_min_length')) || 8));
         await setSetting('session_timeout_minutes', Math.max(5, Number(form.get('session_timeout_minutes')) || 30));
+        await setSetting('default_booking_cutoff_minutes', Math.max(0, Number(form.get('default_booking_cutoff_minutes')) || 0));
         await setSetting('maintenance_mode', form.get('maintenance_mode') ? '1' : '0');
         await setSetting('notifications_enabled', form.get('notifications_enabled') ? '1' : '0');
 

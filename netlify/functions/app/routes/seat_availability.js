@@ -15,7 +15,7 @@ import { requireLogin } from '../guards.js';
 import { hasPermission } from '../permissions.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
-import { formatTime } from '../format.js';
+import { formatTime, formatDateTime } from '../format.js';
 import { htmlResponse } from '../response.js';
 import { getLiveFerryAvailability } from '../seatAvailability.js';
 import { getStopNameOptions } from '../ferryServices.js';
@@ -83,7 +83,11 @@ function ferryCardHtml(card, { travelDate, canBook }) {
     const badge = FERRY_STATUS_BADGE[card.ferryStatus] || 'bg-secondary';
     const bookHref = `/staff/book?date=${encodeURIComponent(travelDate)}&direction=${encodeURIComponent(card.label)}`;
     let bookingArea = '';
-    if (canBook) {
+    if (card.cutoff?.closed) {
+        // Booking cut-off has passed - no booking action at all, unlike
+        // a "Full" ferry which still offers the waiting list.
+        bookingArea = `<div class="text-center small text-danger fw-bold">🔴 Booking Closed at ${formatDateTime(card.cutoff.cutoffTime)}</div>`;
+    } else if (canBook) {
         bookingArea =
             card.available > 0
                 ? `<a href="${bookHref}" class="btn btn-primary btn-sm w-100"><i class="bi bi-ticket-perforated"></i> Book Now</a>`
@@ -117,7 +121,7 @@ function ferryCardHtml(card, { travelDate, canBook }) {
             </div>
             <details class="mb-2"><summary class="small text-muted" style="cursor:pointer">Passenger Breakdown</summary>${statusSeatsHtml(card.statusSeats)}</details>
             <details class="mb-2"><summary class="small text-muted" style="cursor:pointer">By Resort</summary>${resortBreakdownHtml(card.resortBreakdown, card.resortAllocation)}</details>
-            <div class="small mb-2">Booking: <span class="badge ${card.bookingStatus === 'Full' ? 'bg-danger' : 'bg-success'}">${h(card.bookingStatus)}</span></div>
+            <div class="small mb-2">Booking: <span class="badge ${card.bookingStatus === 'Open' ? 'bg-success' : 'bg-danger'}">${h(card.bookingStatus)}</span></div>
             ${bookingArea}
         </div>
     </div>

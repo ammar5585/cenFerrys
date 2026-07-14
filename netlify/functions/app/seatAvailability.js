@@ -12,6 +12,7 @@ import { db, unwrap } from './db.js';
 import { getRemainingSeatsBatch } from './seats.js';
 import { getFerryServices, getWholeRouteDirections } from './ferryServices.js';
 import { getActiveResorts } from './refData.js';
+import { getSetting } from './settings.js';
 
 const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 // Shown on every ferry card that has no custom image uploaded via the
@@ -184,10 +185,11 @@ export async function getLiveFerryAvailability({ travelDate, filters = {} }) {
     const todayMaldives = todayInMaldives();
     const weekday = weekdayFor(travelDate);
 
-    const [allServices, bookableDirections, resorts] = await Promise.all([
+    const [allServices, bookableDirections, resorts, defaultCutoffMinutes] = await Promise.all([
         getFerryServices({ statusFilter: 'active' }),
         getWholeRouteDirections(),
         getActiveResorts(),
+        getSetting('default_booking_cutoff_minutes', 120).then(Number),
     ]);
     const labelByScheduleId = new Map(bookableDirections.map((d) => [d.scheduleId, d.direction]));
 
@@ -287,6 +289,16 @@ export async function getLiveFerryAvailability({ travelDate, filters = {} }) {
 
         const ferryStatus = deriveFerryStatus({ travelDate, todayMaldives, firstDepartureInstant, lastArrivalInstant, remaining: remainingRow.remaining, anyDeparted, allArrived });
 
+        // Booking cut-off - a per-service override (service.booking_
+        // cutoff_minutes) falling back to the system default, computed
+        // inline here (rather than via bookingCutoff.js's
+        // getBookingCutoffInfo(), which would re-query stops per
+        // schedule) since firstDepartureInstant is already on hand from
+        // the batched query above.
+        const cutoffMinutes = service.booking_cutoff_minutes ?? defaultCutoffMinutes;
+        const cutoffInstant = firstDepartureInstant != null ? firstDepartureInstant - cutoffMinutes * 60 * 1000 : null;
+        const cutoffClosed = cutoffInstant != null && Date.now() >= cutoffInstant;
+
         // resort_id NULL on a reservation means "Both Resorts" (the Bulk
         // Reservation feature's own explicit option) - it counts toward
         // every resort's "reserved" figure, same fix as findHodPoolRows().
@@ -318,7 +330,8 @@ export async function getLiveFerryAvailability({ travelDate, filters = {} }) {
             boardingStopName: firstStop?.stop_name ?? null,
             destinationStopName: lastStop?.stop_name ?? null,
             ferryStatus,
-            bookingStatus: remainingRow.remaining <= 0 ? 'Full' : 'Open',
+            bookingStatus: remainingRow.remaining <= 0 ? 'Full' : cutoffClosed ? 'Booking Closed' : 'Open',
+            cutoff: { closed: cutoffClosed, cutoffTime: cutoffInstant != null ? new Date(cutoffInstant).toISOString() : null },
             indicator: seatIndicator(remainingRow.remaining),
             utilization: utilizationIndicator(remainingRow.capacity, remainingRow.booked + remainingRow.reserved),
             // "Direct" vs "Via N stop(s)" - this app has no vessel/boat-type

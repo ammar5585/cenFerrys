@@ -74,7 +74,7 @@ function validateStopChronology(stops) {
 export async function getFerryServices({ statusFilter } = {}) {
     let query = db()
         .from('ferry_schedule')
-        .select('schedule_id, service_name, service_code, departure_time, capacity, weekdays, effective_date, expiry_date, status, created_at, image_url')
+        .select('schedule_id, service_name, service_code, departure_time, capacity, weekdays, effective_date, expiry_date, status, created_at, image_url, booking_cutoff_minutes')
         .order('schedule_id', { ascending: false });
     if (statusFilter) query = query.eq('status', statusFilter);
     const services = unwrap(await query);
@@ -290,7 +290,7 @@ export async function createFerryService({ serviceName, serviceCode, weekdays, c
     return { ok: true, service };
 }
 
-export async function updateFerryService({ scheduleId, serviceName, serviceCode, weekdays, capacity, effectiveDate, expiryDate, actorUserId, reason }) {
+export async function updateFerryService({ scheduleId, serviceName, serviceCode, weekdays, capacity, effectiveDate, expiryDate, bookingCutoffMinutes, actorUserId, reason }) {
     const existing = await getServiceWithStops(scheduleId);
     if (!existing) return { ok: false, reason: 'not_found' };
     if (!serviceName?.trim()) return { ok: false, reason: 'invalid_name' };
@@ -309,7 +309,7 @@ export async function updateFerryService({ scheduleId, serviceName, serviceCode,
     unwrap(
         await db()
             .from('ferry_schedule')
-            .update({ service_name: serviceName.trim(), service_code: trimmedCode, capacity, weekdays, effective_date: effectiveDate, expiry_date: expiryDate || null })
+            .update({ service_name: serviceName.trim(), service_code: trimmedCode, capacity, weekdays, effective_date: effectiveDate, expiry_date: expiryDate || null, booking_cutoff_minutes: bookingCutoffMinutes ?? null })
             .eq('schedule_id', scheduleId)
     );
 

@@ -18,6 +18,7 @@ import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatDate, formatTime, statusBadgeClass, scheduleLabel } from '../format.js';
+import { getBookingCutoffInfo, recordCutoffAction } from '../bookingCutoff.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
@@ -56,6 +57,7 @@ async function bookingsPageBody({ dateFrom, dateTo, statusFilter, deptFilter, re
     const canHrManualBook = hasPermission(perms, 'booking.hr_manual_booking');
     const canOverrideCapacity = canHrManualBook && hasPermission(perms, 'booking.override_capacity');
     const canOverrideApproval = canHrManualBook && hasPermission(perms, 'booking.override_approval');
+    const canOverrideCutoff = canHrManualBook && hasPermission(perms, 'booking.override_cutoff');
 
     const rowsHtml = bookings
         .map((b) => {
@@ -115,6 +117,7 @@ async function bookingsPageBody({ dateFrom, dateTo, statusFilter, deptFilter, re
         <div class="mb-3"><label class="form-label">Remarks (Optional)</label><textarea name="remarks" class="form-control" rows="2"></textarea></div>
         ${canOverrideCapacity ? `<div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="override_capacity" value="1" id="hrOverrideCapacity"><label class="form-check-label" for="hrOverrideCapacity">Override seat availability (if ferry is full, otherwise adds to waiting list)</label></div>` : ''}
         ${canOverrideApproval ? `<div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="override_approval" value="1" id="hrOverrideApproval"><label class="form-check-label" for="hrOverrideApproval">Override approval workflow (approve immediately)</label></div>` : ''}
+        ${canOverrideCutoff ? `<div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="override_cutoff" value="1" id="hrOverrideCutoff"><label class="form-check-label" for="hrOverrideCutoff">Override booking cut-off (ferry has closed for self-service booking) - requires a reason in Remarks</label></div>` : ''}
     </div>
     <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Create Booking</button></div>
 </form></div></div>
@@ -287,6 +290,7 @@ export function registerAdminBookingsRoutes(router) {
             // as every other form re-validation in this codebase.
             const overrideCapacity = !!form.override_capacity && hasPermission(user.perms, 'booking.override_capacity');
             const overrideApproval = !!form.override_approval && hasPermission(user.perms, 'booking.override_approval');
+            const overrideCutoff = !!form.override_cutoff && hasPermission(user.perms, 'booking.override_cutoff');
 
             const employeeRows = unwrap(
                 await db().from('users').select('user_id, full_name, employee_id, resort_id, department_id, status').eq('user_id', employeeUserId).limit(1)
@@ -305,6 +309,49 @@ export function registerAdminBookingsRoutes(router) {
             const schedule = scheduleRows[0];
             // Same Ferry-Service fallback as override_booking above.
             const direction = schedule.service_name || schedule.ferry_routes?.direction || null;
+
+            // Cut-off is orthogonal to capacity/approval - even a
+            // capacity-overriding HR booking still needs its own
+            // override_cutoff checkbox (+ reason) once the ferry has
+            // closed, since these are independently configurable
+            // permissions per spec.
+            const cutoffInfo = await getBookingCutoffInfo(scheduleId, travelDate);
+            if (cutoffInfo.closed) {
+                if (!overrideCutoff) {
+                    await recordCutoffAction({
+                        scheduleId,
+                        serviceName: direction,
+                        travelDate,
+                        employeeUserId,
+                        employeeName: employee.full_name,
+                        cutoffInstant: cutoffInfo.cutoffInstant,
+                        departureInstant: cutoffInfo.departureInstant,
+                        action: 'blocked',
+                        performedByUserId: user.user_id,
+                        reason: 'Booking for this ferry has closed.',
+                    });
+                    return redirectTo('/admin/bookings', {
+                        cookies: [auth.setCookie, flashSetCookie('error', 'This ferry is no longer available for booking because the booking cut-off time has passed.')].filter(Boolean),
+                    });
+                }
+                if (!remarks) {
+                    return redirectTo('/admin/bookings', {
+                        cookies: [auth.setCookie, flashSetCookie('error', 'Please provide a reason in Remarks when overriding the booking cut-off.')].filter(Boolean),
+                    });
+                }
+                await recordCutoffAction({
+                    scheduleId,
+                    serviceName: direction,
+                    travelDate,
+                    employeeUserId,
+                    employeeName: employee.full_name,
+                    cutoffInstant: cutoffInfo.cutoffInstant,
+                    departureInstant: cutoffInfo.departureInstant,
+                    action: 'overridden',
+                    performedByUserId: user.user_id,
+                    reason: remarks,
+                });
+            }
 
             const waitingListStatusId = await getStatusId('Waiting List');
             let booking;
@@ -355,6 +402,7 @@ export function registerAdminBookingsRoutes(router) {
                     created_by_user_id: user.user_id,
                     capacity_overridden: overrideCapacity,
                     approval_overridden: overrideApproval,
+                    cutoff_overridden: cutoffInfo.closed && overrideCutoff,
                     remarks,
                 })
             );

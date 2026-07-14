@@ -21,6 +21,7 @@ import { formatDate, formatDateTime, formatTime, statusBadgeClass, greeting } fr
 import { ROLE_ADMIN } from '../session.js';
 import { getStopNameOptions } from '../ferryServices.js';
 import { getLiveFerryAvailability, getStopTimeWindow, findOverlappingBooking } from '../seatAvailability.js';
+import { getBookingCutoffInfo, recordCutoffAction } from '../bookingCutoff.js';
 import { getActiveResorts } from '../refData.js';
 
 async function readFormBody(request) {
@@ -161,12 +162,16 @@ function approvalWorkflowInfoHtml(workflowInfo) {
  */
 export function bookingCardHtml(card, legPrefix) {
     const full = card.available <= 0;
+    // Unlike "Full" (which stays selectable for the waiting list), a
+    // cut-off-closed ferry allows no booking action at all - the radio
+    // is genuinely disabled, not just relabeled.
+    const closed = !!card.cutoff?.closed;
     const stopChips = card.stopProgress
         .map((s) => `<span class="${s.stopState === 'completed' ? 'text-muted text-decoration-line-through' : s.stopState === 'current' ? 'fw-bold text-primary' : ''}">${h(s.stop_name)}</span>`)
         .join(' <span class="text-muted">&rarr;</span> ');
     return `<div class="col-12 col-md-6 col-xl-4">
-    <label class="schedule-card d-block" for="${legPrefix}${card.scheduleId}">
-        <input type="radio" name="${legPrefix}_radio" id="${legPrefix}${card.scheduleId}" value="${card.scheduleId}"
+    <label class="schedule-card d-block${closed ? ' schedule-card-disabled' : ''}" for="${legPrefix}${card.scheduleId}">
+        <input type="radio" name="${legPrefix}_radio" id="${legPrefix}${card.scheduleId}" value="${card.scheduleId}" ${closed ? 'disabled' : ''}
             data-full="${full}" data-label="${h(card.label)}" data-departure="${h(formatTime(card.departureTime))}"
             data-arrival="${card.arrivalTime ? h(formatTime(card.arrivalTime)) : ''}" data-duration="${card.journeyDurationMinutes ?? ''}"
             data-status="${h(card.ferryStatus)}" data-available="${card.available}">
@@ -180,8 +185,10 @@ export function bookingCardHtml(card, legPrefix) {
             <span>${formatTime(card.departureTime)}${card.arrivalTime ? ' &rarr; ' + formatTime(card.arrivalTime) : ''}${card.journeyDurationMinutes ? ' (' + card.journeyDurationMinutes + ' min)' : ''}</span>
             <span>${card.utilization.emoji} ${card.utilization.percentFull}% full</span>
         </div>
-        <span class="${full ? 'schedule-card-seats-waitlist' : 'schedule-card-seats-ok'}">${full ? 'Full - Join Waiting List' : card.available + ' seats left'}</span>
-        <span class="schedule-card-booked">${card.booked} booked${card.reserved > 0 ? ' &middot; ' + card.reserved + ' reserved' : ''}${card.statusSeats.waitingList > 0 ? ' &middot; ' + card.statusSeats.waitingList + ' waiting' : ''}</span>
+        ${closed
+            ? `<span class="schedule-card-seats-waitlist">🔴 Booking Closed</span><span class="schedule-card-booked">Booking closed at ${formatDateTime(card.cutoff.cutoffTime)}</span>`
+            : `<span class="${full ? 'schedule-card-seats-waitlist' : 'schedule-card-seats-ok'}">${full ? 'Full - Join Waiting List' : card.available + ' seats left'}</span>
+        <span class="schedule-card-booked">${card.booked} booked${card.reserved > 0 ? ' &middot; ' + card.reserved + ' reserved' : ''}${card.statusSeats.waitingList > 0 ? ' &middot; ' + card.statusSeats.waitingList + ' waiting' : ''}</span>`}
     </label>
 </div>`;
 }
@@ -694,6 +701,33 @@ export function registerStaffRoutes(router) {
                 });
                 if (overlap) {
                     errors.push(`This overlaps with an existing booking of yours on ${formatDate(travelDate)}.`);
+                    break;
+                }
+            }
+        }
+
+        // Booking cut-off: if ANY leg is past its cut-off, the whole
+        // submission is rejected (per spec - a Same-Day Return doesn't
+        // partially go through). No override exists on this self-service
+        // page; only Administrators/HR can override, via HR Manual Booking.
+        if (!errors.length) {
+            const legsToCheck = bookingType === 'same_day_return' ? [outboundCard, returnCard] : [outboundCard];
+            for (const leg of legsToCheck) {
+                const cutoffInfo = await getBookingCutoffInfo(leg.scheduleId, travelDate);
+                if (cutoffInfo.closed) {
+                    errors.push('This ferry is no longer available for booking because the booking cut-off time has passed.');
+                    await recordCutoffAction({
+                        scheduleId: leg.scheduleId,
+                        serviceName: leg.label,
+                        travelDate,
+                        employeeUserId: user.user_id,
+                        employeeName: user.full_name,
+                        cutoffInstant: cutoffInfo.cutoffInstant,
+                        departureInstant: cutoffInfo.departureInstant,
+                        action: 'blocked',
+                        performedByUserId: user.user_id,
+                        reason: 'Booking for this ferry has closed.',
+                    });
                     break;
                 }
             }

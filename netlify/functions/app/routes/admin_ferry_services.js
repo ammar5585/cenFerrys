@@ -135,7 +135,10 @@ async function servicesListBody({ statusFilter, csrfToken }) {
     // the same way elsewhere in this app).
     const perServiceModalsHtml = services
         .map(
-            (s) => `<div class="modal fade" id="editServiceModal${s.schedule_id}" tabindex="-1"><div class="modal-dialog"><form method="post" class="modal-content">
+            (s) => {
+                const cutoffPresets = [30, 60, 120, 180];
+                const isCustomCutoff = s.booking_cutoff_minutes != null && !cutoffPresets.includes(s.booking_cutoff_minutes);
+                return `<div class="modal fade" id="editServiceModal${s.schedule_id}" tabindex="-1"><div class="modal-dialog"><form method="post" class="modal-content">
     ${csrfField(csrfToken)}<input type="hidden" name="action" value="edit"><input type="hidden" name="schedule_id" value="${s.schedule_id}">
     <div class="modal-header"><h5 class="modal-title">Edit Ferry Service</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <div class="modal-body">
@@ -145,6 +148,16 @@ async function servicesListBody({ statusFilter, csrfToken }) {
             <div class="col-md-6"><label class="form-label">Ferry Code</label><input type="text" name="service_code" class="form-control" value="${h(s.service_code ?? '')}" required></div>
             <div class="col-md-6"><label class="form-label">Effective Date</label><input type="date" name="effective_date" class="form-control" value="${s.effective_date ?? ''}" required></div>
             <div class="col-md-6"><label class="form-label">Expiry Date (optional)</label><input type="date" name="expiry_date" class="form-control" value="${s.expiry_date ?? ''}"></div>
+            <div class="col-md-6">
+                <label class="form-label">Booking Cut-Off</label>
+                <select name="booking_cutoff_preset" class="form-select booking-cutoff-preset">
+                    <option value="" ${s.booking_cutoff_minutes == null ? 'selected' : ''}>Use System Default</option>
+                    ${cutoffPresets.map((m) => `<option value="${m}" ${s.booking_cutoff_minutes === m ? 'selected' : ''}>${m} minutes</option>`).join('')}
+                    <option value="custom" ${isCustomCutoff ? 'selected' : ''}>Custom</option>
+                </select>
+                <input type="number" name="booking_cutoff_custom" class="form-control mt-1 booking-cutoff-custom" min="0" placeholder="Minutes before departure"
+                    style="display:${isCustomCutoff ? 'block' : 'none'}" value="${isCustomCutoff ? s.booking_cutoff_minutes : ''}">
+            </div>
             <div class="col-12"><label class="form-label mb-1">Operating Days</label><div class="d-flex flex-wrap gap-2">${WEEKDAY_OPTIONS.map((day) => `<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="weekdays" value="${day}" id="editWd${day}${s.schedule_id}" ${(s.weekdays || []).includes(day) ? 'checked' : ''}><label class="form-check-label" for="editWd${day}${s.schedule_id}">${day}</label></div>`).join('')}</div></div>
             <div class="col-12"><label class="form-label">Reason (optional)</label><input type="text" name="reason" class="form-control"></div>
         </div>
@@ -160,7 +173,8 @@ async function servicesListBody({ statusFilter, csrfToken }) {
         <div class="form-text">Copies all ${s.stopCount} route stop(s) from this service.</div>
     </div>
     <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Duplicate</button></div>
-</form></div></div>`
+</form></div></div>`;
+            }
         )
         .join('');
 
@@ -212,6 +226,13 @@ ${raw(perServiceModalsHtml)}
             }
         });
     }
+    // Booking Cut-Off "Custom" option reveals its adjacent minutes
+    // input - delegated so it works across every per-service edit modal.
+    document.addEventListener('change', function (e) {
+        if (!e.target.classList.contains('booking-cutoff-preset')) return;
+        var customInput = e.target.parentElement.querySelector('.booking-cutoff-custom');
+        if (customInput) customInput.style.display = e.target.value === 'custom' ? 'block' : 'none';
+    });
 })();
 </script>`;
 }
@@ -378,6 +399,14 @@ export function registerAdminFerryServicesRoutes(router) {
 
         if (form.action === 'edit') {
             const scheduleId = Number(form.schedule_id);
+            // "Use System Default" -> null; a preset -> that number;
+            // "Custom" -> whatever the adjacent number input holds.
+            const bookingCutoffMinutes =
+                form.booking_cutoff_preset === 'custom'
+                    ? Number(form.booking_cutoff_custom) || null
+                    : form.booking_cutoff_preset
+                      ? Number(form.booking_cutoff_preset)
+                      : null;
             const result = await updateFerryService({
                 scheduleId,
                 serviceName: form.service_name,
@@ -386,6 +415,7 @@ export function registerAdminFerryServicesRoutes(router) {
                 capacity: Number(form.capacity),
                 effectiveDate: form.effective_date,
                 expiryDate: form.expiry_date || null,
+                bookingCutoffMinutes,
                 actorUserId: user.user_id,
                 reason: form.reason || null,
             });
