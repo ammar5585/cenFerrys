@@ -352,6 +352,11 @@ export async function getLiveFerryAvailability({ travelDate, filters = {} }) {
         };
     });
 
+    // Chronological by departure time - services.map() above preserves
+    // getFerryServices()'s own order (newest-created first), which is
+    // meaningless for a passenger-facing list.
+    cards.sort((a, b) => (a.departureTime ?? '').localeCompare(b.departureTime ?? ''));
+
     return applyFilters(cards, filters);
 }
 
