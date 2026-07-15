@@ -29,7 +29,7 @@ import { formatDate, formatTime, formatDateTime, statusBadgeClass, greeting } fr
 import { ROLE_ADMIN, ROLE_HR } from '../session.js';
 
 const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MANIFEST_STATUSES = ['Approved', 'Checked-In', 'Departed', 'Arrived', 'Completed'];
+const MANIFEST_STATUSES = ['Approved', 'Confirmed', 'Checked-In', 'Departed', 'Arrived', 'Completed'];
 
 const HOD_ACTION_SUCCESS = {
     assign_hod_seat: 'Employee assigned to reserved seat.',
@@ -81,7 +81,8 @@ async function manifestFor(scheduleId, travelDate) {
         await db()
             .from('bookings')
             .select(
-                'booking_id, seats, checked_in_at, departed_at, arrived_at, booking_method, source_reservation_id, users!bookings_user_id_fkey(full_name, employee_id, designation, resort_id, departments(department_name), resorts(resort_name)), booking_status!inner(status_name, badge_color)'
+                'booking_id, seats, checked_in_at, departed_at, arrived_at, booking_method, source_reservation_id, users!bookings_user_id_fkey(full_name, employee_id, designation, resort_id, departments(department_name), resorts(resort_name)), booking_status!inner(status_name, badge_color), ' +
+                    'supplier_reservations(supplier_company, visitor_name, host_department:departments!supplier_reservations_host_department_id_fkey(department_name))'
             )
             .eq('schedule_id', scheduleId)
             .eq('travel_date', travelDate)
@@ -173,7 +174,8 @@ async function securityDashboardBody({ fullName, search }) {
             await db()
                 .from('bookings')
                 .select(
-                    'booking_id, travel_date, seats, users!bookings_user_id_fkey(full_name, employee_id, departments(department_name), resorts(resort_name)), ferry_schedule(departure_time, service_name, ferry_routes(direction)), booking_status(status_name, badge_color)'
+                    'booking_id, travel_date, seats, users!bookings_user_id_fkey(full_name, employee_id, departments(department_name), resorts(resort_name)), ferry_schedule(departure_time, service_name, ferry_routes(direction)), booking_status(status_name, badge_color), ' +
+                        'supplier_reservations(supplier_company, visitor_name, host_department:departments!supplier_reservations_host_department_id_fkey(department_name))'
                 )
                 .gte('travel_date', today)
                 .order('travel_date', { ascending: true })
@@ -187,19 +189,24 @@ async function securityDashboardBody({ fullName, search }) {
                     (b.users.departments?.department_name ?? '').toLowerCase().includes(needle) ||
                     (b.users.resorts?.resort_name ?? '').toLowerCase().includes(needle) ||
                     (b.ferry_schedule.service_name ?? b.ferry_schedule.ferry_routes?.direction ?? '').toLowerCase().includes(needle) ||
-                    `bk-${b.booking_id}`.includes(needle)
+                    `bk-${b.booking_id}`.includes(needle) ||
+                    (b.supplier_reservations?.supplier_company ?? '').toLowerCase().includes(needle) ||
+                    (b.supplier_reservations?.visitor_name ?? '').toLowerCase().includes(needle)
             )
             .slice(0, 50);
         const rowsHtml = matches
-            .map(
-                (b) => html`<tr>
-                <td>${b.users.employee_id}</td><td>${b.users.full_name}</td><td>${b.users.departments?.department_name ?? '-'}</td>
+            .map((b) => {
+                const supplier = b.supplier_reservations;
+                return html`<tr>
+                <td>${supplier ? html`<span class="badge bg-info text-dark">Supplier</span>` : b.users.employee_id}</td>
+                <td>${supplier ? `${supplier.visitor_name} (${supplier.supplier_company})` : b.users.full_name}</td>
+                <td>${supplier ? (supplier.host_department?.department_name ?? '-') : (b.users.departments?.department_name ?? '-')}</td>
                 <td>${b.users.resorts?.resort_name ?? '-'}</td><td>BK-${b.booking_id}</td>
                 <td>${formatDate(b.travel_date)} ${formatTime(b.ferry_schedule.departure_time)}</td>
                 <td>${b.ferry_schedule.service_name ?? b.ferry_schedule.ferry_routes?.direction ?? '-'}</td>
                 <td><span class="badge ${statusBadgeClass(b.booking_status.badge_color)}">${b.booking_status.status_name}</span></td>
-            </tr>`
-            )
+            </tr>`;
+            })
             .map((r) => r.toString())
             .join('');
         searchResultsHtml = html`
@@ -252,7 +259,7 @@ function manifestActionButtons({ booking, csrfToken, date, scheduleId, canAssign
         </form>`;
 
     let base = '';
-    if (status === 'Approved') {
+    if (status === 'Approved' || status === 'Confirmed') {
         base = form('check_in', 'Check-In', 'btn-outline-primary') + form('no_show', 'No Show', 'btn-outline-danger', 'Mark this passenger as a no-show? Their seat will be released.');
     } else if (status === 'Checked-In') {
         base = form('departed', 'Mark Departed', 'btn-outline-success') + form('no_show', 'No Show', 'btn-outline-danger', 'Mark this passenger as a no-show? Their seat will be released.');
@@ -467,12 +474,13 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
         .join('');
 
     const rowsHtml = manifest
-        .map(
-            (p) => html`<tr>
-            <td>${p.users.employee_id}</td>
-            <td>${p.users.full_name}</td>
-            <td>${p.users.departments?.department_name ?? '-'}</td>
-            <td>${p.users.designation ?? '-'}</td>
+        .map((p) => {
+            const supplier = p.supplier_reservations;
+            return html`<tr>
+            <td>${supplier ? html`<span class="badge bg-info text-dark">Supplier</span>` : p.users.employee_id}</td>
+            <td>${supplier ? `${supplier.visitor_name} (${supplier.supplier_company})` : p.users.full_name}</td>
+            <td>${supplier ? (supplier.host_department?.department_name ?? '-') : (p.users.departments?.department_name ?? '-')}</td>
+            <td>${supplier ? `Host: ${p.users.full_name}` : (p.users.designation ?? '-')}</td>
             <td>${p.users.resorts?.resort_name ?? '-'}</td>
             <td>BK-${p.booking_id}</td>
             <td>${p.seats}</td>
@@ -480,8 +488,8 @@ async function manifestPageBody({ date, scheduleId, schedules, resortFilter, csr
             <td>${p.arrived_at ? formatDateTime(p.arrived_at) : '-'}</td>
             <td><span class="badge ${statusBadgeClass(p.booking_status.badge_color)}">${p.booking_status.status_name}</span></td>
             <td class="text-nowrap">${manifestActionButtons({ booking: p, csrfToken, date, scheduleId, canAssignHodSeats })}</td>
-        </tr>`
-        )
+        </tr>`;
+        })
         .map((r) => r.toString())
         .join('');
 

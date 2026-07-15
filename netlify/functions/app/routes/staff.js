@@ -466,6 +466,10 @@ async function myBookingsBody(userId, statusFilter, csrfToken) {
         .from('bookings')
         .select('booking_id, travel_date, direction, purpose, seats, created_at, status_id, booking_status(status_name, badge_color), ferry_schedule(departure_time)')
         .eq('user_id', userId)
+        // A supplier visit attributed to this user as its Host Employee
+        // is not a trip they're taking - it must not clutter their own
+        // booking history (see supplierReservations.js's header comment).
+        .neq('booking_method', 'supplier')
         .order('travel_date', { ascending: false });
     if (statusFilter) query = query.eq('status_id', statusFilter);
     const bookings = unwrap(await query);

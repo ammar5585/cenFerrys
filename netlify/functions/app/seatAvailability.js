@@ -159,11 +159,14 @@ export async function findOverlappingBooking({ userId, travelDate, firstDepartur
     const rows = unwrap(
         await db()
             .from('bookings')
-            .select('booking_id, schedule_id, booking_status(status_name)')
+            .select('booking_id, schedule_id, booking_method, booking_status(status_name)')
             .eq('user_id', userId)
             .eq('travel_date', travelDate)
     );
-    const candidates = rows.filter((r) => !RESERVATION_ASSIGNMENT_EXCLUDED_STATUSES.includes(r.booking_status?.status_name));
+    // A supplier visit attributed to this user as its Host Employee is
+    // not a trip they're physically taking - it must not trip the
+    // overlap guard against a real self-service booking of theirs.
+    const candidates = rows.filter((r) => r.booking_method !== 'supplier' && !RESERVATION_ASSIGNMENT_EXCLUDED_STATUSES.includes(r.booking_status?.status_name));
     for (const b of candidates) {
         const window = await getStopTimeWindow(b.schedule_id, travelDate);
         if (window.firstDepartureInstant == null || window.lastArrivalInstant == null) continue;

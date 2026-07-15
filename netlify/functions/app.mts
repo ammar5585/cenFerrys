@@ -25,6 +25,7 @@ import { registerAdminSeatReservationsRoutes } from './app/routes/admin_seat_res
 import { registerAdminFerryServicesRoutes } from './app/routes/admin_ferry_services.js';
 import { registerAdminFerryTransferRoutes } from './app/routes/admin_ferry_transfer.js';
 import { registerAdminCapacityAllocatorRoutes } from './app/routes/admin_capacity_allocator.js';
+import { registerAdminSupplierReservationsRoutes } from './app/routes/admin_supplier_reservations.js';
 import { registerAdminUserImportRoutes } from './app/routes/admin_user_import.js';
 import { registerAdminEmailSettingsRoutes } from './app/routes/admin_email_settings.js';
 import { registerReportsRoutes } from './app/routes/reports.js';
@@ -59,6 +60,7 @@ registerAdminSeatReservationsRoutes(router);
 registerAdminFerryServicesRoutes(router);
 registerAdminFerryTransferRoutes(router);
 registerAdminCapacityAllocatorRoutes(router);
+registerAdminSupplierReservationsRoutes(router);
 registerAdminUserImportRoutes(router);
 registerAdminEmailSettingsRoutes(router);
 registerReportsRoutes(router);

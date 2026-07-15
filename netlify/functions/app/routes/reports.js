@@ -24,7 +24,8 @@ async function fetchReportRows({ dateFrom, dateTo, deptFilter, resortFilter, emp
     let query = db()
         .from('bookings')
         .select(
-            'booking_id, travel_date, purpose, seats, users!bookings_user_id_fkey(user_id, full_name, department_id, resort_id, departments(department_name), resorts(resort_name)), ferry_schedule(departure_time, route_id, service_name, ferry_routes(route_id, direction)), booking_status(status_name), current_approver_id, approver:current_approver_id(full_name)'
+            'booking_id, travel_date, purpose, seats, users!bookings_user_id_fkey(user_id, full_name, department_id, resort_id, departments(department_name), resorts(resort_name)), ferry_schedule(departure_time, route_id, service_name, ferry_routes(route_id, direction)), booking_status(status_name), current_approver_id, approver:current_approver_id(full_name), ' +
+                'supplier_reservations(supplier_company, visitor_name)'
         )
         .order('travel_date', { ascending: false });
     if (dateFrom) query = query.gte('travel_date', dateFrom);
@@ -311,7 +312,7 @@ function reportPageBody({ rows, filters, filterOptions, scope, basePath, company
     const rowsHtml = rows
         .map(
             (r) => html`<tr>
-            <td>#${r.booking_id}</td><td>${r.users.full_name}</td>
+            <td>#${r.booking_id}</td><td>${r.supplier_reservations ? html`<span class="badge bg-info text-dark">Supplier</span> ${r.supplier_reservations.visitor_name} (${r.supplier_reservations.supplier_company})` : r.users.full_name}</td>
             <td>${r.users.departments?.department_name ?? '-'}</td>
             <td>${formatDate(r.travel_date)}</td><td>${formatTime(r.ferry_schedule.departure_time)}</td>
             <td>${r.ferry_schedule.service_name ?? r.ferry_schedule.ferry_routes?.direction ?? '-'}</td><td>${r.purpose}</td>
@@ -380,9 +381,10 @@ function toCsv(rows, includeApprover) {
     const body = rows
         .map((r) => {
             const routeLabel = r.ferry_schedule.service_name ?? r.ferry_schedule.ferry_routes?.direction ?? '-';
+            const nameLabel = r.supplier_reservations ? `${r.supplier_reservations.visitor_name} (${r.supplier_reservations.supplier_company}) [Supplier]` : r.users.full_name;
             const fields = includeApprover
-                ? [r.booking_id, r.users.full_name, r.users.employee_id ?? '', r.users.departments?.department_name ?? '', r.travel_date, r.ferry_schedule.departure_time, routeLabel, r.purpose, r.booking_status.status_name, r.seats, r.approver?.full_name ?? '']
-                : [r.booking_id, r.users.full_name, r.users.departments?.department_name ?? '', r.travel_date, r.ferry_schedule.departure_time, routeLabel, r.purpose, r.booking_status.status_name, r.seats];
+                ? [r.booking_id, nameLabel, r.users.employee_id ?? '', r.users.departments?.department_name ?? '', r.travel_date, r.ferry_schedule.departure_time, routeLabel, r.purpose, r.booking_status.status_name, r.seats, r.approver?.full_name ?? '']
+                : [r.booking_id, nameLabel, r.users.departments?.department_name ?? '', r.travel_date, r.ferry_schedule.departure_time, routeLabel, r.purpose, r.booking_status.status_name, r.seats];
             return fields.map(escape).join(',');
         })
         .join('\n');
