@@ -20,7 +20,7 @@ export const DEFAULT_ROLE_PERMISSIONS = {
         'schedule_management.manage_routes', 'schedule_management.manage_directions', 'schedule_management.manage_holidays',
         'booking.access', 'booking.view_all', 'booking.admin_override', 'booking.print_manifest',
         'booking.hr_manual_booking', 'booking.override_capacity', 'booking.override_approval', 'booking.override_cutoff', 'booking.manage_seat_reservations',
-        'booking.bulk_transfer_passengers', 'booking.manage_resort_capacity', 'booking.view_resort_capacity', 'booking.manage_supplier_reservations',
+        'booking.bulk_transfer_passengers', 'booking.manage_resort_capacity', 'booking.view_resort_capacity', 'booking.manage_supplier_reservations', 'booking.approve_supplier_reservations',
         'approval_workflow.access', 'approval_workflow.manage_manager_availability',
         'approval_workflow.configure_hierarchy', 'approval_workflow.executive_override',
         'security.access', 'security.manage_manifest', 'security.manage_waiting_list', 'security.assign_hod_seats',

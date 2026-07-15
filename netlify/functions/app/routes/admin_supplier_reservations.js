@@ -9,6 +9,7 @@
 
 import { db, unwrap } from '../db.js';
 import { requirePermission } from '../guards.js';
+import { hasPermission } from '../permissions.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
@@ -56,20 +57,26 @@ function legBadge(leg) {
 
 const LEG_ACTION_STATUSES = ['Pending', 'Approved', 'Confirmed', 'Cancelled'];
 
-function legRowHtml(reservation, leg, legLabel, csrfToken) {
+// Approval must go to HR (or Administrator) - a role that can create a
+// supplier reservation (booking.manage_supplier_reservations) but
+// lacks booking.approve_supplier_reservations cannot self-approve it,
+// so "Approved" is left out of their dropdown entirely (also enforced
+// server-side in the POST handler - never trust the client alone).
+function legRowHtml(reservation, leg, legLabel, csrfToken, canApprove) {
+    const statusOptions = LEG_ACTION_STATUSES.filter((s) => s !== 'Approved' || canApprove || leg.booking_status.status_name === 'Approved');
     return `<div class="d-flex justify-content-between align-items-center py-1">
         <div><strong>${legLabel}</strong>: ${h(scheduleLabel(leg.ferry_schedule))} - ${formatDate(leg.travel_date)} ${formatTime(leg.ferry_schedule.departure_time)} (${leg.seats} pax) ${legBadge(leg)}</div>
         <form method="post" class="d-flex gap-1">
             ${csrfField(csrfToken)}<input type="hidden" name="action" value="set_leg_status"><input type="hidden" name="booking_id" value="${leg.booking_id}">
             <select name="status_name" class="form-select form-select-sm">
-                ${LEG_ACTION_STATUSES.map((s) => `<option value="${s}" ${leg.booking_status.status_name === s ? 'selected' : ''}>${s}</option>`).join('')}
+                ${statusOptions.map((s) => `<option value="${s}" ${leg.booking_status.status_name === s ? 'selected' : ''}>${s}</option>`).join('')}
             </select>
             <button class="btn btn-sm btn-outline-primary">Set</button>
         </form>
     </div>`;
 }
 
-async function listBody({ csrfToken, search, dateFrom, dateTo }) {
+async function listBody({ csrfToken, search, dateFrom, dateTo, canApprove }) {
     const [stats, reservations, resorts, departments, users, ferryServices, visitPurposes] = await Promise.all([
         getSupplierDashboardStats(),
         getSupplierReservations({ dateFrom, dateTo, search }),
@@ -94,7 +101,7 @@ async function listBody({ csrfToken, search, dateFrom, dateTo }) {
     const rowsHtml = reservations
         .map((r) => {
             const legsHtml = r.bookings
-                .map((leg, i) => legRowHtml(r, leg, r.bookings.length > 1 ? (i === 0 ? 'Outbound' : 'Return') : 'Trip', csrfToken))
+                .map((leg, i) => legRowHtml(r, leg, r.bookings.length > 1 ? (i === 0 ? 'Outbound' : 'Return') : 'Trip', csrfToken, canApprove))
                 .join('');
             return `<tr>
             <td>${h(r.supplier_company)}<div class="text-muted small">${h(r.visitor_name)}</div></td>
@@ -200,6 +207,7 @@ async function listBody({ csrfToken, search, dateFrom, dateTo }) {
         <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createSupplierReservationModal"><i class="bi bi-plus-lg"></i> New Reservation</button>
     </div>
 </div>
+${!canApprove ? html`<div class="alert alert-secondary small"><i class="bi bi-info-circle"></i> Approving a reservation (Pending &rarr; Approved) requires HR or an Administrator - you can still create reservations and set Confirmed/Cancelled.</div>` : ''}
 <div class="row g-3 mb-3">${raw(statsHtml)}</div>
 <div class="card shadow-sm mb-3"><div class="card-body">
     <form method="get" class="row g-2">
@@ -227,7 +235,8 @@ export function registerAdminSupplierReservationsRoutes(router) {
         const dateFrom = url.searchParams.get('date_from') || '';
         const dateTo = url.searchParams.get('date_to') || '';
 
-        const body = await listBody({ csrfToken: auth.user.csrf, search, dateFrom, dateTo });
+        const canApprove = hasPermission(auth.user.perms, 'booking.approve_supplier_reservations');
+        const body = await listBody({ csrfToken: auth.user.csrf, search, dateFrom, dateTo, canApprove });
         return renderShellForRequest({ request, auth, pageTitle: 'Supplier Visit Reservations', path: '/admin/supplier_reservations', bodyHtml: body });
     });
 
@@ -273,6 +282,11 @@ export function registerAdminSupplierReservationsRoutes(router) {
         }
 
         if (form.action === 'set_leg_status') {
+            // Approval must go to HR (or Administrator) - never trust the
+            // client-side dropdown filtering alone.
+            if (form.status_name === 'Approved' && !hasPermission(user.perms, 'booking.approve_supplier_reservations')) {
+                return redirectTo(backTo, { cookies: [auth.setCookie, flashSetCookie('error', 'Only HR or an Administrator can approve a supplier visit reservation.')].filter(Boolean) });
+            }
             const result = await setLegStatus(Number(form.booking_id), form.status_name, user.user_id);
             await logActivity(user.user_id, 'Set supplier reservation leg status', `booking_id=${form.booking_id} status=${form.status_name}`, clientIp(request));
             const message = result.ok ? 'Status updated.' : 'Could not update status.';
