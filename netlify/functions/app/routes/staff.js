@@ -204,34 +204,69 @@ export function bookingCardHtml(card, legPrefix) {
  * view is visible - same-name radios stay one mutually-exclusive group
  * across both hidden/visible copies natively.
  */
+// Same ferryStatus -> badge color mapping as the Live Ferry Availability
+// Dashboard's FERRY_STATUS_BADGE (routes/seat_availability.js) - kept as
+// its own small local copy since these are page-specific display
+// constants, not shared business logic.
+const FERRY_STATUS_BADGE = {
+    Scheduled: 'text-bg-secondary',
+    Boarding: 'text-bg-info',
+    Departed: 'text-bg-primary',
+    'In Transit': 'text-bg-primary',
+    Arrived: 'text-bg-success',
+    Delayed: 'text-bg-warning',
+    Cancelled: 'text-bg-dark',
+    Full: 'text-bg-danger',
+    Completed: 'text-bg-success',
+};
+
+// seatIndicator()'s 4-tier scheme (seatAvailability.js): success
+// (Available) / warning-light (Limited, yellow) / warning (Nearly
+// Full, orange) / danger (Full, red). Its 'warning' tier doesn't map to
+// a real Bootstrap bg-* utility (bg-warning is already the lighter
+// yellow) - bridged via a small custom class reusing the same orange
+// already used elsewhere for that tier (.schedule-card-seats-waitlist).
+const AVAILABILITY_BAR_CLASS = { success: 'bg-success', 'warning-light': 'bg-warning', warning: 'bg-ferry-orange', danger: 'bg-danger' };
+
 export function bookingListRowHtml(card, legPrefix) {
     const full = card.available <= 0;
     const closed = !!card.cutoff?.closed;
-    return `<tr class="${closed ? 'text-muted' : ''}">
+    const availablePercent = card.capacity > 0 ? Math.round((card.available / card.capacity) * 100) : 0;
+    return `<tr class="ferry-list-row${closed ? ' text-muted' : ''}">
     <td>
         <label class="d-flex align-items-center gap-2 mb-0" for="${legPrefix}${card.scheduleId}_list" style="cursor:${closed ? 'not-allowed' : 'pointer'}">
             <input type="radio" name="${legPrefix}_radio" id="${legPrefix}${card.scheduleId}_list" value="${card.scheduleId}" ${closed ? 'disabled' : ''}
                 data-full="${full}" data-label="${h(card.label)}" data-departure="${h(formatTime(card.departureTime))}"
                 data-arrival="${card.arrivalTime ? h(formatTime(card.arrivalTime)) : ''}" data-duration="${card.journeyDurationMinutes ?? ''}"
                 data-status="${h(card.ferryStatus)}" data-available="${card.available}">
-            <div><strong>${h(card.serviceName ?? card.label)}</strong><div class="text-muted small">${h(card.serviceCode ?? '')}</div></div>
+            <div><div class="fw-semibold">${h(card.serviceName ?? card.label)}</div><div class="text-muted small">${h(card.serviceCode ?? '')}</div></div>
         </label>
     </td>
-    <td>${h(card.routeSnapshot ?? card.label)}</td>
-    <td>${formatTime(card.departureTime)}</td>
-    <td>${card.arrivalTime ? formatTime(card.arrivalTime) : '-'}</td>
-    <td>${card.journeyDurationMinutes ? card.journeyDurationMinutes + ' min' : '-'}</td>
-    <td>${closed ? '0' : card.available}</td>
-    <td>${card.booked}</td>
-    <td>${card.reserved}</td>
-    <td>${card.capacity}</td>
-    <td><span class="badge bg-secondary">${h(card.ferryStatus)}</span></td>
-    <td><span class="badge ${card.bookingStatus === 'Open' ? 'bg-success' : 'bg-danger'}">${h(card.bookingStatus)}</span></td>
-    <td class="text-nowrap"><button type="button" class="btn btn-sm btn-outline-secondary view-details-btn" data-schedule-id="${card.scheduleId}">Details</button></td>
+    <td class="text-muted">${h(card.routeSnapshot ?? card.label)}</td>
+    <td><i class="bi bi-clock text-muted me-1"></i>${formatTime(card.departureTime)}</td>
+    <td><i class="bi bi-flag text-muted me-1"></i>${card.arrivalTime ? formatTime(card.arrivalTime) : '-'}</td>
+    <td class="text-muted">${card.journeyDurationMinutes ? card.journeyDurationMinutes + ' min' : '-'}</td>
+    <td style="min-width:150px">
+        <div class="ferry-list-availability-bar"><div class="ferry-list-availability-fill ${AVAILABILITY_BAR_CLASS[card.indicator.class] ?? 'bg-secondary'}" style="width:${closed ? 0 : availablePercent}%"></div></div>
+        <div class="small text-muted mt-1" title="${card.booked} booked &middot; ${card.reserved} reserved">${closed ? 0 : card.available} of ${card.capacity} Available</div>
+    </td>
+    <td><span class="badge rounded-pill ${FERRY_STATUS_BADGE[card.ferryStatus] ?? 'text-bg-secondary'}">${h(card.ferryStatus)}</span></td>
+    <td><span class="badge rounded-pill ${card.bookingStatus === 'Open' ? 'text-bg-success' : 'text-bg-danger'}">${h(card.bookingStatus)}</span></td>
+    <td class="text-nowrap"><button type="button" class="btn btn-sm btn-outline-secondary rounded-pill view-details-btn" data-schedule-id="${card.scheduleId}">Details</button></td>
 </tr>`;
 }
 
-const LIST_VIEW_COLUMNS = ['Ferry', 'Route', 'Departure', 'Arrival', 'Duration', 'Available', 'Booked', 'Reserved', 'Capacity', 'Ferry Status', 'Booking Status', 'Actions'];
+const LIST_VIEW_COLUMNS = [
+    { label: 'Ferry' },
+    { label: 'Route' },
+    { label: 'Departure', icon: 'bi-clock' },
+    { label: 'Arrival', icon: 'bi-flag' },
+    { label: 'Duration' },
+    { label: 'Availability' },
+    { label: 'Status' },
+    { label: 'Booking' },
+    { label: 'Actions' },
+];
 
 /**
  * A grid fragment for either leg - the same shape returned by GET
@@ -245,10 +280,10 @@ const LIST_VIEW_COLUMNS = ['Ferry', 'Route', 'Departure', 'Arrival', 'Duration',
 export function bookingCardsFragment(cards, legPrefix) {
     if (!cards.length) return `<div class="col-12 text-muted small">No ferries match the selected date/filters.</div>`;
     const cardsHtml = cards.map((c) => bookingCardHtml(c, legPrefix)).join('');
-    const listHtml = `<div class="col-12 booking-view-list" style="display:none"><div class="table-responsive"><table class="table table-hover table-sm align-middle">
-        <thead><tr>${LIST_VIEW_COLUMNS.map((c) => `<th>${c}</th>`).join('')}</tr></thead>
+    const listHtml = `<div class="col-12 booking-view-list" style="display:none"><div class="card shadow-sm border-0"><div class="table-responsive"><table class="table ferry-list-table align-middle mb-0">
+        <thead><tr>${LIST_VIEW_COLUMNS.map((c) => `<th>${c.icon ? `<i class="bi ${c.icon} text-muted me-1"></i>` : ''}${c.label}</th>`).join('')}</tr></thead>
         <tbody>${cards.map((c) => bookingListRowHtml(c, legPrefix)).join('')}</tbody>
-    </table></div></div>`;
+    </table></div></div></div>`;
     return cardsHtml + listHtml;
 }
 
