@@ -169,8 +169,9 @@ export function bookingCardHtml(card, legPrefix) {
     const stopChips = card.stopProgress
         .map((s) => `<span class="${s.stopState === 'completed' ? 'text-muted text-decoration-line-through' : s.stopState === 'current' ? 'fw-bold text-primary' : ''}">${h(s.stop_name)}</span>`)
         .join(' <span class="text-muted">&rarr;</span> ');
-    return `<div class="col-12 col-md-6 col-xl-4">
+    return `<div class="col-12 col-md-6 col-xl-4 schedule-card-col">
     <label class="schedule-card d-block${closed ? ' schedule-card-disabled' : ''}" for="${legPrefix}${card.scheduleId}">
+        <button type="button" class="btn btn-sm btn-light view-details-btn" style="position:absolute;top:0.5rem;right:0.5rem;z-index:2;" data-schedule-id="${card.scheduleId}" title="View Details"><i class="bi bi-info-circle"></i></button>
         <input type="radio" name="${legPrefix}_radio" id="${legPrefix}${card.scheduleId}" value="${card.scheduleId}" ${closed ? 'disabled' : ''}
             data-full="${full}" data-label="${h(card.label)}" data-departure="${h(formatTime(card.departureTime))}"
             data-arrival="${card.arrivalTime ? h(formatTime(card.arrivalTime)) : ''}" data-duration="${card.journeyDurationMinutes ?? ''}"
@@ -193,10 +194,62 @@ export function bookingCardHtml(card, legPrefix) {
 </div>`;
 }
 
-/** A grid fragment for either leg - the same shape returned by GET /ajax/booking_cards for polling/return-candidate refreshes, so the initial page render and every later refresh use identical markup. */
+/**
+ * List View's compact-table equivalent of bookingCardHtml() - the exact
+ * same radio name/data-* attributes (a distinct `id` suffixed `_list`
+ * to avoid a duplicate-ID collision with the card copy of the same
+ * schedule, which now coexists in the DOM) so the page's existing
+ * wireOutboundRadios()/wireReturnRadios()/updateSummary()/
+ * updateSubmitState() JS keeps working unchanged regardless of which
+ * view is visible - same-name radios stay one mutually-exclusive group
+ * across both hidden/visible copies natively.
+ */
+export function bookingListRowHtml(card, legPrefix) {
+    const full = card.available <= 0;
+    const closed = !!card.cutoff?.closed;
+    return `<tr class="${closed ? 'text-muted' : ''}">
+    <td>
+        <label class="d-flex align-items-center gap-2 mb-0" for="${legPrefix}${card.scheduleId}_list" style="cursor:${closed ? 'not-allowed' : 'pointer'}">
+            <input type="radio" name="${legPrefix}_radio" id="${legPrefix}${card.scheduleId}_list" value="${card.scheduleId}" ${closed ? 'disabled' : ''}
+                data-full="${full}" data-label="${h(card.label)}" data-departure="${h(formatTime(card.departureTime))}"
+                data-arrival="${card.arrivalTime ? h(formatTime(card.arrivalTime)) : ''}" data-duration="${card.journeyDurationMinutes ?? ''}"
+                data-status="${h(card.ferryStatus)}" data-available="${card.available}">
+            <div><strong>${h(card.serviceName ?? card.label)}</strong><div class="text-muted small">${h(card.serviceCode ?? '')}</div></div>
+        </label>
+    </td>
+    <td>${h(card.routeSnapshot ?? card.label)}</td>
+    <td>${formatTime(card.departureTime)}</td>
+    <td>${card.arrivalTime ? formatTime(card.arrivalTime) : '-'}</td>
+    <td>${card.journeyDurationMinutes ? card.journeyDurationMinutes + ' min' : '-'}</td>
+    <td>${closed ? '0' : card.available}</td>
+    <td>${card.booked}</td>
+    <td>${card.reserved}</td>
+    <td>${card.capacity}</td>
+    <td><span class="badge bg-secondary">${h(card.ferryStatus)}</span></td>
+    <td><span class="badge ${card.bookingStatus === 'Open' ? 'bg-success' : 'bg-danger'}">${h(card.bookingStatus)}</span></td>
+    <td class="text-nowrap"><button type="button" class="btn btn-sm btn-outline-secondary view-details-btn" data-schedule-id="${card.scheduleId}">Details</button></td>
+</tr>`;
+}
+
+const LIST_VIEW_COLUMNS = ['Ferry', 'Route', 'Departure', 'Arrival', 'Duration', 'Available', 'Booked', 'Reserved', 'Capacity', 'Ferry Status', 'Booking Status', 'Actions'];
+
+/**
+ * A grid fragment for either leg - the same shape returned by GET
+ * /ajax/booking_cards for polling/return-candidate refreshes, so the
+ * initial page render and every later refresh use identical markup.
+ * Both the Card View grid and the List View table are always rendered
+ * (one hidden via CSS, toggled client-side) so switching views is
+ * instant and both stay live-updated by the same 20s poll - see
+ * BOOKING_PAGE_SCRIPT's applyViewPreference().
+ */
 export function bookingCardsFragment(cards, legPrefix) {
     if (!cards.length) return `<div class="col-12 text-muted small">No ferries match the selected date/filters.</div>`;
-    return cards.map((c) => bookingCardHtml(c, legPrefix)).join('');
+    const cardsHtml = cards.map((c) => bookingCardHtml(c, legPrefix)).join('');
+    const listHtml = `<div class="col-12 booking-view-list" style="display:none"><div class="table-responsive"><table class="table table-hover table-sm align-middle">
+        <thead><tr>${LIST_VIEW_COLUMNS.map((c) => `<th>${c}</th>`).join('')}</tr></thead>
+        <tbody>${cards.map((c) => bookingListRowHtml(c, legPrefix)).join('')}</tbody>
+    </table></div></div>`;
+    return cardsHtml + listHtml;
 }
 
 /**
@@ -221,6 +274,90 @@ export async function getReturnCandidateCards({ outboundScheduleId, travelDate, 
             c.destinationStopName === outbound.boardingStopName &&
             c.departureTime > outbound.arrivalTime
     );
+}
+
+/**
+ * "View Details" modal body - almost entirely a re-display of fields
+ * getLiveFerryAvailability() already computes for the card/list views
+ * (ferryStatus, bookingStatus, cutoff, stopProgress, resortBreakdown/
+ * resortAllocation, utilization, statusSeats, passengerBreakdown); the
+ * only thing built fresh here is the layout. `data-current-schedule-id`
+ * is a marker the modal's own 20s refresh timer (BOOKING_PAGE_SCRIPT)
+ * reads to know which schedule to keep re-fetching.
+ */
+export function ferryDetailsBodyHtml(card, returnCandidates) {
+    const stopsHtml = card.stopProgress
+        .map((s, i) => {
+            const cls = s.stopState === 'completed' ? 'text-muted text-decoration-line-through' : s.stopState === 'current' ? 'fw-bold text-primary' : '';
+            const marker = i === 0 ? ' (Boarding)' : i === card.stopProgress.length - 1 ? ' (Destination)' : '';
+            return `<div class="${cls}"><i class="bi bi-geo-alt${s.stopState === 'current' ? '-fill' : ''}"></i> ${h(s.stop_name)}${marker}</div>`;
+        })
+        .join('<div class="text-muted text-center">&darr;</div>');
+
+    const resortRows = card.resortAllocation
+        ? `<thead><tr><th>Resort</th><th>Allocated</th><th>Booked</th><th>Reserved</th><th>Available</th></tr></thead>
+           <tbody>${card.resortAllocation.map((r) => `<tr><td>${h(r.resort_name)}</td><td>${r.allocated}</td><td>${r.booked}</td><td>${r.reserved}</td><td>${r.remaining}</td></tr>`).join('')}</tbody>`
+        : `<thead><tr><th>Resort</th><th>Reserved</th><th>Occupied</th></tr></thead>
+           <tbody>${card.resortBreakdown.map((r) => `<tr><td>${h(r.resortName)}</td><td>${r.reserved}</td><td>${r.occupied}</td></tr>`).join('')}</tbody>`;
+
+    const returnHtml = returnCandidates.length
+        ? `<div class="col-12"><div class="alert alert-info d-flex justify-content-between align-items-center mb-0">
+            <div><strong>Available Return Ferry:</strong> ${h(returnCandidates[0].label)} - ${formatTime(returnCandidates[0].departureTime)}</div>
+            <button type="button" class="btn btn-sm btn-primary book-return-btn" data-schedule-id="${card.scheduleId}">Book Same-Day Return</button>
+        </div></div>`
+        : '';
+
+    return `<div style="display:none" data-current-schedule-id="${card.scheduleId}"></div>
+<div class="row g-3">
+    <div class="col-12 d-flex gap-3 align-items-start">
+        <img src="${h(card.imageUrl)}" alt="" style="width:120px;height:80px;object-fit:cover;border-radius:8px;">
+        <div>
+            <h6 class="mb-0">${h(card.serviceName ?? card.label)} <span class="badge bg-secondary">${h(card.ferryStatus)}</span></h6>
+            <div class="text-muted small">${h(card.serviceCode ?? '')} &middot; ${h(card.tripType)} &middot; ${h(card.routeSnapshot ?? card.label)}</div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <h6 class="small text-uppercase text-muted">Route</h6>
+        <div class="small">${raw(stopsHtml)}</div>
+    </div>
+    <div class="col-md-6">
+        <h6 class="small text-uppercase text-muted">Schedule</h6>
+        <div class="small">
+            <div>Departure: ${formatTime(card.departureTime)}</div>
+            <div>Arrival: ${card.arrivalTime ? formatTime(card.arrivalTime) : '-'}</div>
+            <div>Duration: ${card.journeyDurationMinutes ? card.journeyDurationMinutes + ' min' : '-'}</div>
+            <div>Boarding Cut-Off: ${card.cutoff?.cutoffTime ? formatDateTime(card.cutoff.cutoffTime) : '-'}</div>
+        </div>
+        <h6 class="small text-uppercase text-muted mt-3">Booking Status</h6>
+        <div class="small"><span class="badge ${card.bookingStatus === 'Open' ? 'bg-success' : 'bg-danger'}">${h(card.bookingStatus)}</span>${card.cutoff?.closed ? ' - closed at ' + formatDateTime(card.cutoff.cutoffTime) : ''}</div>
+    </div>
+    <div class="col-md-6">
+        <h6 class="small text-uppercase text-muted">Seat Information</h6>
+        <div class="small">
+            <div>Total Capacity: ${card.capacity}</div>
+            <div>Available: ${card.available}</div>
+            <div>Booked: ${card.booked}</div>
+            <div>Reserved: ${card.reserved}</div>
+            <div>Waiting List: ${card.statusSeats.waitingList}</div>
+            <div>Capacity Utilization: ${card.utilization.percentFull}%</div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <h6 class="small text-uppercase text-muted">Passenger Breakdown</h6>
+        <div class="small">
+            <div class="d-flex justify-content-between"><span class="text-muted">Staff</span><span>${card.passengerBreakdown.staff}</span></div>
+            <div class="d-flex justify-content-between"><span class="text-muted">HOD Reserved</span><span>${card.passengerBreakdown.hodReserved}</span></div>
+            <div class="d-flex justify-content-between"><span class="text-muted">HR Reserved</span><span>${card.passengerBreakdown.hrReserved}</span></div>
+            <div class="d-flex justify-content-between"><span class="text-muted">Supplier Visits</span><span>${card.passengerBreakdown.supplierVisits}</span></div>
+            <div class="d-flex justify-content-between"><span class="text-muted">VIP/Executive Reserved</span><span>${card.passengerBreakdown.vipExecutiveReserved}</span></div>
+        </div>
+    </div>
+    <div class="col-12">
+        <h6 class="small text-uppercase text-muted">Resort Breakdown</h6>
+        <div class="table-responsive"><table class="table table-sm mb-0">${raw(resortRows)}</table></div>
+    </div>
+    ${raw(returnHtml)}
+</div>`;
 }
 
 function bookingFormBody({ errors, maxSeats, workflowInfo, csrfToken, filters, stopNameOptions, resorts, outboundCardsHtml, prefillScheduleId = '', prefillReturnScheduleId = '', prefillBookingType = 'one_way' }) {
@@ -256,7 +393,13 @@ ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `
         <div class="form-check form-check-inline"><input class="form-check-input" type="radio" name="booking_type_radio" id="bookingTypeReturn" value="same_day_return" ${prefillBookingType === 'same_day_return' ? 'checked' : ''}><label class="form-check-label" for="bookingTypeReturn">Same-Day Return</label></div>
     </div></div>
 
-    <h6 class="mb-2">Select Outbound Ferry</h6>
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+        <h6 class="mb-0">Select Outbound Ferry</h6>
+        <div class="btn-group btn-group-sm" role="group" id="viewToggleGroup">
+            <button type="button" class="btn btn-outline-secondary" data-view="card"><i class="bi bi-grid-3x3-gap"></i> Card View</button>
+            <button type="button" class="btn btn-outline-secondary" data-view="list"><i class="bi bi-list-ul"></i> List View</button>
+        </div>
+    </div>
     <div class="row g-3 mb-3" id="outboundGrid">${raw(outboundCardsHtml)}</div>
 
     <div id="returnSection" style="${prefillBookingType === 'same_day_return' ? '' : 'display:none'}">
@@ -280,7 +423,11 @@ ${errors.length ? html`<div class="alert alert-danger">${raw(errors.map((e) => `
     </div></div>
 
     <button type="submit" class="btn btn-primary" id="submitBtn" disabled>Submit Booking Request</button>
-</form>`;
+</form>
+<div class="modal fade" id="ferryDetailsModal" tabindex="-1"><div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title">Ferry Details</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body" id="ferryDetailsModalBody"><div class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Loading...</div></div>
+</div></div></div>`;
 }
 
 const BOOKING_PAGE_SCRIPT = `
@@ -302,10 +449,94 @@ const BOOKING_PAGE_SCRIPT = `
     var submitBtn = document.getElementById('submitBtn');
     var summaryCard = document.getElementById('bookingSummaryCard');
     var summaryBody = document.getElementById('bookingSummaryBody');
+    var viewToggleGroup = document.getElementById('viewToggleGroup');
+    var detailsModalEl = document.getElementById('ferryDetailsModal');
+    var detailsModalBody = document.getElementById('ferryDetailsModalBody');
     if (!form || !outboundGrid) return;
 
     function isReturnMode() { return bookingTypeInput.value === 'same_day_return'; }
     function currentFilterQuery() { return new URLSearchParams(new FormData(filterForm)).toString(); }
+
+    // ---- View Toggle (Card View / List View) - persisted per-browser -----
+    var VIEW_STORAGE_KEY = 'ferryBookingView';
+    function currentView() {
+        var v = window.localStorage ? window.localStorage.getItem(VIEW_STORAGE_KEY) : null;
+        return v === 'list' ? 'list' : 'card';
+    }
+    function applyViewPreference() {
+        var view = currentView();
+        [outboundGrid, returnGrid].forEach(function (grid) {
+            grid.querySelectorAll('.schedule-card-col').forEach(function (el) { el.style.display = view === 'card' ? '' : 'none'; });
+            grid.querySelectorAll('.booking-view-list').forEach(function (el) { el.style.display = view === 'list' ? '' : 'none'; });
+        });
+        if (viewToggleGroup) {
+            viewToggleGroup.querySelectorAll('button[data-view]').forEach(function (btn) {
+                btn.classList.toggle('active', btn.getAttribute('data-view') === view);
+            });
+        }
+    }
+    if (viewToggleGroup) {
+        viewToggleGroup.querySelectorAll('button[data-view]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                if (window.localStorage) window.localStorage.setItem(VIEW_STORAGE_KEY, btn.getAttribute('data-view'));
+                applyViewPreference();
+            });
+        });
+    }
+
+    // ---- Ferry Details modal --------------------------------------------
+    var detailsRefreshTimer = null;
+    function loadFerryDetails(scheduleId) {
+        var travelDateInput = document.getElementById('travelDate');
+        var date = travelDateInput ? travelDateInput.value : '';
+        var qs = 'schedule_id=' + encodeURIComponent(scheduleId) + '&date=' + encodeURIComponent(date);
+        fetch(baseUrl + 'ajax/ferry_details?' + qs)
+            .then(function (r) { return r.text(); })
+            .then(function (htmlText) { detailsModalBody.innerHTML = htmlText; })
+            .catch(function () { detailsModalBody.innerHTML = '<div class="text-danger small">Could not load ferry details.</div>'; });
+    }
+    document.addEventListener('click', function (e) {
+        var detailsBtn = e.target.closest('.view-details-btn');
+        if (detailsBtn) {
+            e.preventDefault();
+            e.stopPropagation();
+            var scheduleId = detailsBtn.getAttribute('data-schedule-id');
+            detailsModalBody.innerHTML = '<div class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm"></span> Loading...</div>';
+            if (window.bootstrap && detailsModalEl) new window.bootstrap.Modal(detailsModalEl).show();
+            loadFerryDetails(scheduleId);
+            return;
+        }
+        var bookReturnBtn = e.target.closest('.book-return-btn');
+        if (bookReturnBtn) {
+            e.preventDefault();
+            var outboundId = bookReturnBtn.getAttribute('data-schedule-id');
+            if (window.bootstrap && detailsModalEl) {
+                var instance = window.bootstrap.Modal.getInstance(detailsModalEl);
+                if (instance) instance.hide();
+            }
+            bookingTypeInput.value = 'same_day_return';
+            var returnRadioBtn = document.getElementById('bookingTypeReturn');
+            if (returnRadioBtn) returnRadioBtn.checked = true;
+            returnSection.style.display = '';
+            outboundGrid.querySelectorAll('input[name="outbound_radio"][value="' + outboundId + '"]').forEach(function (el) { el.checked = true; });
+            scheduleIdInput.value = outboundId;
+            returnScheduleIdInput.value = '';
+            updateSummary();
+            updateSubmitState();
+            loadReturnCards(outboundId);
+        }
+    });
+    if (detailsModalEl) {
+        detailsModalEl.addEventListener('shown.bs.modal', function () {
+            detailsRefreshTimer = setInterval(function () {
+                var btn = detailsModalBody.querySelector('[data-current-schedule-id]');
+                if (btn) loadFerryDetails(btn.getAttribute('data-current-schedule-id'));
+            }, 20000);
+        });
+        detailsModalEl.addEventListener('hidden.bs.modal', function () {
+            if (detailsRefreshTimer) { clearInterval(detailsRefreshTimer); detailsRefreshTimer = null; }
+        });
+    }
 
     function wireOutboundRadios() {
         outboundGrid.querySelectorAll('input[name="outbound_radio"]').forEach(function (radio) {
@@ -343,9 +574,9 @@ const BOOKING_PAGE_SCRIPT = `
                 returnGrid.innerHTML = htmlText;
                 wireReturnRadios();
                 if (desiredReturnValue) {
-                    var pre = returnGrid.querySelector('input[name="return_radio"][value="' + desiredReturnValue + '"]');
-                    if (pre) pre.checked = true;
+                    returnGrid.querySelectorAll('input[name="return_radio"][value="' + desiredReturnValue + '"]').forEach(function (el) { el.checked = true; });
                 }
+                applyViewPreference();
                 updateSummary();
                 updateSubmitState();
             })
@@ -364,9 +595,9 @@ const BOOKING_PAGE_SCRIPT = `
                 outboundGrid.innerHTML = htmlText;
                 wireOutboundRadios();
                 if (previousValue) {
-                    var stillThere = outboundGrid.querySelector('input[name="outbound_radio"][value="' + previousValue + '"]');
-                    if (stillThere) stillThere.checked = true;
+                    outboundGrid.querySelectorAll('input[name="outbound_radio"][value="' + previousValue + '"]').forEach(function (el) { el.checked = true; });
                 }
+                applyViewPreference();
             })
             .catch(function () { /* keep showing the last good data - a transient poll failure shouldn't blank the page */ });
     }
@@ -434,14 +665,14 @@ const BOOKING_PAGE_SCRIPT = `
     // prefillBookingType are already server-rendered into the hidden
     // inputs/checked radios at this point).
     if (scheduleIdInput.value) {
-        var pre = outboundGrid.querySelector('input[name="outbound_radio"][value="' + scheduleIdInput.value + '"]');
-        if (pre) pre.checked = true;
+        outboundGrid.querySelectorAll('input[name="outbound_radio"][value="' + scheduleIdInput.value + '"]').forEach(function (el) { el.checked = true; });
     }
     if (isReturnMode()) {
         returnSection.style.display = '';
         var checkedOutbound = outboundGrid.querySelector('input[name="outbound_radio"]:checked');
         if (checkedOutbound) loadReturnCards(checkedOutbound.value);
     }
+    applyViewPreference();
     updateSummary();
     updateSubmitState();
 

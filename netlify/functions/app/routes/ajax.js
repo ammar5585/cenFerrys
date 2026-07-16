@@ -9,7 +9,7 @@ import { markAllNotificationsRead } from '../notifications.js';
 import { jsonResponse, htmlResponse } from '../response.js';
 import { getWholeRouteDirections } from '../ferryServices.js';
 import { getLiveFerryAvailability } from '../seatAvailability.js';
-import { bookingCardsFragment, getReturnCandidateCards } from './staff.js';
+import { bookingCardsFragment, getReturnCandidateCards, ferryDetailsBodyHtml } from './staff.js';
 
 const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -131,6 +131,32 @@ export function registerAjaxRoutes(router) {
         } catch (err) {
             console.error('booking_cards fragment failed:', err?.message || err);
             return htmlResponse(`<div class="col-12 text-danger small">Could not load ferry schedules. <a href="#" class="retry-schedules retry-return">Retry</a></div>`);
+        }
+    });
+
+    // "View Details" modal body for one ferry - reuses getLiveFerryAvailability()/
+    // getReturnCandidateCards() directly (zero new capacity queries), so
+    // the modal's own 20s auto-refresh is just re-fetching this endpoint.
+    router.get('/ajax/ferry_details', async (request) => {
+        const { user } = await getSession(request);
+        if (!user) return htmlResponse('<div class="text-danger small">Your session has expired. Please <a href="/auth/login">log in again</a>.</div>', { status: 401 });
+
+        const url = new URL(request.url);
+        const travelDate = url.searchParams.get('date') || '';
+        const scheduleId = Number(url.searchParams.get('schedule_id') || 0);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(travelDate) || !scheduleId) {
+            return htmlResponse('<div class="text-muted small">Please choose a valid travel date and ferry.</div>');
+        }
+
+        try {
+            const cards = await getLiveFerryAvailability({ travelDate, filters: {} });
+            const card = cards.find((c) => c.scheduleId === scheduleId);
+            if (!card) return htmlResponse('<div class="text-muted small">This ferry is no longer available for the selected date.</div>');
+            const returnCandidates = card.arrivalTime ? await getReturnCandidateCards({ outboundScheduleId: scheduleId, travelDate, filters: {} }) : [];
+            return htmlResponse(ferryDetailsBodyHtml(card, returnCandidates));
+        } catch (err) {
+            console.error('ferry_details fragment failed:', err?.message || err);
+            return htmlResponse('<div class="text-danger small">Could not load ferry details.</div>');
         }
     });
 

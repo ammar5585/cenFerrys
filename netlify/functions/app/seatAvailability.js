@@ -210,8 +210,8 @@ export async function getLiveFerryAvailability({ travelDate, filters = {} }) {
     const [remainingBySchedule, stopsRows, bookingRows, reservationRows, splitScheduleRows] = await Promise.all([
         getRemainingSeatsBatch(scheduleIds, travelDate),
         db().from('route_stops').select('schedule_id, stop_order, stop_name, arrival_time, departure_time').in('schedule_id', scheduleIds).eq('status', 'active').order('stop_order', { ascending: true }).then(unwrap),
-        db().from('bookings').select('schedule_id, seats, source_reservation_id, booking_status(status_name), users!bookings_user_id_fkey(resort_id)').eq('travel_date', travelDate).in('schedule_id', scheduleIds).then(unwrap),
-        db().from('seat_reservations').select('reservation_id, schedule_id, seats, resort_id, weekdays').eq('status', 'active').in('schedule_id', scheduleIds).lte('start_date', travelDate).gte('end_date', travelDate).then(unwrap),
+        db().from('bookings').select('schedule_id, seats, source_reservation_id, booking_method, booking_status(status_name), users!bookings_user_id_fkey(resort_id)').eq('travel_date', travelDate).in('schedule_id', scheduleIds).then(unwrap),
+        db().from('seat_reservations').select('reservation_id, schedule_id, seats, resort_id, weekdays, reservation_type').eq('status', 'active').in('schedule_id', scheduleIds).lte('start_date', travelDate).gte('end_date', travelDate).then(unwrap),
         // Which of these schedules have a Resort Capacity Allocator split
         // configured (0031_resort_capacity_allocation.sql) - a single
         // batched existence check rather than one call per schedule.
@@ -256,6 +256,12 @@ export async function getLiveFerryAvailability({ travelDate, filters = {} }) {
 
         const bookings = bookingsBySchedule.get(service.schedule_id) ?? [];
         const statusSeats = { pendingApproval: 0, confirmed: 0, waitingList: 0, checkedIn: 0, departed: 0, arrived: 0, noShow: 0 };
+        // Passenger Breakdown by type (Ferry Booking View Toggle's Ferry
+        // Details modal) - a different dimension than statusSeats above
+        // (which buckets by booking *status*). 'admin_override' is folded
+        // into 'staff': it's still an employee's own trip, just created
+        // administratively, and the spec has no separate bucket for it.
+        const passengerBreakdown = { staff: 0, hodReserved: 0, hrReserved: 0, supplierVisits: 0, vipExecutiveReserved: 0 };
         const resortOccupied = new Map();
         const assignedByReservation = new Map();
         for (const b of bookings) {
@@ -264,6 +270,10 @@ export async function getLiveFerryAvailability({ travelDate, filters = {} }) {
                 statusSeats[statusBucketFor(statusName)] += b.seats;
                 const resortId = b.users?.resort_id ?? null;
                 if (resortId != null) resortOccupied.set(resortId, (resortOccupied.get(resortId) ?? 0) + b.seats);
+                if (b.booking_method === 'hod_seat_assignment') passengerBreakdown.hodReserved += b.seats;
+                else if (b.booking_method === 'hr_manual') passengerBreakdown.hrReserved += b.seats;
+                else if (b.booking_method === 'supplier') passengerBreakdown.supplierVisits += b.seats;
+                else passengerBreakdown.staff += b.seats; // 'self', 'admin_override'
             }
             if (b.source_reservation_id && !RESERVATION_ASSIGNMENT_EXCLUDED_STATUSES.includes(statusName)) {
                 assignedByReservation.set(b.source_reservation_id, (assignedByReservation.get(b.source_reservation_id) ?? 0) + b.seats);
@@ -283,6 +293,12 @@ export async function getLiveFerryAvailability({ travelDate, filters = {} }) {
         for (const r of reservations) {
             const effectiveSeats = Math.max(0, r.seats - (assignedByReservation.get(r.reservation_id) ?? 0));
             resortReserved.set(r.resort_id, (resortReserved.get(r.resort_id) ?? 0) + effectiveSeats);
+            // vip_executive reservations are never self-service-assigned to
+            // a real booking (RESERVABLE_TYPES in hodSeatAssignment.js is
+            // only ['hod', 'department']), so this is genuinely held/
+            // reserved capacity, not a double-count of anything in
+            // passengerBreakdown.staff/hodReserved/etc above.
+            if (r.reservation_type === 'vip_executive') passengerBreakdown.vipExecutiveReserved += effectiveSeats;
         }
 
         const allArrived = remainingRow.booked > 0 && statusSeats.arrived === remainingRow.booked;
@@ -344,6 +360,7 @@ export async function getLiveFerryAvailability({ travelDate, filters = {} }) {
             journeyDurationMinutes: firstDepartureInstant != null && lastArrivalInstant != null ? Math.round((lastArrivalInstant - firstDepartureInstant) / 60000) : null,
             stopProgress: computeStopProgress(stops, travelDate, todayMaldives),
             statusSeats,
+            passengerBreakdown,
             resortBreakdown,
             // Only present once an Administrator has configured a split
             // via the Resort Capacity Allocator (0031_resort_capacity_
