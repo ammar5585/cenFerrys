@@ -17,14 +17,14 @@ import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csvResponse } from '../response.js';
 import { getSetting } from '../settings.js';
-import { formatDate, formatTime, formatDateTime } from '../format.js';
+import { formatDate, formatTime, formatDateTime, statusBadgeClass } from '../format.js';
 import { getAllDepartments, getAllResorts } from '../refData.js';
 
 async function fetchReportRows({ dateFrom, dateTo, deptFilter, resortFilter, empFilter, routeFilter, statusFilter, purpose }) {
     let query = db()
         .from('bookings')
         .select(
-            'booking_id, travel_date, purpose, seats, users!bookings_user_id_fkey(user_id, full_name, department_id, resort_id, departments(department_name), resorts(resort_name)), ferry_schedule(departure_time, route_id, service_name, ferry_routes(route_id, direction)), booking_status(status_name), current_approver_id, approver:current_approver_id(full_name), ' +
+            'booking_id, travel_date, purpose, seats, users!bookings_user_id_fkey(user_id, full_name, department_id, resort_id, departments(department_name), resorts(resort_name)), ferry_schedule(departure_time, route_id, service_name, ferry_routes(route_id, direction)), booking_status(status_name, badge_color), current_approver_id, approver:current_approver_id(full_name), ' +
                 'supplier_reservations(supplier_company, visitor_name)'
         )
         .order('travel_date', { ascending: false });
@@ -52,7 +52,7 @@ async function fetchBookingsByStatus(statusNames, { dateFrom, dateTo, deptFilter
     let query = db()
         .from('bookings')
         .select(
-            'booking_id, travel_date, seats, checked_in_at, departed_at, arrived_at, users!bookings_user_id_fkey(full_name, employee_id, department_id, resort_id, departments(department_name), resorts(resort_name)), ferry_schedule(departure_time, route_id, service_name, ferry_routes(route_id, direction)), booking_status!inner(status_name)'
+            'booking_id, travel_date, seats, checked_in_at, departed_at, arrived_at, users!bookings_user_id_fkey(full_name, employee_id, department_id, resort_id, departments(department_name), resorts(resort_name)), ferry_schedule(departure_time, route_id, service_name, ferry_routes(route_id, direction)), booking_status!inner(status_name, badge_color)'
         )
         .in('booking_status.status_name', statusNames)
         .order('travel_date', { ascending: false });
@@ -69,7 +69,7 @@ async function fetchSecurityActionLog({ dateFrom, dateTo, deptFilter, resortFilt
     let query = db()
         .from('security_action_log')
         .select(
-            'log_id, action, remarks, created_at, promotion_method, promotion_reason, security_officer:security_officer_id(full_name), booking:booking_id(booking_id, travel_date, users!bookings_user_id_fkey(full_name, employee_id, department_id, resort_id, departments(department_name), resorts(resort_name))), previous_status:previous_status_id(status_name), new_status:new_status_id(status_name)'
+            'log_id, action, remarks, created_at, promotion_method, promotion_reason, security_officer:security_officer_id(full_name), booking:booking_id(booking_id, travel_date, users!bookings_user_id_fkey(full_name, employee_id, department_id, resort_id, departments(department_name), resorts(resort_name))), previous_status:previous_status_id(status_name), new_status:new_status_id(status_name, badge_color)'
         )
         .order('created_at', { ascending: false })
         .limit(1000);
@@ -124,10 +124,21 @@ async function fetchFerryOccupancy({ dateFrom, dateTo, routeFilter }) {
  * them as both an HTML table and a CSV - one column list drives both,
  * so they can never drift apart.
  */
+// getStatus/getSeats are used only for the Executive Summary KPI cards
+// and the Status-column badge - kept separate from `columns` (which
+// drives the table/CSV) so adding them can't change either. Report
+// shapes with no real status concept (ferry_occupancy) or no seats
+// concept (security_activity) simply omit the corresponding accessor -
+// the KPI/badge code below treats that as "not applicable" rather than
+// fabricating a number.
+const STATUS_FROM_BOOKING = (r) => (r.booking_status ? { name: r.booking_status.status_name, color: r.booking_status.badge_color } : null);
+
 const REPORT_TYPES = {
     daily_departure: {
         label: 'Daily Departure Report',
         fetchRows: (f) => fetchBookingsByStatus(['Approved', 'Checked-In', 'Departed', 'Arrived', 'Completed'], f),
+        getStatus: STATUS_FROM_BOOKING,
+        getSeats: (r) => r.seats,
         columns: [
             { header: 'Employee ID', get: (r) => r.users.employee_id },
             { header: 'Name', get: (r) => r.users.full_name },
@@ -143,6 +154,8 @@ const REPORT_TYPES = {
     daily_arrival: {
         label: 'Daily Arrival Report',
         fetchRows: (f) => fetchBookingsByStatus(['Arrived', 'Completed'], f),
+        getStatus: STATUS_FROM_BOOKING,
+        getSeats: (r) => r.seats,
         columns: [
             { header: 'Employee ID', get: (r) => r.users.employee_id },
             { header: 'Name', get: (r) => r.users.full_name },
@@ -157,6 +170,8 @@ const REPORT_TYPES = {
     passenger_manifest: {
         label: 'Passenger Manifest',
         fetchRows: (f) => fetchBookingsByStatus(['Approved', 'Checked-In', 'Departed', 'Arrived', 'Completed'], f),
+        getStatus: STATUS_FROM_BOOKING,
+        getSeats: (r) => r.seats,
         columns: [
             { header: 'Employee ID', get: (r) => r.users.employee_id },
             { header: 'Name', get: (r) => r.users.full_name },
@@ -173,6 +188,7 @@ const REPORT_TYPES = {
     waiting_list_report: {
         label: 'Waiting List Report',
         fetchRows: (f) => fetchBookingsByStatus(['Waiting List'], f),
+        getSeats: (r) => r.seats,
         columns: [
             { header: 'Employee ID', get: (r) => r.users.employee_id },
             { header: 'Name', get: (r) => r.users.full_name },
@@ -199,6 +215,7 @@ const REPORT_TYPES = {
     ferry_occupancy: {
         label: 'Ferry Occupancy Report',
         fetchRows: (f) => fetchFerryOccupancy(f),
+        getOccupancyPct: (r) => r.occupancyPct,
         columns: [
             { header: 'Date', get: (r) => formatDate(r.travelDate) },
             { header: 'Route', get: (r) => r.schedule.service_name ?? r.schedule.ferry_routes?.direction ?? '-' },
@@ -211,6 +228,7 @@ const REPORT_TYPES = {
     security_activity: {
         label: 'Security Activity Report',
         fetchRows: (f) => fetchSecurityActionLog(f),
+        getStatus: (r) => (r.new_status ? { name: r.new_status.status_name, color: r.new_status.badge_color } : null),
         columns: [
             { header: 'Booking Ref', get: (r) => `BK-${r.booking?.booking_id ?? ''}` },
             { header: 'Employee', get: (r) => r.booking?.users?.full_name ?? '-' },
@@ -227,6 +245,7 @@ const REPORT_TYPES = {
     passenger_movement_history: {
         label: 'Passenger Movement History',
         fetchRows: (f) => fetchBookingsByStatus(['Checked-In', 'Departed', 'Arrived', 'Completed', 'No Show'], f),
+        getStatus: STATUS_FROM_BOOKING,
         columns: [
             { header: 'Employee ID', get: (r) => r.users.employee_id },
             { header: 'Name', get: (r) => r.users.full_name },
@@ -240,22 +259,154 @@ const REPORT_TYPES = {
     },
 };
 
-function genericReportBody({ reportType, rows, filters, filterOptions, basePath, companyName, siteLogo }) {
+// ---------------------------------------------------------------------
+// Shared "modern executive report" chrome - header/KPI cards/footer/
+// print+mobile CSS - used by both genericReportBody() (the 8 Security
+// Operations reports) and reportPageBody() (the default Booking
+// Report), so every report type gets identical branding/print/mobile
+// treatment from one implementation.
+// ---------------------------------------------------------------------
+
+/** A short human-readable summary of which filters are actually active - shown in the header so a printed/exported report is self-describing without needing the on-screen filter form. */
+function describeAppliedFilters(filters, filterOptions) {
+    const parts = [];
+    if (filters.dateFrom || filters.dateTo) parts.push(`Date: ${filters.dateFrom ? formatDate(filters.dateFrom) : 'Any'} - ${filters.dateTo ? formatDate(filters.dateTo) : 'Any'}`);
+    if (filters.deptFilter) parts.push(`Department: ${filterOptions.departments.find((d) => d.department_id === filters.deptFilter)?.department_name ?? filters.deptFilter}`);
+    if (filters.resortFilter) parts.push(`Resort: ${filterOptions.resorts.find((r) => r.resort_id === filters.resortFilter)?.resort_name ?? filters.resortFilter}`);
+    if (filters.empFilter) parts.push(`Employee: ${filterOptions.employees?.find((e) => e.user_id === filters.empFilter)?.full_name ?? filters.empFilter}`);
+    if (filters.routeFilter) parts.push(`Route: ${filterOptions.routes.find((r) => r.route_id === filters.routeFilter)?.direction ?? filters.routeFilter}`);
+    if (filters.statusFilter) parts.push(`Status: ${filterOptions.statuses?.find((s) => s.status_id === filters.statusFilter)?.status_name ?? filters.statusFilter}`);
+    if (filters.purpose) parts.push(`Purpose contains: "${filters.purpose}"`);
+    return parts.length ? parts.join(' &middot; ') : 'None (all records)';
+}
+
+function reportHeaderHtml({ reportLabel, companyName, siteLogo, generatedByName, filters, filterOptions }) {
+    return `<div class="report-header mb-3">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+        <div class="d-flex align-items-center gap-3">
+            ${siteLogo ? `<img src="${h(siteLogo)}" alt="" style="height:48px;">` : ''}
+            <div>
+                <div class="fw-bold fs-5">${h(companyName)}</div>
+                <div class="text-muted">${h(reportLabel)}</div>
+            </div>
+        </div>
+        <div class="text-sm-end small text-muted">
+            <div>Generated By: <span class="text-body">${h(generatedByName)}</span></div>
+            <div>Generated: <span class="text-body">${formatDateTime(new Date().toISOString())}</span></div>
+        </div>
+    </div>
+    <div class="small text-muted mt-2 pt-2 border-top">
+        <span class="me-3"><strong>Reporting Period:</strong> ${filters.dateFrom || filters.dateTo ? `${filters.dateFrom ? formatDate(filters.dateFrom) : 'Any'} - ${filters.dateTo ? formatDate(filters.dateTo) : 'Any'}` : 'All time'}</span>
+        <span><strong>Applied Filters:</strong> ${raw(describeAppliedFilters(filters, filterOptions))}</span>
+    </div>
+</div>`;
+}
+
+function reportFooterHtml({ generatedByName, totalRecords, companyName }) {
+    return `<div class="report-footer mt-3 pt-3 border-top small text-muted d-flex flex-wrap justify-content-between gap-2">
+    <div>Generated by ${h(generatedByName)} on ${formatDateTime(new Date().toISOString())}</div>
+    <div>Total Records: ${totalRecords}</div>
+    <div>${h(companyName)} Ferry Portal &middot; Report v1.0</div>
+</div>
+<div class="report-confidentiality small text-muted fst-italic mt-1">This report contains confidential operational data intended solely for authorized personnel of ${h(companyName)}. Do not distribute outside the organization without approval.</div>`;
+}
+
+const KPI_ICONS = {
+    Approved: 'bi-check-circle', Pending: 'bi-hourglass-split', Rejected: 'bi-x-circle', Cancelled: 'bi-slash-circle',
+    'No Show': 'bi-person-dash', 'Checked-In': 'bi-box-arrow-in-right', Departed: 'bi-arrow-up-right', Arrived: 'bi-flag',
+    'Waiting List': 'bi-people', Confirmed: 'bi-patch-check', Completed: 'bi-check2-all', Expired: 'bi-clock-history',
+};
+
+function kpiCardHtml({ value, label, icon, percent }) {
+    return `<div class="col-6 col-md-3 col-xl-2">
+    <div class="stat-card d-flex align-items-center gap-3">
+        <div class="stat-icon-badge"><i class="bi ${icon}"></i></div>
+        <div><div class="stat-value">${value}${percent != null ? `<span class="fs-6 text-muted fw-normal"> (${percent}%)</span>` : ''}</div><div class="stat-label">${h(label)}</div></div>
+    </div>
+</div>`;
+}
+
+/**
+ * Data-driven Executive Summary: always Total Records (+ Total
+ * Passengers when rows carry a seat count), then one card per DISTINCT
+ * status name actually present in this report's rows - never a fixed
+ * 12-card list, so a report whose data structurally excludes most
+ * statuses (e.g. the No Show Report is 100% "No Show") doesn't show a
+ * wall of zero-value cards. ferry_occupancy has no status concept at
+ * all - it gets Average Occupancy instead, computed from its own
+ * occupancyPct field rather than fabricating a capacity figure other
+ * report shapes don't have.
+ */
+function reportKpiCardsHtml(rows, def) {
+    const cards = [kpiCardHtml({ value: rows.length, label: 'Total Records', icon: 'bi-journal-text' })];
+
+    if (def.getSeats) {
+        const totalPassengers = rows.reduce((sum, r) => sum + (Number(def.getSeats(r)) || 0), 0);
+        cards.push(kpiCardHtml({ value: totalPassengers, label: 'Total Passengers', icon: 'bi-people-fill' }));
+    }
+
+    if (def.getStatus) {
+        const counts = new Map();
+        for (const r of rows) {
+            const status = def.getStatus(r);
+            if (!status?.name) continue;
+            counts.set(status.name, (counts.get(status.name) ?? 0) + 1);
+        }
+        for (const [name, count] of counts) {
+            const percent = rows.length ? Math.round((count / rows.length) * 100) : 0;
+            cards.push(kpiCardHtml({ value: count, label: name, icon: KPI_ICONS[name] ?? 'bi-tag', percent }));
+        }
+    }
+
+    if (def.getOccupancyPct && rows.length) {
+        const avg = Math.round(rows.reduce((sum, r) => sum + (Number(def.getOccupancyPct(r)) || 0), 0) / rows.length);
+        cards.push(kpiCardHtml({ value: `${avg}%`, label: 'Average Occupancy', icon: 'bi-pie-chart' }));
+    }
+
+    return `<div class="row g-3 mb-3">${cards.join('')}</div>`;
+}
+
+// Column headers that represent a booking/passenger status - rendered
+// as a colored badge (via the report def's own getStatus()) instead of
+// plain text, wherever the columns array happens to expose one.
+const STATUS_COLUMN_HEADERS = new Set(['Status', 'Current Status', 'New Status']);
+
+function reportCellHtml(col, row, def) {
+    if (STATUS_COLUMN_HEADERS.has(col.header) && def.getStatus) {
+        const status = def.getStatus(row);
+        if (status?.name) return `<td data-label="${h(col.header)}"><span class="badge rounded-pill ${statusBadgeClass(status.color)}">${h(status.name)}</span></td>`;
+    }
+    return `<td data-label="${h(col.header)}">${h(String(col.get(row) ?? ''))}</td>`;
+}
+
+const REPORT_PRINT_MOBILE_STYLE = `<style>
+@media print {
+    .no-print, .sidebar, .topbar, .portal-banner { display: none !important; }
+    .main-content { margin-left: 0 !important; }
+    @page { size: A4; margin: 15mm; }
+    .report-table thead { display: table-header-group; }
+    .report-table tr { page-break-inside: avoid; }
+}
+@media (max-width: 767.98px) {
+    .report-table thead { display: none; }
+    .report-table, .report-table tbody, .report-table tr, .report-table td { display: block; width: 100%; }
+    .report-table tr { margin-bottom: .75rem; border: 1px solid #e2e5ea; border-radius: 8px; padding: .25rem .5rem; }
+    .report-table td { display: flex; justify-content: space-between; align-items: center; gap: .5rem; padding: .4rem .25rem; border: none !important; text-align: right; }
+    .report-table td::before { content: attr(data-label); font-weight: 600; color: #7c8aa5; text-align: left; }
+}
+</style>`;
+
+function genericReportBody({ reportType, rows, filters, filterOptions, basePath, companyName, siteLogo, generatedByName }) {
     const def = REPORT_TYPES[reportType];
     const { departments, resorts, routes } = filterOptions;
 
     const rowsHtml = rows
-        .map((r) => html`<tr>${raw(def.columns.map((c) => `<td>${h(String(c.get(r) ?? ''))}</td>`).join(''))}</tr>`)
+        .map((r) => html`<tr>${raw(def.columns.map((c) => reportCellHtml(c, r, def)).join(''))}</tr>`)
         .map((r) => r.toString())
         .join('');
 
     return html`
-<div class="print-masthead d-none text-center mb-3">
-    ${siteLogo ? html`<img src="${siteLogo}" alt="" style="max-height:60px;" class="mb-2 d-block mx-auto">` : ''}
-    <h4>${companyName}</h4>
-    <p class="text-muted mb-0">${def.label}</p>
-</div>
-<h5 class="mb-3"><i class="bi bi-graph-up"></i> Reports</h5>
+${raw(reportHeaderHtml({ reportLabel: def.label, companyName, siteLogo, generatedByName, filters, filterOptions }))}
 ${reportTypeSelector(reportType)}
 <div class="card shadow-sm mb-3 no-print"><div class="card-body">
     <form method="get" class="row g-2">
@@ -272,14 +423,16 @@ ${reportTypeSelector(reportType)}
         </div>
     </form>
 </div></div>
+${raw(reportKpiCardsHtml(rows, def))}
 <div class="card shadow-sm">
     <div class="card-header bg-white">Results: ${rows.length} record(s)</div>
-    <div class="table-responsive"><table class="table table-hover mb-0 align-middle small">
+    <div class="table-responsive"><table class="table table-hover mb-0 align-middle small report-table">
         <thead><tr>${raw(def.columns.map((c) => `<th>${h(c.header)}</th>`).join(''))}</tr></thead>
         <tbody>${raw(rowsHtml || `<tr><td colspan="${def.columns.length}" class="text-center text-muted py-4">No results for the selected filters.</td></tr>`)}</tbody>
     </table></div>
 </div>
-<style>@media print { .no-print, .sidebar, .topbar, .portal-banner { display: none !important; } .main-content { margin-left: 0 !important; } .print-masthead { display: block !important; } }</style>`;
+${raw(reportFooterHtml({ generatedByName, totalRecords: rows.length, companyName }))}
+${raw(REPORT_PRINT_MOBILE_STYLE)}`;
 }
 
 function genericReportCsv(reportType, rows) {
@@ -305,31 +458,31 @@ function reportTypeSelector(current) {
 </div>`;
 }
 
-function reportPageBody({ rows, filters, filterOptions, scope, basePath, companyName, siteLogo }) {
+// Same shape as a REPORT_TYPES entry's getStatus/getSeats, so the
+// default Booking Report gets identical KPI-card treatment to the 8
+// Security Operations reports via the same reportKpiCardsHtml().
+const BOOKING_REPORT_DEF = { getStatus: (r) => ({ name: r.booking_status.status_name, color: r.booking_status.badge_color }), getSeats: (r) => r.seats };
+
+function reportPageBody({ rows, filters, filterOptions, scope, basePath, companyName, siteLogo, generatedByName }) {
     const { departments, employees, routes, statuses } = filterOptions;
     const showFullFilters = scope === 'admin';
 
     const rowsHtml = rows
         .map(
             (r) => html`<tr>
-            <td>#${r.booking_id}</td><td>${r.supplier_reservations ? html`<span class="badge bg-info text-dark">Supplier</span> ${r.supplier_reservations.visitor_name} (${r.supplier_reservations.supplier_company})` : r.users.full_name}</td>
-            <td>${r.users.departments?.department_name ?? '-'}</td>
-            <td>${formatDate(r.travel_date)}</td><td>${formatTime(r.ferry_schedule.departure_time)}</td>
-            <td>${r.ferry_schedule.service_name ?? r.ferry_schedule.ferry_routes?.direction ?? '-'}</td><td>${r.purpose}</td>
-            <td>${r.booking_status.status_name}</td><td>${r.seats}</td>
-            ${showFullFilters ? html`<td>${r.approver?.full_name ?? '-'}</td>` : ''}
+            <td data-label="ID">#${r.booking_id}</td><td data-label="Employee">${r.supplier_reservations ? html`<span class="badge bg-info text-dark">Supplier</span> ${r.supplier_reservations.visitor_name} (${r.supplier_reservations.supplier_company})` : r.users.full_name}</td>
+            <td data-label="Department">${r.users.departments?.department_name ?? '-'}</td>
+            <td data-label="Date">${formatDate(r.travel_date)}</td><td data-label="Time">${formatTime(r.ferry_schedule.departure_time)}</td>
+            <td data-label="Direction">${r.ferry_schedule.service_name ?? r.ferry_schedule.ferry_routes?.direction ?? '-'}</td><td data-label="Purpose">${r.purpose}</td>
+            <td data-label="Status"><span class="badge rounded-pill ${statusBadgeClass(r.booking_status.badge_color)}">${h(r.booking_status.status_name)}</span></td><td data-label="Seats">${r.seats}</td>
+            ${showFullFilters ? html`<td data-label="Approver">${r.approver?.full_name ?? '-'}</td>` : ''}
         </tr>`
         )
         .map((r) => r.toString())
         .join('');
 
     return html`
-<div class="print-masthead d-none text-center mb-3">
-    ${siteLogo ? html`<img src="${siteLogo}" alt="" style="max-height:60px;" class="mb-2 d-block mx-auto">` : ''}
-    <h4>${companyName}</h4>
-    <p class="text-muted mb-0">Booking Report</p>
-</div>
-<h5 class="mb-3"><i class="bi bi-graph-up"></i> Reports</h5>
+${raw(reportHeaderHtml({ reportLabel: 'Booking Report', companyName, siteLogo, generatedByName, filters, filterOptions }))}
 ${showFullFilters ? reportTypeSelector('booking') : ''}
 <div class="card shadow-sm mb-3 no-print"><div class="card-body">
     <form method="get" class="row g-2">
@@ -352,14 +505,16 @@ ${showFullFilters ? reportTypeSelector('booking') : ''}
         </div>
     </form>
 </div></div>
+${raw(reportKpiCardsHtml(rows, BOOKING_REPORT_DEF))}
 <div class="card shadow-sm">
     <div class="card-header bg-white">Results: ${rows.length} booking(s)</div>
-    <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+    <div class="table-responsive"><table class="table table-hover mb-0 align-middle report-table">
         <thead><tr><th>ID</th><th>Employee</th><th>Department</th><th>Date</th><th>Time</th><th>Direction</th><th>Purpose</th><th>Status</th><th>Seats</th>${showFullFilters ? html`<th>Approver</th>` : ''}</tr></thead>
         <tbody>${raw(rowsHtml || `<tr><td colspan="${showFullFilters ? 10 : 9}" class="text-center text-muted py-4">No results for the selected filters.</td></tr>`)}</tbody>
     </table></div>
 </div>
-<style>@media print { .no-print, .sidebar, .topbar, .portal-banner { display: none !important; } .main-content { margin-left: 0 !important; } .print-masthead { display: block !important; } }</style>`;
+${raw(reportFooterHtml({ generatedByName, totalRecords: rows.length, companyName }))}
+${raw(REPORT_PRINT_MOBILE_STYLE)}`;
 }
 
 async function loadFilterOptions() {
@@ -440,7 +595,7 @@ async function handleReport(request, auth, scope, basePath) {
             getSetting('site_logo', ''),
             loadFilterOptions(),
         ]);
-        const body = genericReportBody({ reportType, rows, filters, filterOptions, basePath, companyName, siteLogo });
+        const body = genericReportBody({ reportType, rows, filters, filterOptions, basePath, companyName, siteLogo, generatedByName: auth.user.full_name });
         return renderShellForRequest({ request, auth, pageTitle: 'Reports', path: basePath, bodyHtml: body });
     }
 
@@ -456,6 +611,6 @@ async function handleReport(request, auth, scope, basePath) {
         getSetting('site_logo', ''),
         loadFilterOptions(),
     ]);
-    const body = reportPageBody({ rows, filters, filterOptions, scope, basePath, companyName, siteLogo });
+    const body = reportPageBody({ rows, filters, filterOptions, scope, basePath, companyName, siteLogo, generatedByName: auth.user.full_name });
     return renderShellForRequest({ request, auth, pageTitle: 'Reports', path: basePath, bodyHtml: body });
 }
