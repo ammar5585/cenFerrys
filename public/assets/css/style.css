@@ -362,15 +362,15 @@ body {
    design comparison) instead of a full stat-card grid: every figure is
    one small pill, so the summary can sit as a slim strip above the
    results table rather than a whole grid section. */
-.report-kpi-row { display: flex; flex-wrap: wrap; gap: .55rem; }
+.report-kpi-row { display: flex; flex-wrap: wrap; gap: 12px; }
 .report-kpi-chip {
     display: inline-flex; align-items: center; gap: .45rem;
-    background: #fff; border: 1px solid #e2e5ea; border-radius: 999px;
-    padding: .45rem .85rem .45rem .6rem; font-size: .85rem; color: #1b2430;
+    background: #fff; border: 1px solid #E2E8F0; border-radius: 999px;
+    padding: .45rem .85rem .45rem .6rem; font-size: 12px; color: #0F172A;
 }
 [data-bs-theme="dark"] .report-kpi-chip { background: #1e2530; border-color: #2c3543; color: #eef2f7; }
 .report-kpi-chip-dot { width: .55rem; height: .55rem; border-radius: 50%; flex: none; }
-.report-kpi-chip-pct { color: #7c8aa5; margin-left: .1rem; }
+.report-kpi-chip-pct { color: #475569; margin-left: .1rem; font-size: 11px; }
 
 .login-wrapper {
     min-height: 100vh;

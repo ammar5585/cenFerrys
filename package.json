@@ -15,6 +15,7 @@
     "bcryptjs": "^2.4.3",
     "cookie": "^0.6.0",
     "csv-parse": "^7.0.1",
+    "exceljs": "^4.4.0",
     "file-type": "^19.5.0",
     "jimp": "^1.6.1",
     "jsonwebtoken": "^9.0.2",

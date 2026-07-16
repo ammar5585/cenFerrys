@@ -43,3 +43,14 @@ export function csvResponse(csvString, filename) {
         },
     });
 }
+
+/** `buffer` is the Buffer/Uint8Array from an exceljs Workbook's writeBuffer(). */
+export function xlsxResponse(buffer, filename) {
+    return new Response(buffer, {
+        status: 200,
+        headers: {
+            'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition': `attachment; filename="${filename}"`,
+        },
+    });
+}
