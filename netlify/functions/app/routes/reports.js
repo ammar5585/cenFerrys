@@ -311,38 +311,28 @@ function reportFooterHtml({ generatedByName, totalRecords, companyName }) {
 <div class="report-confidentiality small text-muted fst-italic mt-1">This report contains confidential operational data intended solely for authorized personnel of ${h(companyName)}. Do not distribute outside the organization without approval.</div>`;
 }
 
-const KPI_ICONS = {
-    Approved: 'bi-check-circle', Pending: 'bi-hourglass-split', Rejected: 'bi-x-circle', Cancelled: 'bi-slash-circle',
-    'No Show': 'bi-person-dash', 'Checked-In': 'bi-box-arrow-in-right', Departed: 'bi-arrow-up-right', Arrived: 'bi-flag',
-    'Waiting List': 'bi-people', Confirmed: 'bi-patch-check', Completed: 'bi-check2-all', Expired: 'bi-clock-history',
-};
-
-function kpiCardHtml({ value, label, icon, percent }) {
-    return `<div class="col-6 col-md-3 col-xl-2">
-    <div class="stat-card d-flex align-items-center gap-3">
-        <div class="stat-icon-badge"><i class="bi ${icon}"></i></div>
-        <div><div class="stat-value">${value}${percent != null ? `<span class="fs-6 text-muted fw-normal"> (${percent}%)</span>` : ''}</div><div class="stat-label">${h(label)}</div></div>
-    </div>
-</div>`;
+/** One pill in the Executive Summary's chip row - a colored dot (the same badge_color as the Status column, via Bootstrap's own --bs-{color} custom properties) carries the status meaning; Total Records/Total Passengers/Average Occupancy (no status color) get a neutral dot. */
+function kpiChipHtml({ value, label, percent, color }) {
+    return `<span class="report-kpi-chip"><span class="report-kpi-chip-dot" style="background:var(--bs-${color ?? 'secondary'})"></span><strong>${value}</strong> ${h(label)}${percent != null ? `<span class="report-kpi-chip-pct">${percent}%</span>` : ''}</span>`;
 }
 
 /**
  * Data-driven Executive Summary: always Total Records (+ Total
- * Passengers when rows carry a seat count), then one card per DISTINCT
+ * Passengers when rows carry a seat count), then one chip per DISTINCT
  * status name actually present in this report's rows - never a fixed
- * 12-card list, so a report whose data structurally excludes most
+ * 12-chip list, so a report whose data structurally excludes most
  * statuses (e.g. the No Show Report is 100% "No Show") doesn't show a
- * wall of zero-value cards. ferry_occupancy has no status concept at
+ * wall of zero-value chips. ferry_occupancy has no status concept at
  * all - it gets Average Occupancy instead, computed from its own
  * occupancyPct field rather than fabricating a capacity figure other
  * report shapes don't have.
  */
 function reportKpiCardsHtml(rows, def) {
-    const cards = [kpiCardHtml({ value: rows.length, label: 'Total Records', icon: 'bi-journal-text' })];
+    const chips = [kpiChipHtml({ value: rows.length, label: 'Total Records' })];
 
     if (def.getSeats) {
         const totalPassengers = rows.reduce((sum, r) => sum + (Number(def.getSeats(r)) || 0), 0);
-        cards.push(kpiCardHtml({ value: totalPassengers, label: 'Total Passengers', icon: 'bi-people-fill' }));
+        chips.push(kpiChipHtml({ value: totalPassengers, label: 'Total Passengers' }));
     }
 
     if (def.getStatus) {
@@ -350,20 +340,22 @@ function reportKpiCardsHtml(rows, def) {
         for (const r of rows) {
             const status = def.getStatus(r);
             if (!status?.name) continue;
-            counts.set(status.name, (counts.get(status.name) ?? 0) + 1);
+            const key = status.name;
+            if (!counts.has(key)) counts.set(key, { count: 0, color: status.color });
+            counts.get(key).count++;
         }
-        for (const [name, count] of counts) {
+        for (const [name, { count, color }] of counts) {
             const percent = rows.length ? Math.round((count / rows.length) * 100) : 0;
-            cards.push(kpiCardHtml({ value: count, label: name, icon: KPI_ICONS[name] ?? 'bi-tag', percent }));
+            chips.push(kpiChipHtml({ value: count, label: name, percent, color }));
         }
     }
 
     if (def.getOccupancyPct && rows.length) {
         const avg = Math.round(rows.reduce((sum, r) => sum + (Number(def.getOccupancyPct(r)) || 0), 0) / rows.length);
-        cards.push(kpiCardHtml({ value: `${avg}%`, label: 'Average Occupancy', icon: 'bi-pie-chart' }));
+        chips.push(kpiChipHtml({ value: `${avg}%`, label: 'Average Occupancy' }));
     }
 
-    return `<div class="row g-3 mb-3">${cards.join('')}</div>`;
+    return `<div class="report-kpi-row mb-3">${chips.join('')}</div>`;
 }
 
 // Column headers that represent a booking/passenger status - rendered
