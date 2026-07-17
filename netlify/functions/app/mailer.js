@@ -270,6 +270,35 @@ ${h(companyName)} Staff Transfer Portal &middot; Automatically Generated Email &
 </html>`;
 }
 
+/** Crude-but-effective HTML->plain-text conversion for sendReportEmail()'s text/plain part - see that function's comment for why an always-present, roughly-matching fallback matters here. */
+function htmlToPlainText(html) {
+    return html
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        // Strip the Outlook-only VML fallback block entirely, but only the
+        // *markers* of the "everyone else" conditional-comment wrapper -
+        // both use `<!--[if ...]>` syntax, so a single greedy pattern here
+        // would delete the real, visible button along with the VML one.
+        .replace(/<!--\[if mso\][\s\S]*?<!\[endif\]-->/gi, '')
+        .replace(/<!--\[if !mso\]><!-->/gi, '')
+        .replace(/<!--<!\[endif\]-->/gi, '')
+        .replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '$2: $1')
+        .replace(/<tr[^>]*>/gi, '\n')
+        .replace(/<\/t[dh]>/gi, '  ')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/(p|h[1-6]|div)>/gi, '\n\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&middot;/g, '-')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#0?39;/g, "'")
+        .replace(/[ \t]+\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
 /**
  * The hook every business-logic call site uses. Never throws - callers
  * wrap this in deferBestEffort() (deferred.js) exactly like
@@ -293,6 +322,17 @@ export async function sendReportEmail({ to, cc, bcc, subject, html, attachments 
     if (!settings.host || !settings.senderAddress) {
         return { ok: false, error: 'SMTP host and Sender Email Address must be configured before sending report emails.' };
     }
+    // Report emails were HTML-only until this fix - no text/plain part at
+    // all, not even a mismatched one. A single-part HTML email with an
+    // Excel attachment and multiple links is exactly the profile spam/
+    // phishing filters flag hardest (same root cause as
+    // sendTemplatedEmail's earlier text/HTML-mismatch bug, one step
+    // worse). The report content is data tables, not prose, so deriving
+    // a plain-text fallback from the already-built HTML (rather than
+    // hand-writing a parallel text renderer for two report types) is the
+    // pragmatic fix - the text part's job here is to exist and roughly
+    // match, not to be beautiful.
+    const text = htmlToPlainText(html);
     try {
         const transport = buildTransport(settings);
         const info = await transport.sendMail({
@@ -302,6 +342,7 @@ export async function sendReportEmail({ to, cc, bcc, subject, html, attachments 
             bcc: bcc && (Array.isArray(bcc) ? bcc.join(', ') : bcc) || undefined,
             replyTo: settings.replyTo || undefined,
             subject,
+            text,
             html,
             attachments,
         });
