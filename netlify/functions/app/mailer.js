@@ -152,16 +152,27 @@ export function reportEmailButtons({ portalBaseUrl }) {
  * plain-text Templates tab. Each entry receives the same `variables`
  * passed to sendTemplatedEmail() plus `relatedBookingId`.
  */
-const EMAIL_ACTIONS = {
-    approval_request: (variables, relatedBookingId, baseUrl) => {
-        if (!variables.approvalToken) return [];
+/** Shared by approval_request and approval_reminder (identical button set - a reminder is just a re-send of the same request). */
+function approvalRequestButtons(variables, relatedBookingId, baseUrl) {
+    if (variables.approvalToken) {
         const token = variables.approvalToken;
         return [
             { label: 'View Request', url: buildPortalUrl(baseUrl, '/approval', { token }), style: 'secondary' },
             { label: 'Approve Booking', url: buildPortalUrl(baseUrl, '/approval', { token, intent: 'approve' }), style: 'success' },
             { label: 'Reject Booking', url: buildPortalUrl(baseUrl, '/approval', { token, intent: 'reject' }), style: 'danger' },
         ];
-    },
+    }
+    // Executive-override case (no department approver configured/
+    // available - approval.js's notifyExecutives()) - no single
+    // approver to bind a token to, so this links straight to the
+    // Executive Overview page instead, which already gates itself on
+    // the approval_workflow.executive_override permission.
+    return [{ label: 'Review in Executive Overview', url: buildPortalUrl(baseUrl, '/hr/overview'), style: 'secondary' }];
+}
+
+const EMAIL_ACTIONS = {
+    approval_request: approvalRequestButtons,
+    approval_reminder: approvalRequestButtons,
     booking_approval: (variables, relatedBookingId, baseUrl) => bookingViewButtons(relatedBookingId, baseUrl),
     booking_rejection: (variables, relatedBookingId, baseUrl) => bookingViewButtons(relatedBookingId, baseUrl),
     booking_confirmation: (variables, relatedBookingId, baseUrl) => bookingViewButtons(relatedBookingId, baseUrl),

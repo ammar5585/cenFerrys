@@ -365,7 +365,7 @@ export function registerAdminBookingsRoutes(router) {
                 );
                 booking = inserted[0];
                 if (!overrideApproval) {
-                    await routeDepartmentApproval(booking.booking_id, employee.resort_id, employee.department_id);
+                    await routeDepartmentApproval(booking.booking_id, employee.resort_id, employee.department_id, employeeUserId);
                 }
             } else {
                 booking = await bookFerrySeat({ userId: employeeUserId, scheduleId, travelDate, direction, purpose, remarks, seats });
@@ -381,7 +381,7 @@ export function registerAdminBookingsRoutes(router) {
                     const approvedId = await getStatusId('Approved');
                     unwrap(await db().from('bookings').update({ status_id: approvedId }).eq('booking_id', booking.booking_id));
                 } else {
-                    await routeDepartmentApproval(booking.booking_id, employee.resort_id, employee.department_id);
+                    await routeDepartmentApproval(booking.booking_id, employee.resort_id, employee.department_id, employeeUserId);
                 }
             }
 

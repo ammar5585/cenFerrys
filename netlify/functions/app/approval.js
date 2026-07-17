@@ -11,7 +11,7 @@ import { ROLE_GM, ROLE_RM, ROLE_HR, APPROVAL_CHAIN } from './session.js';
 import { sendTemplatedEmail } from './mailer.js';
 import { deferBestEffort } from './deferred.js';
 import { getSetting } from './settings.js';
-import { formatDate, formatTime } from './format.js';
+import { formatDate, formatTime, formatDateTime } from './format.js';
 import { logActivity } from './activity.js';
 
 /** Maps a booking's "waiting/pending" status_name to a human hierarchy-level label for the audit trail - shared by every approve/reject entry point (the authenticated /manager/approvals list and the token-gated /approval page alike). */
@@ -70,40 +70,68 @@ async function mintApprovalToken(bookingId, approverUserId) {
  * gated /approval page (routes/approval_link.js) - never a raw
  * GET-triggers-the-decision link, see that route's own header comment.
  */
-async function sendApprovalRequestEmail(bookingId, approverId) {
-    const [bookingRows, approverRows] = await Promise.all([
-        db()
+/**
+ * Shared by sendApprovalRequestEmail() (assigned approver),
+ * notifyExecutives() (unassigned, executive-override case), and
+ * sendApprovalReminders() (reminder/escalation) - the full booking-
+ * detail field set the HOD Email Approval spec's "Email Notification"
+ * section asks for. Boarding Location/Destination come from route_stops
+ * (first/last active stop for the schedule) - the same source
+ * seatAvailability.js already uses for equivalent fields elsewhere, not
+ * a new data source.
+ */
+async function getBookingEmailVariables(bookingId) {
+    const rows = unwrap(
+        await db()
             .from('bookings')
             .select(
-                'travel_date, ' +
-                    'users!bookings_user_id_fkey(full_name, departments(department_name)), ' +
+                'travel_date, seats, purpose, created_at, schedule_id, ' +
+                    'users!bookings_user_id_fkey(full_name, employee_id, designation, departments(department_name), resorts(resort_name)), ' +
                     'ferry_schedule(departure_time, service_name, ferry_routes(route_name, direction))'
             )
             .eq('booking_id', bookingId)
             .limit(1)
-            .then(unwrap),
+    );
+    const booking = rows[0];
+    if (!booking) return null;
+
+    const stopRows = booking.schedule_id
+        ? unwrap(await db().from('route_stops').select('stop_name').eq('schedule_id', booking.schedule_id).eq('status', 'active').order('stop_order', { ascending: true }))
+        : [];
+
+    return {
+        full_name: booking.users?.full_name ?? '',
+        employee_id: booking.users?.employee_id ?? '',
+        designation: booking.users?.designation ?? '',
+        department_name: booking.users?.departments?.department_name ?? '',
+        resort_name: booking.users?.resorts?.resort_name ?? '',
+        route_name: booking.ferry_schedule?.service_name ?? booking.ferry_schedule?.ferry_routes?.route_name ?? '',
+        direction: booking.ferry_schedule?.service_name ?? booking.ferry_schedule?.ferry_routes?.direction ?? '',
+        travel_date: formatDate(booking.travel_date),
+        departure_time: booking.ferry_schedule ? formatTime(booking.ferry_schedule.departure_time) : '',
+        boarding_location: stopRows[0]?.stop_name ?? '',
+        destination: stopRows[stopRows.length - 1]?.stop_name ?? '',
+        seats: booking.seats,
+        purpose: booking.purpose ?? '',
+        booking_reference: `BK-${bookingId}`,
+        submitted_at: formatDateTime(booking.created_at),
+    };
+}
+
+async function sendApprovalRequestEmail(bookingId, approverId) {
+    const [bookingVars, approverRows] = await Promise.all([
+        getBookingEmailVariables(bookingId),
         db().from('users').select('full_name, email').eq('user_id', approverId).limit(1).then(unwrap),
     ]);
-    const booking = bookingRows[0];
     const approver = approverRows[0];
-    if (!booking || !approver?.email) return;
+    if (!bookingVars || !approver?.email) return;
 
     const token = await mintApprovalToken(bookingId, approverId);
     deferBestEffort(
         sendTemplatedEmail(
             'approval_request',
             approver.email,
-            {
-                approver_name: approver.full_name ?? '',
-                full_name: booking.users?.full_name ?? '',
-                department_name: booking.users?.departments?.department_name ?? '',
-                route_name: booking.ferry_schedule?.service_name ?? booking.ferry_schedule?.ferry_routes?.route_name ?? '',
-                direction: booking.ferry_schedule?.service_name ?? booking.ferry_schedule?.ferry_routes?.direction ?? '',
-                travel_date: formatDate(booking.travel_date),
-                departure_time: booking.ferry_schedule ? formatTime(booking.ferry_schedule.departure_time) : '',
-                booking_id: bookingId,
-                approvalToken: token,
-            },
+            { approver_name: approver.full_name ?? '', ...bookingVars, booking_id: bookingId, approvalToken: token },
             { relatedBookingId: bookingId }
         ),
         'sendTemplatedEmail:approval_request'
@@ -251,15 +279,34 @@ async function isApproverViable(userId) {
  * Coordinators on approval" pattern in routes/manager.js.
  */
 async function notifyExecutives(bookingId, message) {
-    const executives = unwrap(
-        await db()
+    const [executives, bookingVars] = await Promise.all([
+        db()
             .from('users')
-            .select('user_id, roles!inner(role_name)')
+            .select('user_id, full_name, email, roles!inner(role_name)')
             .eq('status', 'active')
             .in('roles.role_name', EXECUTIVE_ROLES)
-    );
+            .then(unwrap),
+        getBookingEmailVariables(bookingId),
+    ]);
     for (const exec of executives) {
         await createNotification(exec.user_id, message, 'booking', bookingId);
+        // No single approver to bind an approval token to here (that's
+        // exactly why this booking landed in the executive-override
+        // bucket) - the email links to the Executive Overview page
+        // instead, which already gates itself on
+        // approval_workflow.executive_override. See mailer.js's
+        // EMAIL_ACTIONS.approval_request for the token-vs-no-token branch.
+        if (exec.email && bookingVars) {
+            deferBestEffort(
+                sendTemplatedEmail(
+                    'approval_request',
+                    exec.email,
+                    { approver_name: exec.full_name ?? '', ...bookingVars, booking_id: bookingId },
+                    { relatedBookingId: bookingId }
+                ),
+                'sendTemplatedEmail:approval_request'
+            );
+        }
     }
 }
 
@@ -314,7 +361,47 @@ export async function getApprovalWorkflowInfo(resortId, departmentId) {
  * auto-escalating to HR - only an executive override (GM/RM/HR acting
  * via the Executive Overview page) can act on it from there.
  */
-export async function routeDepartmentApproval(bookingId, resortId, departmentId) {
+/**
+ * Routes via the employee's actual reporting_manager_id, tried before
+ * department_approval_config (routeDepartmentApproval, below) - a real,
+ * per-person signal that's already populated in production for genuine
+ * HODs, unlike the department-wide config table which several
+ * departments have never had set up (the root cause of the GM's missing
+ * approval emails - see migration 0039's header comment). Returns
+ * `null` when there's nothing to route on (no reporting_manager_id set,
+ * or the manager isn't currently viable) so the caller falls through to
+ * the existing department_approval_config logic unchanged.
+ */
+async function routeViaReportingManager(bookingId, employeeUserId) {
+    if (!employeeUserId) return null;
+    const rows = unwrap(await db().from('users').select('reporting_manager_id').eq('user_id', employeeUserId).limit(1));
+    const managerId = rows[0]?.reporting_manager_id;
+    if (!managerId || !(await isApproverViable(managerId))) return null;
+
+    const statusId = await getStatusId('Pending HOD Approval');
+    unwrap(
+        await db()
+            .from('bookings')
+            .update({
+                status_id: statusId,
+                current_approver_id: managerId,
+                current_approval_assigned_at: new Date().toISOString(),
+                reminder_sent_at: null,
+                hod_escalated_at: null,
+            })
+            .eq('booking_id', bookingId)
+    );
+
+    await createNotification(managerId, 'A new ferry booking request is waiting for your approval.', 'booking', bookingId);
+    await sendApprovalRequestEmail(bookingId, managerId);
+
+    return { status_id: statusId, approver_id: managerId, level: 'Reporting Manager' };
+}
+
+export async function routeDepartmentApproval(bookingId, resortId, departmentId, employeeUserId) {
+    const viaReportingManager = await routeViaReportingManager(bookingId, employeeUserId);
+    if (viaReportingManager) return viaReportingManager;
+
     const config = await getDepartmentApprovalConfig(resortId, departmentId);
     if (config?.approval_mode === 'legacy') {
         return routeBookingApproval(bookingId);
@@ -591,4 +678,84 @@ export async function applyApprovalDecision({ bookingId, actorUserId, actorRoleN
     await logActivity(actorUserId, `${decision.charAt(0).toUpperCase()}${decision.slice(1)} booking`, `booking_id=${bookingId}`, clientIp);
 
     return { ok: true };
+}
+
+/**
+ * Two-stage timeout handling for 'Pending HOD Approval' bookings - a
+ * reminder to the current approver first, then (if still no action) an
+ * additional heads-up to GM/RM/HR executives via the existing
+ * notifyExecutives(), without reassigning current_approver_id (mirrors
+ * escalateApproval()'s "no further tier - notify, don't reassign"
+ * behavior - the HOD's own assignment/token stays valid either way).
+ * Called from api/cron/escalate-approvals.js alongside its existing
+ * SLA-escalation sweep - same 15-minute poll, no new cron cadence.
+ */
+export async function sendApprovalReminders() {
+    const reminderHours = Number(await getSetting('approval_reminder_hours', '24')) || 24;
+    const escalationHours = Number(await getSetting('approval_escalation_hours', '48')) || 48;
+    const results = { reminded: 0, escalated: 0 };
+
+    const hodStatusId = await getStatusId('Pending HOD Approval');
+    if (!hodStatusId) return results;
+
+    const reminderCutoff = new Date(Date.now() - reminderHours * 60 * 60 * 1000).toISOString();
+    const reminderCandidates = unwrap(
+        await db()
+            .from('bookings')
+            .select('booking_id, current_approver_id')
+            .eq('status_id', hodStatusId)
+            .is('reminder_sent_at', null)
+            .lt('current_approval_assigned_at', reminderCutoff)
+    );
+    for (const booking of reminderCandidates) {
+        if (booking.current_approver_id) {
+            const [bookingVars, approverRows] = await Promise.all([
+                getBookingEmailVariables(booking.booking_id),
+                db().from('users').select('full_name, email').eq('user_id', booking.current_approver_id).limit(1).then(unwrap),
+            ]);
+            const approver = approverRows[0];
+            if (bookingVars && approver?.email) {
+                const validTokenRows = unwrap(
+                    await db()
+                        .from('booking_approval_tokens')
+                        .select('token')
+                        .eq('booking_id', booking.booking_id)
+                        .eq('approver_user_id', booking.current_approver_id)
+                        .gt('expires_at', new Date().toISOString())
+                        .order('token_id', { ascending: false })
+                        .limit(1)
+                );
+                const token = validTokenRows[0]?.token ?? (await mintApprovalToken(booking.booking_id, booking.current_approver_id));
+                deferBestEffort(
+                    sendTemplatedEmail(
+                        'approval_reminder',
+                        approver.email,
+                        { approver_name: approver.full_name ?? '', ...bookingVars, booking_id: booking.booking_id, approvalToken: token },
+                        { relatedBookingId: booking.booking_id }
+                    ),
+                    'sendTemplatedEmail:approval_reminder'
+                );
+            }
+        }
+        unwrap(await db().from('bookings').update({ reminder_sent_at: new Date().toISOString() }).eq('booking_id', booking.booking_id));
+        results.reminded++;
+    }
+
+    const escalationCutoff = new Date(Date.now() - escalationHours * 60 * 60 * 1000).toISOString();
+    const escalationCandidates = unwrap(
+        await db()
+            .from('bookings')
+            .select('booking_id')
+            .eq('status_id', hodStatusId)
+            .not('reminder_sent_at', 'is', null)
+            .is('hod_escalated_at', null)
+            .lt('current_approval_assigned_at', escalationCutoff)
+    );
+    for (const booking of escalationCandidates) {
+        await notifyExecutives(booking.booking_id, 'A ferry booking request has been pending HOD approval past the escalation timeout and needs attention.');
+        unwrap(await db().from('bookings').update({ hod_escalated_at: new Date().toISOString() }).eq('booking_id', booking.booking_id));
+        results.escalated++;
+    }
+
+    return results;
 }

@@ -77,7 +77,7 @@ function approvalDetailBody({ booking, csrfToken, intent, token }) {
                 <form method="post" class="mt-2">
                     ${raw(csrfField(csrfToken))}
                     <input type="hidden" name="token" value="${token}">
-                    <textarea name="comments" class="form-control form-control-sm mb-2" rows="2" placeholder="Comments (optional)"></textarea>
+                    <textarea name="comments" class="form-control form-control-sm mb-2" rows="2" placeholder="Comments (required if rejecting)"></textarea>
                     <div class="d-flex gap-2">
                         <button type="submit" name="action" value="approve" class="btn btn-success flex-fill"><i class="bi bi-check-lg"></i> Approve Booking</button>
                         <button type="submit" name="action" value="reject" class="btn btn-danger flex-fill"><i class="bi bi-x-lg"></i> Reject Booking</button>
@@ -148,6 +148,9 @@ export function registerApprovalLinkRoutes(router) {
         const action = form.get('action');
         if (!['approve', 'reject'].includes(action)) return notFound();
         const comments = (form.get('comments') || '').toString().trim();
+        if (action === 'reject' && !comments) {
+            return redirectTo(`/approval?token=${token}&intent=reject`, { cookies: [flashSetCookie('error', 'Please provide a reason for rejecting this request.')] });
+        }
 
         const result = await applyApprovalDecision({
             bookingId: tokenRow.booking_id,

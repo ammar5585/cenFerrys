@@ -8,7 +8,7 @@
 // should ever be able to trigger it.
 
 import { db } from '../../netlify/functions/app/db.js';
-import { escalateApproval } from '../../netlify/functions/app/approval.js';
+import { escalateApproval, sendApprovalReminders } from '../../netlify/functions/app/approval.js';
 
 async function handleRequest(request) {
     const auth = request.headers.get('authorization');
@@ -44,7 +44,14 @@ async function handleRequest(request) {
         }
     }
 
-    return Response.json({ ok: true, checked: candidates.length, escalated });
+    let reminders = { reminded: 0, escalated: 0 };
+    try {
+        reminders = await sendApprovalReminders();
+    } catch (err) {
+        console.error('sendApprovalReminders failed:', err.message);
+    }
+
+    return Response.json({ ok: true, checked: candidates.length, escalated, hodReminders: reminders });
 }
 
 export default { fetch: handleRequest };

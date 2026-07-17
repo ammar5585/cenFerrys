@@ -152,7 +152,7 @@ async function pendingApprovalsBody(userId, csrfToken) {
             <form method="post" class="mt-2">
                 ${raw(csrfField(csrfToken))}
                 <input type="hidden" name="booking_id" value="${r.booking_id}">
-                <textarea name="comments" class="form-control form-control-sm mb-2" rows="2" placeholder="Comments (optional)"></textarea>
+                <textarea name="comments" class="form-control form-control-sm mb-2" rows="2" placeholder="Comments (required if rejecting)"></textarea>
                 <div class="d-flex gap-2">
                     <button type="submit" name="decision" value="approved" class="btn btn-sm btn-success flex-fill"><i class="bi bi-check-lg"></i> Approve</button>
                     <button type="submit" name="decision" value="rejected" class="btn btn-sm btn-danger flex-fill"><i class="bi bi-x-lg"></i> Reject</button>
@@ -205,6 +205,9 @@ export function registerManagerRoutes(router) {
 
         if (!['approved', 'rejected'].includes(decision)) {
             return redirectTo('/manager/approvals', { cookies: [auth.setCookie, flashSetCookie('error', 'Invalid decision.')].filter(Boolean) });
+        }
+        if (decision === 'rejected' && !comments) {
+            return redirectTo('/manager/approvals', { cookies: [auth.setCookie, flashSetCookie('error', 'Please provide a reason for rejecting this request.')].filter(Boolean) });
         }
 
         const result = await applyApprovalDecision({

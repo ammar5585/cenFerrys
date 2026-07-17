@@ -1044,10 +1044,14 @@ export function registerStaffRoutes(router) {
                         continue;
                     }
 
-                    // Department-hierarchy routing if the booker's department
-                    // has opted in; routeDepartmentApproval delegates to the
-                    // untouched legacy GM->RM->HR chain otherwise.
-                    await routeDepartmentApproval(booking.booking_id, bookerRows[0]?.resort_id ?? null, bookerRows[0]?.department_id ?? null);
+                    // Reporting-Manager routing (the booker's actual
+                    // reporting_manager_id) is tried first; department-
+                    // hierarchy routing (if the booker's department has
+                    // opted in) is the fallback when unset, and that in
+                    // turn delegates to the untouched legacy GM->RM->HR
+                    // chain otherwise. See approval.js's
+                    // routeViaReportingManager()/routeDepartmentApproval().
+                    await routeDepartmentApproval(booking.booking_id, bookerRows[0]?.resort_id ?? null, bookerRows[0]?.department_id ?? null, user.user_id);
                     await createNotification(user.user_id, 'Your ferry booking request has been submitted and is awaiting approval.', 'booking', booking.booking_id);
                     await logActivity(user.user_id, 'Submitted ferry booking', `booking_id=${booking.booking_id}`, clientIp(request));
                     deferBestEffort(

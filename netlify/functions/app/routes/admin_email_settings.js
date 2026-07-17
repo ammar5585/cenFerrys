@@ -71,6 +71,8 @@ async function settingsTabBody({ errors, csrfToken, testResult }) {
     const portalBaseUrl = await getSetting('portal_base_url', '');
     const approvalExpiryHours = await getSetting('approval_token_expiry_hours', '72');
     const resetExpiryHours = await getSetting('password_reset_token_expiry_hours', '2');
+    const reminderHours = await getSetting('approval_reminder_hours', '24');
+    const escalationHours = await getSetting('approval_escalation_hours', '48');
 
     return html`
 <h5 class="mb-3"><i class="bi bi-envelope-at"></i> Email Settings</h5>
@@ -123,6 +125,18 @@ ${testResult ? html`<div class="alert ${testResult.ok ? 'alert-success' : 'alert
                 <div class="row g-3">
                     <div class="col-6"><label class="form-label">Approval Link Expiry (hours)</label><input type="number" name="approval_token_expiry_hours" class="form-control" min="1" value="${approvalExpiryHours}"></div>
                     <div class="col-6"><label class="form-label">Password Reset Link Expiry (hours)</label><input type="number" name="password_reset_token_expiry_hours" class="form-control" min="1" value="${resetExpiryHours}"></div>
+                </div>
+            </div></div>
+        </div>
+        <div class="col-12 col-lg-6">
+            <div class="card h-100"><div class="card-header bg-white">HOD Approval Reminders</div><div class="card-body">
+                <div class="row g-3">
+                    <div class="col-6"><label class="form-label">Reminder After (hours)</label><input type="number" name="approval_reminder_hours" class="form-control" min="1" value="${reminderHours}">
+                        <div class="form-text">How long a "Pending HOD Approval" booking waits before the approver gets a reminder email.</div>
+                    </div>
+                    <div class="col-6"><label class="form-label">Escalate After (hours)</label><input type="number" name="approval_escalation_hours" class="form-control" min="1" value="${escalationHours}">
+                        <div class="form-text">If still no action after this long, GM/RM/HR executives get an additional heads-up email.</div>
+                    </div>
                 </div>
             </div></div>
         </div>
@@ -558,6 +572,8 @@ export function registerAdminEmailSettingsRoutes(router) {
         const portalBaseUrl = (form.get('portal_base_url') || '').toString().trim().replace(/\/+$/, '');
         const approvalExpiryRaw = (form.get('approval_token_expiry_hours') || '').toString().trim();
         const resetExpiryRaw = (form.get('password_reset_token_expiry_hours') || '').toString().trim();
+        const reminderHoursRaw = (form.get('approval_reminder_hours') || '').toString().trim();
+        const escalationHoursRaw = (form.get('approval_escalation_hours') || '').toString().trim();
 
         const errors = [];
         if (senderAddress && !EMAIL_REGEX.test(senderAddress)) errors.push('Invalid Sender Email Address.');
@@ -582,6 +598,11 @@ export function registerAdminEmailSettingsRoutes(router) {
         if (approvalExpiryRaw && (!Number.isFinite(approvalExpiryHours) || approvalExpiryHours <= 0)) errors.push('Invalid Approval Link Expiry - must be a positive number of hours.');
         const resetExpiryHours = Number(resetExpiryRaw);
         if (resetExpiryRaw && (!Number.isFinite(resetExpiryHours) || resetExpiryHours <= 0)) errors.push('Invalid Password Reset Link Expiry - must be a positive number of hours.');
+        const reminderHoursValue = Number(reminderHoursRaw);
+        if (reminderHoursRaw && (!Number.isFinite(reminderHoursValue) || reminderHoursValue <= 0)) errors.push('Invalid Reminder After - must be a positive number of hours.');
+        const escalationHoursValue = Number(escalationHoursRaw);
+        if (escalationHoursRaw && (!Number.isFinite(escalationHoursValue) || escalationHoursValue <= 0)) errors.push('Invalid Escalate After - must be a positive number of hours.');
+        if (reminderHoursRaw && escalationHoursRaw && reminderHoursValue >= escalationHoursValue) errors.push('Escalate After must be greater than Reminder After.');
 
         if (errors.length) {
             const body = await settingsTabBody({ errors, csrfToken: user.csrf, testResult: null });
@@ -601,6 +622,8 @@ export function registerAdminEmailSettingsRoutes(router) {
             { key: 'portal_base_url', label: 'Portal Base URL', value: portalBaseUrl },
             { key: 'approval_token_expiry_hours', label: 'Approval Link Expiry (hours)', value: approvalExpiryRaw || '72' },
             { key: 'password_reset_token_expiry_hours', label: 'Password Reset Link Expiry (hours)', value: resetExpiryRaw || '2' },
+            { key: 'approval_reminder_hours', label: 'HOD Approval Reminder After (hours)', value: reminderHoursRaw || '24' },
+            { key: 'approval_escalation_hours', label: 'HOD Approval Escalate After (hours)', value: escalationHoursRaw || '48' },
         ];
 
         const auditRows = [];
