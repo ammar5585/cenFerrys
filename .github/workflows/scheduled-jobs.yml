@@ -2,6 +2,7 @@ name: Scheduled Jobs
 
 on:
   schedule:
+    - cron: '*/5 * * * *'
     - cron: '*/15 * * * *'
     - cron: '*/30 * * * *'
     - cron: '0 8 * * *'
@@ -36,7 +37,7 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
 
   send-scheduled-reports:
-    if: github.event.schedule == '*/15 * * * *' || github.event_name == 'workflow_dispatch'
+    if: github.event.schedule == '*/5 * * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Call send-scheduled-reports endpoint

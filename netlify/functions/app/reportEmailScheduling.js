@@ -103,11 +103,19 @@ async function setScheduleRecipientGroups(scheduleId, groupIds) {
     }
 }
 
-export async function createSchedule({ reportType, frequency, sendTime, dayOfWeek, dayOfMonth, groupIds, userId }) {
+/** 'interval' schedules have no time-of-day - send_time/day_of_week/day_of_month are meaningless for them (gated purely by elapsed time since last_run_at, see isDue()); everything else uses send_time and has no interval_minutes. Mirrors the DB's report_schedules_frequency_fields_check. */
+function scheduleFieldsForFrequency(frequency, { sendTime, intervalMinutes, dayOfWeek, dayOfMonth }) {
+    if (frequency === 'interval') {
+        return { send_time: null, interval_minutes: intervalMinutes, day_of_week: null, day_of_month: null };
+    }
+    return { send_time: sendTime, interval_minutes: null, day_of_week: dayOfWeek ?? null, day_of_month: dayOfMonth ?? null };
+}
+
+export async function createSchedule({ reportType, frequency, sendTime, intervalMinutes, dayOfWeek, dayOfMonth, groupIds, userId }) {
     const rows = unwrap(
         await db()
             .from('report_schedules')
-            .insert({ report_type: reportType, frequency, send_time: sendTime, day_of_week: dayOfWeek ?? null, day_of_month: dayOfMonth ?? null, created_by_user_id: userId, updated_by_user_id: userId })
+            .insert({ report_type: reportType, frequency, ...scheduleFieldsForFrequency(frequency, { sendTime, intervalMinutes, dayOfWeek, dayOfMonth }), created_by_user_id: userId, updated_by_user_id: userId })
             .select('schedule_id')
     );
     const scheduleId = rows[0].schedule_id;
@@ -115,11 +123,11 @@ export async function createSchedule({ reportType, frequency, sendTime, dayOfWee
     return scheduleId;
 }
 
-export async function updateSchedule(scheduleId, { frequency, sendTime, dayOfWeek, dayOfMonth, isActive, groupIds, userId }) {
+export async function updateSchedule(scheduleId, { frequency, sendTime, intervalMinutes, dayOfWeek, dayOfMonth, isActive, groupIds, userId }) {
     unwrap(
         await db()
             .from('report_schedules')
-            .update({ frequency, send_time: sendTime, day_of_week: dayOfWeek ?? null, day_of_month: dayOfMonth ?? null, is_active: isActive, updated_by_user_id: userId })
+            .update({ frequency, ...scheduleFieldsForFrequency(frequency, { sendTime, intervalMinutes, dayOfWeek, dayOfMonth }), is_active: isActive, updated_by_user_id: userId })
             .eq('schedule_id', scheduleId)
     );
     if (groupIds) await setScheduleRecipientGroups(scheduleId, groupIds);
@@ -229,40 +237,58 @@ export async function sendReportNow(reportType, groupIds) {
 // Cron entry points
 // ---------------------------------------------------------------------
 
-function isDueToday(schedule, now) {
+/**
+ * 'interval' schedules (e.g. "Every 30 Minutes") are gated purely by
+ * elapsed real time since last_run_at - no day-of-week/time-of-day
+ * concept applies, so they're checked against `nowMs` (a real UTC
+ * instant) rather than the Maldives-shifted `now` the other frequencies
+ * use. Everything else fires at most once per Maldives calendar day, at
+ * or after its configured time-of-day.
+ */
+function isDue(schedule, now, nowMs) {
+    if (schedule.frequency === 'interval') {
+        if (!schedule.last_run_at) return true;
+        const elapsedMinutes = (nowMs - new Date(schedule.last_run_at).getTime()) / 60000;
+        return elapsedMinutes >= schedule.interval_minutes;
+    }
+
     if (schedule.frequency === 'weekly' && schedule.day_of_week != null && schedule.day_of_week !== now.getUTCDay()) return false;
     if (schedule.frequency === 'monthly' && schedule.day_of_month != null && schedule.day_of_month !== now.getUTCDate()) return false;
     if (schedule.frequency === 'custom') {
         if (schedule.day_of_week != null && schedule.day_of_week !== now.getUTCDay()) return false;
         if (schedule.day_of_month != null && schedule.day_of_month !== now.getUTCDate()) return false;
     }
+
+    const nowHm = `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`;
+    const sendHm = schedule.send_time.slice(0, 5);
+    if (nowHm < sendHm) return false;
+
+    if (schedule.last_run_at) {
+        const todayStr = now.toISOString().slice(0, 10);
+        const lastRunMaldivesDate = new Date(new Date(schedule.last_run_at).getTime() + MALDIVES_OFFSET_MS).toISOString().slice(0, 10);
+        if (lastRunMaldivesDate === todayStr) return false;
+    }
     return true;
 }
 
 /**
- * Fires every active schedule whose configured time-of-day has passed for
- * "today" (Maldives calendar date) and hasn't already run today.
+ * Fires every active schedule that is due: 'interval' schedules by
+ * elapsed time since last_run_at, everything else at most once per
+ * Maldives calendar day at/after its configured time-of-day.
  * last_run_at is the only concurrency guard - correct because this is
  * called from a single GitHub Actions poll, never in parallel with
- * itself, and a missed poll (server down, etc.) still sends exactly once
- * as soon as the next poll catches up, rather than being skipped for the
- * day - "reports always reflect latest data" outweighs precise timing.
+ * itself, and a missed poll (server down, etc.) still sends as soon as
+ * the next poll catches up, rather than being skipped - "reports always
+ * reflect latest data" outweighs precise timing.
  */
 export async function runDueSchedules() {
     const now = nowInMaldives();
-    const todayStr = now.toISOString().slice(0, 10);
-    const nowHm = `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`;
+    const nowMs = Date.now();
 
     const schedules = unwrap(await db().from('report_schedules').select('*, report_schedule_recipient_groups(group_id)').eq('is_active', true));
     const results = [];
     for (const schedule of schedules) {
-        if (!isDueToday(schedule, now)) continue;
-        const sendHm = schedule.send_time.slice(0, 5);
-        if (nowHm < sendHm) continue;
-        if (schedule.last_run_at) {
-            const lastRunMaldivesDate = new Date(new Date(schedule.last_run_at).getTime() + MALDIVES_OFFSET_MS).toISOString().slice(0, 10);
-            if (lastRunMaldivesDate === todayStr) continue;
-        }
+        if (!isDue(schedule, now, nowMs)) continue;
 
         const groupIds = schedule.report_schedule_recipient_groups.map((g) => g.group_id);
         const result = groupIds.length

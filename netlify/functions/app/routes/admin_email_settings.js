@@ -180,7 +180,7 @@ ${raw(modalsHtml)}`;
 }
 
 function scheduleModalHtml({ idSuffix, csrfToken, schedule, allGroups }) {
-    const s = schedule ?? { schedule_id: '', report_type: 'daily_operations', frequency: 'daily', send_time: '21:00', day_of_week: '', day_of_month: '', is_active: true, recipientGroups: [] };
+    const s = schedule ?? { schedule_id: '', report_type: 'daily_operations', frequency: 'daily', send_time: '21:00', interval_minutes: '', day_of_week: '', day_of_month: '', is_active: true, recipientGroups: [] };
     const selectedGroupIds = new Set((s.recipientGroups ?? []).map((g) => g.group_id));
     const groupCheckboxes = allGroups
         .map((g) => `<div class="form-check"><input class="form-check-input" type="checkbox" name="group_ids" value="${g.group_id}" id="sg${idSuffix}_${g.group_id}" ${selectedGroupIds.has(g.group_id) ? 'checked' : ''}><label class="form-check-label" for="sg${idSuffix}_${g.group_id}">${h(g.group_name)}</label></div>`)
@@ -196,15 +196,17 @@ function scheduleModalHtml({ idSuffix, csrfToken, schedule, allGroups }) {
             <option value="passenger_manifest" ${s.report_type === 'passenger_manifest' ? 'selected' : ''}>Passenger Manifest</option>
         </select>${s.schedule_id ? `<input type="hidden" name="report_type" value="${s.report_type}">` : ''}</div>
         <div class="row g-3 mb-3">
-            <div class="col-6"><label class="form-label">Frequency</label><select name="frequency" class="form-select">
+            <div class="col-6"><label class="form-label">Frequency</label><select name="frequency" class="form-select schedule-frequency-select">
                 <option value="daily" ${s.frequency === 'daily' ? 'selected' : ''}>Daily</option>
                 <option value="weekly" ${s.frequency === 'weekly' ? 'selected' : ''}>Weekly</option>
                 <option value="monthly" ${s.frequency === 'monthly' ? 'selected' : ''}>Monthly</option>
                 <option value="custom" ${s.frequency === 'custom' ? 'selected' : ''}>Custom</option>
+                <option value="interval" ${s.frequency === 'interval' ? 'selected' : ''}>Every N Minutes</option>
             </select></div>
-            <div class="col-6"><label class="form-label">Send Time</label><input type="time" name="send_time" class="form-control" value="${(s.send_time || '').slice(0, 5)}" required></div>
+            <div class="col-6 field-time-only"><label class="form-label">Send Time</label><input type="time" name="send_time" class="form-control" value="${(s.send_time || '').slice(0, 5)}"></div>
+            <div class="col-6 field-interval-only"><label class="form-label">Interval (Minutes)</label><input type="number" name="interval_minutes" class="form-control" min="5" step="1" placeholder="e.g. 60" value="${s.interval_minutes ?? ''}"><div class="form-text">Checked roughly every 5 minutes - shorter intervals fire as soon as the next check runs.</div></div>
         </div>
-        <div class="row g-3 mb-3">
+        <div class="row g-3 mb-3 field-time-only">
             <div class="col-6"><label class="form-label">Day of Week</label><select name="day_of_week" class="form-select"><option value="">-</option>${weekdayOptions}</select><div class="form-text">Weekly/Custom only</div></div>
             <div class="col-6"><label class="form-label">Day of Month</label><input type="number" name="day_of_month" class="form-control" min="1" max="31" value="${s.day_of_month ?? ''}"><div class="form-text">Monthly/Custom only</div></div>
         </div>
@@ -275,11 +277,12 @@ async function reportsTabBody({ csrfToken, page }) {
     const scheduleRows = schedules
         .map((s) => {
             const dayInfo = s.frequency === 'weekly' ? WEEKDAY_LABELS[s.day_of_week] ?? '-' : s.frequency === 'monthly' ? `Day ${s.day_of_month ?? '-'}` : s.frequency === 'custom' ? [s.day_of_week != null ? WEEKDAY_LABELS[s.day_of_week] : null, s.day_of_month ? `Day ${s.day_of_month}` : null].filter(Boolean).join(', ') || 'Every day' : '-';
+            const timeInfo = s.frequency === 'interval' ? `Every ${s.interval_minutes} min` : (s.send_time || '').slice(0, 5);
             const groupBadges = s.recipientGroups.length ? s.recipientGroups.map((g) => `<span class="badge text-bg-secondary me-1">${h(g.group_name)}</span>`).join('') : '<span class="text-danger small">None assigned</span>';
             return `<tr>
             <td>${h(REPORT_TYPE_LABELS[s.report_type] ?? s.report_type)}</td>
-            <td class="text-capitalize">${h(s.frequency)}</td>
-            <td>${h((s.send_time || '').slice(0, 5))}</td>
+            <td class="text-capitalize">${s.frequency === 'interval' ? 'Every N Minutes' : h(s.frequency)}</td>
+            <td>${h(timeInfo)}</td>
             <td>${h(dayInfo)}</td>
             <td>${groupBadges}</td>
             <td>${s.is_active ? '<span class="badge text-bg-success">Active</span>' : '<span class="badge text-bg-secondary">Inactive</span>'}</td>
@@ -351,7 +354,23 @@ ${raw(tabsHtml('reports'))}
     <tbody>${raw(logRows || '<tr><td colspan="7" class="text-center text-muted py-3">No delivery history yet.</td></tr>')}</tbody>
 </table></div>${raw(pagination)}</div>
 ${raw(groupModalsHtml)}
-${raw(scheduleModalsHtml)}`;
+${raw(scheduleModalsHtml)}
+<script>
+(function () {
+    function applyFrequencyVisibility(modalEl) {
+        var select = modalEl.querySelector('.schedule-frequency-select');
+        if (!select) return;
+        var isInterval = select.value === 'interval';
+        modalEl.querySelectorAll('.field-time-only').forEach(function (el) { el.style.display = isInterval ? 'none' : ''; });
+        modalEl.querySelectorAll('.field-interval-only').forEach(function (el) { el.style.display = isInterval ? '' : 'none'; });
+    }
+    document.querySelectorAll('.schedule-frequency-select').forEach(function (select) {
+        var modalEl = select.closest('.modal');
+        applyFrequencyVisibility(modalEl);
+        select.addEventListener('change', function () { applyFrequencyVisibility(modalEl); });
+    });
+})();
+</script>`;
 }
 
 export function registerAdminEmailSettingsRoutes(router) {
@@ -451,6 +470,8 @@ export function registerAdminEmailSettingsRoutes(router) {
             const frequency = form.get('frequency').toString();
             const sendTimeRaw = (form.get('send_time') || '').toString();
             const sendTime = sendTimeRaw.length === 5 ? `${sendTimeRaw}:00` : sendTimeRaw;
+            const intervalMinutesRaw = (form.get('interval_minutes') || '').toString();
+            const intervalMinutes = intervalMinutesRaw === '' ? null : Number(intervalMinutesRaw);
             const dayOfWeekRaw = (form.get('day_of_week') || '').toString();
             const dayOfWeek = dayOfWeekRaw === '' ? null : Number(dayOfWeekRaw);
             const dayOfMonthRaw = (form.get('day_of_month') || '').toString();
@@ -458,14 +479,18 @@ export function registerAdminEmailSettingsRoutes(router) {
             const groupIds = form.getAll('group_ids').map(Number).filter(Number.isInteger);
             const isActive = form.get('is_active') ? true : false;
 
-            if (!sendTime) {
+            if (frequency === 'interval') {
+                if (!Number.isInteger(intervalMinutes) || intervalMinutes < 5) {
+                    return redirectTo('/admin/email_settings?tab=reports', { cookies: [auth.setCookie, flashSetCookie('error', 'Interval must be a whole number of minutes, 5 or more (the poll only checks every ~5 minutes).')].filter(Boolean) });
+                }
+            } else if (!sendTime) {
                 return redirectTo('/admin/email_settings?tab=reports', { cookies: [auth.setCookie, flashSetCookie('error', 'Send time is required.')].filter(Boolean) });
             }
 
             if (scheduleId) {
-                await updateSchedule(scheduleId, { frequency, sendTime, dayOfWeek, dayOfMonth, isActive, groupIds, userId: user.user_id });
+                await updateSchedule(scheduleId, { frequency, sendTime, intervalMinutes, dayOfWeek, dayOfMonth, isActive, groupIds, userId: user.user_id });
             } else {
-                await createSchedule({ reportType, frequency, sendTime, dayOfWeek, dayOfMonth, groupIds, userId: user.user_id });
+                await createSchedule({ reportType, frequency, sendTime, intervalMinutes, dayOfWeek, dayOfMonth, groupIds, userId: user.user_id });
             }
             await logActivity(user.user_id, scheduleId ? 'Updated report schedule' : 'Created report schedule', reportType, clientIp(request));
             return redirectTo('/admin/email_settings?tab=reports', { cookies: [auth.setCookie, flashSetCookie('success', 'Schedule saved.')].filter(Boolean) });
