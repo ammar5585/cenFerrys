@@ -14,7 +14,7 @@ jobs:
     steps:
       - name: Call escalate-approvals endpoint
         run: |
-          curl -sf -X GET "https://cenferrys.vercel.app/api/cron/escalate-approvals" \
+          curl -sf -X GET "https://theatolliaferry.vercel.app/api/cron/escalate-approvals" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
 
   expire-bookings:
@@ -23,7 +23,7 @@ jobs:
     steps:
       - name: Call expire-bookings endpoint
         run: |
-          curl -sf -X GET "https://cenferrys.vercel.app/api/cron/expire-bookings" \
+          curl -sf -X GET "https://theatolliaferry.vercel.app/api/cron/expire-bookings" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
 
   ferry-reminder:
@@ -32,5 +32,14 @@ jobs:
     steps:
       - name: Call ferry-reminder endpoint
         run: |
-          curl -sf -X GET "https://cenferrys.vercel.app/api/cron/ferry-reminder" \
+          curl -sf -X GET "https://theatolliaferry.vercel.app/api/cron/ferry-reminder" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+
+  send-scheduled-reports:
+    if: github.event.schedule == '*/15 * * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call send-scheduled-reports endpoint
+        run: |
+          curl -sf -X GET "https://theatolliaferry.vercel.app/api/cron/send-scheduled-reports" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"

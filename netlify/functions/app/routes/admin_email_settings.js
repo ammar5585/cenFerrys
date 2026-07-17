@@ -19,8 +19,17 @@ import { encryptSmtpPassword, sendTestEmail } from '../mailer.js';
 import { logActivity, clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
+import { formatDateTime } from '../format.js';
+import {
+    listRecipientGroups, setGroupRoles, addGroupEmail, removeGroupEmail,
+    listSchedules, createSchedule, updateSchedule, setScheduleActive,
+    sendReportNow, retryLogRow, listEmailLog,
+} from '../reportEmailScheduling.js';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const REPORT_TYPE_LABELS = { passenger_manifest: 'Passenger Manifest', daily_operations: 'Daily Operations Report' };
+const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 const PLACEHOLDER_HINTS = {
     booking_approval: ['full_name', 'route_name', 'direction', 'travel_date', 'departure_time', 'booking_id'],
@@ -36,6 +45,7 @@ function tabsHtml(activeTab) {
     return `<ul class="nav nav-tabs mb-3">
         <li class="nav-item"><a class="nav-link ${activeTab === 'settings' ? 'active' : ''}" href="/admin/email_settings">Settings</a></li>
         <li class="nav-item"><a class="nav-link ${activeTab === 'templates' ? 'active' : ''}" href="/admin/email_settings?tab=templates">Email Templates</a></li>
+        <li class="nav-item"><a class="nav-link ${activeTab === 'reports' ? 'active' : ''}" href="/admin/email_settings?tab=reports">Report Emails</a></li>
     </ul>`;
 }
 
@@ -169,14 +179,193 @@ ${raw(tabsHtml('templates'))}
 ${raw(modalsHtml)}`;
 }
 
+function scheduleModalHtml({ idSuffix, csrfToken, schedule, allGroups }) {
+    const s = schedule ?? { schedule_id: '', report_type: 'daily_operations', frequency: 'daily', send_time: '21:00', day_of_week: '', day_of_month: '', is_active: true, recipientGroups: [] };
+    const selectedGroupIds = new Set((s.recipientGroups ?? []).map((g) => g.group_id));
+    const groupCheckboxes = allGroups
+        .map((g) => `<div class="form-check"><input class="form-check-input" type="checkbox" name="group_ids" value="${g.group_id}" id="sg${idSuffix}_${g.group_id}" ${selectedGroupIds.has(g.group_id) ? 'checked' : ''}><label class="form-check-label" for="sg${idSuffix}_${g.group_id}">${h(g.group_name)}</label></div>`)
+        .join('');
+    const weekdayOptions = WEEKDAY_LABELS.map((w, i) => `<option value="${i}" ${s.day_of_week === i ? 'selected' : ''}>${w}</option>`).join('');
+
+    return `<div class="modal fade" id="scheduleModal${idSuffix}" tabindex="-1"><div class="modal-dialog"><form method="post" class="modal-content">
+    ${csrfField(csrfToken)}<input type="hidden" name="action" value="save_schedule"><input type="hidden" name="schedule_id" value="${s.schedule_id}">
+    <div class="modal-header"><h5 class="modal-title">${s.schedule_id ? 'Edit Schedule' : 'Add Schedule'}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+        <div class="mb-3"><label class="form-label">Report Type</label><select name="report_type" class="form-select" ${s.schedule_id ? 'disabled' : ''}>
+            <option value="daily_operations" ${s.report_type === 'daily_operations' ? 'selected' : ''}>Daily Operations Report</option>
+            <option value="passenger_manifest" ${s.report_type === 'passenger_manifest' ? 'selected' : ''}>Passenger Manifest</option>
+        </select>${s.schedule_id ? `<input type="hidden" name="report_type" value="${s.report_type}">` : ''}</div>
+        <div class="row g-3 mb-3">
+            <div class="col-6"><label class="form-label">Frequency</label><select name="frequency" class="form-select">
+                <option value="daily" ${s.frequency === 'daily' ? 'selected' : ''}>Daily</option>
+                <option value="weekly" ${s.frequency === 'weekly' ? 'selected' : ''}>Weekly</option>
+                <option value="monthly" ${s.frequency === 'monthly' ? 'selected' : ''}>Monthly</option>
+                <option value="custom" ${s.frequency === 'custom' ? 'selected' : ''}>Custom</option>
+            </select></div>
+            <div class="col-6"><label class="form-label">Send Time</label><input type="time" name="send_time" class="form-control" value="${(s.send_time || '').slice(0, 5)}" required></div>
+        </div>
+        <div class="row g-3 mb-3">
+            <div class="col-6"><label class="form-label">Day of Week</label><select name="day_of_week" class="form-select"><option value="">-</option>${weekdayOptions}</select><div class="form-text">Weekly/Custom only</div></div>
+            <div class="col-6"><label class="form-label">Day of Month</label><input type="number" name="day_of_month" class="form-control" min="1" max="31" value="${s.day_of_month ?? ''}"><div class="form-text">Monthly/Custom only</div></div>
+        </div>
+        <div class="mb-2"><label class="form-label">Recipient Groups</label>${groupCheckboxes}</div>
+        ${s.schedule_id ? `<div class="form-check form-switch"><input class="form-check-input" type="checkbox" role="switch" name="is_active" id="active${idSuffix}" ${s.is_active ? 'checked' : ''}><label class="form-check-label" for="active${idSuffix}">Active</label></div>` : ''}
+    </div>
+    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Save Schedule</button></div>
+</form></div></div>`;
+}
+
+function groupRolesModalHtml({ csrfToken, group, allRoles }) {
+    const selectedRoleIds = new Set(group.roles.map((r) => r.role_id));
+    const checkboxes = allRoles
+        .map((r) => `<div class="form-check"><input class="form-check-input" type="checkbox" name="role_ids" value="${r.role_id}" id="gr${group.group_id}_${r.role_id}" ${selectedRoleIds.has(r.role_id) ? 'checked' : ''}><label class="form-check-label" for="gr${group.group_id}_${r.role_id}">${h(r.role_name)}</label></div>`)
+        .join('');
+    return `<div class="modal fade" id="groupRolesModal${group.group_id}" tabindex="-1"><div class="modal-dialog"><form method="post" class="modal-content">
+    ${csrfField(csrfToken)}<input type="hidden" name="action" value="save_group_roles"><input type="hidden" name="group_id" value="${group.group_id}">
+    <div class="modal-header"><h5 class="modal-title">${h(group.group_name)} - Roles</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">${checkboxes}</div>
+    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Save Roles</button></div>
+</form></div></div>`;
+}
+
+function recipientGroupsCardHtml({ groups, allRoles, csrfToken }) {
+    const groupCards = groups
+        .map((g) => {
+            const roleBadges = g.roles.length ? g.roles.map((r) => `<span class="badge text-bg-secondary me-1">${h(r.role_name)}</span>`).join('') : '<span class="text-muted small">No roles assigned</span>';
+            const emailRows = g.emails
+                .map(
+                    (e) => `<div class="d-flex align-items-center gap-2 small mb-1">
+                <span class="badge text-bg-light border">${h(e.recipient_type.toUpperCase())}</span>
+                <span>${h(e.email)}</span>
+                <form method="post" class="ms-auto"><input type="hidden" name="csrf_token" value="${csrfToken}"><input type="hidden" name="action" value="remove_group_email"><input type="hidden" name="email_id" value="${e.email_id}"><button type="submit" class="btn btn-sm btn-link text-danger p-0"><i class="bi bi-x-lg"></i></button></form>
+            </div>`
+                )
+                .join('');
+            return `<div class="col-12 col-lg-6">
+        <div class="card h-100"><div class="card-header bg-white d-flex justify-content-between align-items-center">
+            <span>${h(g.group_name)}</span>
+            <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#groupRolesModal${g.group_id}"><i class="bi bi-pencil"></i> Edit Roles</button>
+        </div><div class="card-body">
+            <div class="mb-2">${roleBadges}</div>
+            <hr>
+            <div class="mb-2">${emailRows || '<span class="text-muted small">No manual addresses</span>'}</div>
+            <form method="post" class="d-flex gap-2">
+                ${csrfField(csrfToken)}<input type="hidden" name="action" value="add_group_email"><input type="hidden" name="group_id" value="${g.group_id}">
+                <input type="email" name="email" class="form-control form-control-sm" placeholder="name@example.com" required>
+                <select name="recipient_type" class="form-select form-select-sm" style="max-width:90px;"><option value="to">To</option><option value="cc">CC</option><option value="bcc">BCC</option></select>
+                <button type="submit" class="btn btn-sm btn-outline-secondary"><i class="bi bi-plus-lg"></i></button>
+            </form>
+        </div></div>
+    </div>`;
+        })
+        .join('');
+    const modals = groups.map((g) => groupRolesModalHtml({ csrfToken, group: g, allRoles })).join('');
+    return { cardsHtml: groupCards, modalsHtml: modals };
+}
+
+async function reportsTabBody({ csrfToken, page }) {
+    const [{ groups, allRoles }, schedules, log] = await Promise.all([
+        listRecipientGroups(),
+        listSchedules(),
+        listEmailLog({ page, pageSize: 25 }),
+    ]);
+
+    const { cardsHtml: groupCardsHtml, modalsHtml: groupModalsHtml } = recipientGroupsCardHtml({ groups, allRoles, csrfToken });
+
+    const scheduleRows = schedules
+        .map((s) => {
+            const dayInfo = s.frequency === 'weekly' ? WEEKDAY_LABELS[s.day_of_week] ?? '-' : s.frequency === 'monthly' ? `Day ${s.day_of_month ?? '-'}` : s.frequency === 'custom' ? [s.day_of_week != null ? WEEKDAY_LABELS[s.day_of_week] : null, s.day_of_month ? `Day ${s.day_of_month}` : null].filter(Boolean).join(', ') || 'Every day' : '-';
+            const groupBadges = s.recipientGroups.length ? s.recipientGroups.map((g) => `<span class="badge text-bg-secondary me-1">${h(g.group_name)}</span>`).join('') : '<span class="text-danger small">None assigned</span>';
+            return `<tr>
+            <td>${h(REPORT_TYPE_LABELS[s.report_type] ?? s.report_type)}</td>
+            <td class="text-capitalize">${h(s.frequency)}</td>
+            <td>${h((s.send_time || '').slice(0, 5))}</td>
+            <td>${h(dayInfo)}</td>
+            <td>${groupBadges}</td>
+            <td>${s.is_active ? '<span class="badge text-bg-success">Active</span>' : '<span class="badge text-bg-secondary">Inactive</span>'}</td>
+            <td class="small text-muted">${s.last_run_at ? formatDateTime(s.last_run_at) : 'Never'}</td>
+            <td class="text-nowrap">
+                <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#scheduleModal${s.schedule_id}"><i class="bi bi-pencil"></i></button>
+                <form method="post" class="d-inline"><input type="hidden" name="csrf_token" value="${csrfToken}"><input type="hidden" name="action" value="toggle_schedule"><input type="hidden" name="schedule_id" value="${s.schedule_id}"><input type="hidden" name="is_active" value="${s.is_active ? '0' : '1'}"><button type="submit" class="btn btn-sm btn-outline-secondary">${s.is_active ? 'Pause' : 'Resume'}</button></form>
+            </td>
+        </tr>`;
+        })
+        .join('');
+    const scheduleModalsHtml = schedules.map((s) => scheduleModalHtml({ idSuffix: s.schedule_id, csrfToken, schedule: s, allGroups: groups })).join('') + scheduleModalHtml({ idSuffix: 'New', csrfToken, schedule: null, allGroups: groups });
+
+    const sendNowGroupCheckboxes = groups.map((g) => `<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="group_ids" value="${g.group_id}" id="sn${g.group_id}"><label class="form-check-label" for="sn${g.group_id}">${h(g.group_name)}</label></div>`).join('');
+
+    const statusBadge = (status) => (status === 'sent' ? '<span class="badge text-bg-success">Sent</span>' : status === 'retrying' ? '<span class="badge text-bg-warning">Retrying</span>' : '<span class="badge text-bg-danger">Failed</span>');
+    const logRows = log.rows
+        .map(
+            (r) => `<tr>
+            <td>${h(REPORT_TYPE_LABELS[r.report_type] ?? r.report_type)}</td>
+            <td class="small">${h(r.recipients_to ?? '-')}</td>
+            <td class="small text-muted">${formatDateTime(r.sent_at ?? r.created_at)}</td>
+            <td>${statusBadge(r.delivery_status)}</td>
+            <td class="small text-muted" style="max-width:220px;" title="${h(r.error_message ?? r.smtp_response ?? '')}">${h((r.error_message ?? r.smtp_response ?? '').slice(0, 60))}</td>
+            <td>${r.retry_count}</td>
+            <td>${r.delivery_status === 'failed' ? `<form method="post"><input type="hidden" name="csrf_token" value="${csrfToken}"><input type="hidden" name="action" value="retry_log"><input type="hidden" name="log_id" value="${r.log_id}"><button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-arrow-clockwise"></i> Retry</button></form>` : ''}</td>
+        </tr>`
+        )
+        .join('');
+    const totalPages = Math.max(1, Math.ceil(log.total / 25));
+    const pagination = totalPages > 1
+        ? `<nav class="mt-2"><ul class="pagination pagination-sm mb-0">${Array.from({ length: totalPages }, (_, i) => i + 1)
+              .map((p) => `<li class="page-item ${p === page ? 'active' : ''}"><a class="page-link" href="/admin/email_settings?tab=reports&page=${p}">${p}</a></li>`)
+              .join('')}</ul></nav>`
+        : '';
+
+    return html`
+<h5 class="mb-3"><i class="bi bi-envelope-at"></i> Email Settings</h5>
+${raw(tabsHtml('reports'))}
+
+<h6 class="mt-4 mb-3">Recipient Groups</h6>
+<div class="row g-3 mb-4">${raw(groupCardsHtml)}</div>
+
+<div class="d-flex justify-content-between align-items-center mt-4 mb-3">
+    <h6 class="mb-0">Schedules</h6>
+    <button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#scheduleModalNew"><i class="bi bi-plus-lg"></i> Add Schedule</button>
+</div>
+<div class="card shadow-sm mb-4"><div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+    <thead><tr><th>Report</th><th>Frequency</th><th>Time</th><th>Day</th><th>Recipients</th><th>Status</th><th>Last Run</th><th></th></tr></thead>
+    <tbody>${raw(scheduleRows || '<tr><td colspan="8" class="text-center text-muted py-3">No schedules configured.</td></tr>')}</tbody>
+</table></div></div>
+
+<h6 class="mt-4 mb-3">Send Now</h6>
+<div class="card shadow-sm mb-4"><div class="card-body">
+    <form method="post" class="row g-3 align-items-end">
+        ${raw(csrfField(csrfToken))}<input type="hidden" name="action" value="send_now">
+        <div class="col-12 col-md-4"><label class="form-label">Report Type</label><select name="report_type" class="form-select">
+            <option value="daily_operations">Daily Operations Report</option>
+            <option value="passenger_manifest">Passenger Manifest</option>
+        </select></div>
+        <div class="col-12 col-md-6"><label class="form-label d-block">Recipient Groups</label>${raw(sendNowGroupCheckboxes)}</div>
+        <div class="col-12 col-md-2"><button type="submit" class="btn btn-primary w-100"><i class="bi bi-send"></i> Send Now</button></div>
+    </form>
+</div></div>
+
+<h6 class="mt-4 mb-3">Delivery History</h6>
+<div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover mb-0 align-middle">
+    <thead><tr><th>Report</th><th>Recipients</th><th>Sent / Attempted</th><th>Status</th><th>Detail</th><th>Retries</th><th></th></tr></thead>
+    <tbody>${raw(logRows || '<tr><td colspan="7" class="text-center text-muted py-3">No delivery history yet.</td></tr>')}</tbody>
+</table></div>${raw(pagination)}</div>
+${raw(groupModalsHtml)}
+${raw(scheduleModalsHtml)}`;
+}
+
 export function registerAdminEmailSettingsRoutes(router) {
     router.get('/admin/email_settings', async (request) => {
         const auth = await requirePermission(request, 'settings.manage_email', { pageTitle: 'Email Settings' });
         if (auth.response) return auth.response;
         const url = new URL(request.url);
-        const tab = url.searchParams.get('tab') === 'templates' ? 'templates' : 'settings';
+        const tabParam = url.searchParams.get('tab');
+        const tab = tabParam === 'templates' ? 'templates' : tabParam === 'reports' ? 'reports' : 'settings';
+        const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
         const body = tab === 'templates'
             ? await templatesTabBody({ csrfToken: auth.user.csrf })
+            : tab === 'reports'
+            ? await reportsTabBody({ csrfToken: auth.user.csrf, page })
             : await settingsTabBody({ errors: [], csrfToken: auth.user.csrf, testResult: null });
         return renderShellForRequest({ request, auth, pageTitle: 'Email Settings', path: '/admin/email_settings', bodyHtml: body });
     });
@@ -230,6 +419,82 @@ export function registerAdminEmailSettingsRoutes(router) {
             }
             await logActivity(user.user_id, 'Updated email template', templateKey, clientIp(request));
             return redirectTo('/admin/email_settings?tab=templates', { cookies: [auth.setCookie, flashSetCookie('success', 'Template updated.')].filter(Boolean) });
+        }
+
+        if (action === 'save_group_roles') {
+            const groupId = Number(form.get('group_id'));
+            const roleIds = form.getAll('role_ids').map(Number).filter(Number.isInteger);
+            await setGroupRoles(groupId, roleIds);
+            await logActivity(user.user_id, 'Updated report recipient group roles', `group_id=${groupId}`, clientIp(request));
+            return redirectTo('/admin/email_settings?tab=reports', { cookies: [auth.setCookie, flashSetCookie('success', 'Recipient group roles updated.')].filter(Boolean) });
+        }
+
+        if (action === 'add_group_email') {
+            const groupId = Number(form.get('group_id'));
+            const email = (form.get('email') || '').toString().trim();
+            const recipientType = ['to', 'cc', 'bcc'].includes(form.get('recipient_type')) ? form.get('recipient_type').toString() : 'to';
+            if (!email || !EMAIL_REGEX.test(email)) {
+                return redirectTo('/admin/email_settings?tab=reports', { cookies: [auth.setCookie, flashSetCookie('error', 'Please enter a valid email address.')].filter(Boolean) });
+            }
+            await addGroupEmail(groupId, email, recipientType);
+            return redirectTo('/admin/email_settings?tab=reports', { cookies: [auth.setCookie, flashSetCookie('success', 'Recipient added.')].filter(Boolean) });
+        }
+
+        if (action === 'remove_group_email') {
+            await removeGroupEmail(Number(form.get('email_id')));
+            return redirectTo('/admin/email_settings?tab=reports', { cookies: [auth.setCookie, flashSetCookie('success', 'Recipient removed.')].filter(Boolean) });
+        }
+
+        if (action === 'save_schedule') {
+            const scheduleId = Number(form.get('schedule_id')) || null;
+            const reportType = form.get('report_type').toString();
+            const frequency = form.get('frequency').toString();
+            const sendTimeRaw = (form.get('send_time') || '').toString();
+            const sendTime = sendTimeRaw.length === 5 ? `${sendTimeRaw}:00` : sendTimeRaw;
+            const dayOfWeekRaw = (form.get('day_of_week') || '').toString();
+            const dayOfWeek = dayOfWeekRaw === '' ? null : Number(dayOfWeekRaw);
+            const dayOfMonthRaw = (form.get('day_of_month') || '').toString();
+            const dayOfMonth = dayOfMonthRaw === '' ? null : Number(dayOfMonthRaw);
+            const groupIds = form.getAll('group_ids').map(Number).filter(Number.isInteger);
+            const isActive = form.get('is_active') ? true : false;
+
+            if (!sendTime) {
+                return redirectTo('/admin/email_settings?tab=reports', { cookies: [auth.setCookie, flashSetCookie('error', 'Send time is required.')].filter(Boolean) });
+            }
+
+            if (scheduleId) {
+                await updateSchedule(scheduleId, { frequency, sendTime, dayOfWeek, dayOfMonth, isActive, groupIds, userId: user.user_id });
+            } else {
+                await createSchedule({ reportType, frequency, sendTime, dayOfWeek, dayOfMonth, groupIds, userId: user.user_id });
+            }
+            await logActivity(user.user_id, scheduleId ? 'Updated report schedule' : 'Created report schedule', reportType, clientIp(request));
+            return redirectTo('/admin/email_settings?tab=reports', { cookies: [auth.setCookie, flashSetCookie('success', 'Schedule saved.')].filter(Boolean) });
+        }
+
+        if (action === 'toggle_schedule') {
+            const scheduleId = Number(form.get('schedule_id'));
+            const isActive = form.get('is_active') === '1';
+            await setScheduleActive(scheduleId, isActive, user.user_id);
+            return redirectTo('/admin/email_settings?tab=reports', { cookies: [auth.setCookie, flashSetCookie('success', isActive ? 'Schedule resumed.' : 'Schedule paused.')].filter(Boolean) });
+        }
+
+        if (action === 'send_now') {
+            const reportType = form.get('report_type').toString();
+            const groupIds = form.getAll('group_ids').map(Number).filter(Number.isInteger);
+            if (!groupIds.length) {
+                return redirectTo('/admin/email_settings?tab=reports', { cookies: [auth.setCookie, flashSetCookie('error', 'Select at least one recipient group.')].filter(Boolean) });
+            }
+            const result = await sendReportNow(reportType, groupIds);
+            await logActivity(user.user_id, 'Sent report email now', reportType, clientIp(request));
+            return redirectTo('/admin/email_settings?tab=reports', { cookies: [auth.setCookie, flashSetCookie(result.ok ? 'success' : 'error', result.ok ? 'Report sent.' : `Send failed: ${result.error ?? 'unknown error'}`)].filter(Boolean) });
+        }
+
+        if (action === 'retry_log') {
+            const logId = Number(form.get('log_id'));
+            const rows = unwrap(await db().from('report_email_log').select('*').eq('log_id', logId).limit(1));
+            if (!rows.length) return notFound();
+            const result = await retryLogRow(rows[0]);
+            return redirectTo('/admin/email_settings?tab=reports', { cookies: [auth.setCookie, flashSetCookie(result.ok ? 'success' : 'error', result.ok ? 'Retry succeeded.' : `Retry failed: ${result.error ?? 'unknown error'}`)].filter(Boolean) });
         }
 
         // action === 'save' (settings)

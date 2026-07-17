@@ -176,7 +176,7 @@ async function fetchFerryOccupancy({ dateFrom, dateTo, routeFilter }) {
 // fabricating a number.
 const STATUS_FROM_BOOKING = (r) => (r.booking_status ? { name: r.booking_status.status_name, color: r.booking_status.badge_color } : null);
 
-const REPORT_TYPES = {
+export const REPORT_TYPES = {
     daily_departure: {
         label: 'Daily Departure Report',
         fetchRows: (f) => fetchBookingsByStatus(['Approved', 'Checked-In', 'Departed', 'Arrived', 'Completed'], f),
@@ -314,7 +314,7 @@ const REPORT_TYPES = {
 // report-* classes below only, so this never touches .stat-card/.card
 // etc. used elsewhere in the app (Admin Dashboard, Security Dashboard,
 // Supplier Reservations already rely on today's .stat-card look).
-const REPORT_COLORS = {
+export const REPORT_COLORS = {
     primary: '#0F172A', secondary: '#475569', bg: '#F8FAFC', border: '#E2E8F0',
 };
 // Keyed by status *name* (not the DB's generic badge_color, which only
@@ -326,7 +326,7 @@ const STATUS_COLORS = {
     'Checked-In': '#2563EB', Departed: '#2563EB', Arrived: '#16A34A', 'No Show': '#9333EA',
     'Waiting List': '#EAB308',
 };
-function statusColor(name) {
+export function statusColor(name) {
     return STATUS_COLORS[name] ?? REPORT_COLORS.secondary;
 }
 /** A soft-tint pill (light background of the status color, solid-color text/border) - the "professional colored badge" look, replacing plain status text everywhere in reports. */
@@ -684,7 +684,7 @@ function bookingReportColumns(includeApprover) {
     return cols;
 }
 
-function hexToArgb(hex) {
+export function hexToArgb(hex) {
     return 'FF' + hex.replace('#', '').toUpperCase();
 }
 
@@ -699,7 +699,7 @@ function hexToArgb(hex) {
  * number codes (&P of &N) - genuinely functional in Excel's print
  * preview, unlike the CSS approximation used for browser print/PDF.
  */
-async function buildReportWorkbook({ reportType, reportLabel, companyName, generatedByName, filters, filterOptions, columns, rows, def }) {
+export async function buildReportWorkbook({ reportType, reportLabel, companyName, generatedByName, filters, filterOptions, columns, rows, def }) {
     const workbook = new ExcelJS.Workbook();
     workbook.creator = generatedByName;
     workbook.company = companyName;

@@ -101,6 +101,41 @@ function interpolate(template, variables) {
  * logActivity()/createNotification(), so a slow/failing SMTP round-trip
  * never blocks the response that triggered it.
  */
+/**
+ * Sibling to sendTemplatedEmail() above, not a replacement - that one
+ * stays exactly as-is for the 7 transactional templates. This is for
+ * the Automated Daily Operations Report Email feature
+ * (reportEmailScheduling.js): supports multiple to/cc/bcc recipients
+ * and real attachments (nodemailer supports both natively), and
+ * returns { ok, smtpResponse, error } instead of being fire-and-forget
+ * void, since the caller needs to log richer delivery detail
+ * (report_email_log) than sendTemplatedEmail()'s email_audit_log ever
+ * captures. Does NOT check the notifications_enabled setting - report
+ * schedules have their own is_active flag as the on/off switch.
+ */
+export async function sendReportEmail({ to, cc, bcc, subject, html, attachments }) {
+    const settings = await getEmailSettings();
+    if (!settings.host || !settings.senderAddress) {
+        return { ok: false, error: 'SMTP host and Sender Email Address must be configured before sending report emails.' };
+    }
+    try {
+        const transport = buildTransport(settings);
+        const info = await transport.sendMail({
+            from: fromHeader(settings),
+            to: Array.isArray(to) ? to.join(', ') : to,
+            cc: cc && (Array.isArray(cc) ? cc.join(', ') : cc) || undefined,
+            bcc: bcc && (Array.isArray(bcc) ? bcc.join(', ') : bcc) || undefined,
+            replyTo: settings.replyTo || undefined,
+            subject,
+            html,
+            attachments,
+        });
+        return { ok: true, smtpResponse: info.response, senderEmail: settings.senderAddress };
+    } catch (err) {
+        return { ok: false, error: err.message, senderEmail: settings.senderAddress };
+    }
+}
+
 export async function sendTemplatedEmail(templateKey, toEmail, variables = {}, { relatedBookingId = null } = {}) {
     if (!toEmail) return;
 
