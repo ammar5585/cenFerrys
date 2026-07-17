@@ -335,6 +335,12 @@ export async function sendTemplatedEmail(templateKey, toEmail, variables = {}, {
         bodyHtml: bodyToHtml(templateRows[0].body, variables),
         buttons,
     });
+    // The plain-text part must carry the same links as the HTML part - a
+    // link-free text version paired with a link-heavy HTML version is
+    // itself a spam/phishing signal (multipart emails are expected to
+    // carry equivalent content in both parts; a stark mismatch is exactly
+    // what filters look for), not just an accessibility nicety.
+    const text = `${body}\n\n${buttons.map((b) => `${b.label}: ${b.url}`).join('\n')}\n\n${companyName} Staff Transfer Portal - automatically generated, please do not reply if this wasn't expected.`;
 
     try {
         const transport = buildTransport(settings);
@@ -343,7 +349,7 @@ export async function sendTemplatedEmail(templateKey, toEmail, variables = {}, {
             to: toEmail,
             replyTo: settings.replyTo || undefined,
             subject,
-            text: body,
+            text,
             html,
         });
         await logEmailEvent({ event_type: 'email_sent', recipient_email: toEmail, template_key: templateKey, related_booking_id: relatedBookingId });
