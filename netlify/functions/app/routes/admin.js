@@ -10,6 +10,7 @@ import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw, h } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
 import { hashPassword, generateTempPassword } from '../auth.js';
+import { mintPasswordResetToken } from './auth.js';
 import { getRemainingSeatsBatch } from '../seats.js';
 import { getAllDepartments, getAllResorts } from '../refData.js';
 import { sendTemplatedEmail } from '../mailer.js';
@@ -815,8 +816,22 @@ export function registerAdminRoutes(router) {
                             unwrap(await db().from('users').update({ profile_picture: url }).eq('user_id', newUserId));
                         }
                         if (email) {
+                            const [roleRows, departments, resorts] = await Promise.all([
+                                db().from('roles').select('role_name').eq('role_id', roleId).limit(1).then(unwrap),
+                                getAllDepartments(),
+                                getAllResorts(),
+                            ]);
                             deferBestEffort(
-                                sendTemplatedEmail('user_creation', email, { full_name: fullName, username, temp_password: password }),
+                                sendTemplatedEmail('user_creation', email, {
+                                    full_name: fullName,
+                                    employee_id: employeeId,
+                                    username,
+                                    temp_password: password,
+                                    role_name: roleRows[0]?.role_name ?? '',
+                                    resort_name: resorts.find((r) => r.resort_id === resortId)?.resort_name ?? '',
+                                    department_name: departments.find((d) => d.department_id === departmentId)?.department_name ?? '',
+                                    mustChangePassword: false,
+                                }),
                                 'sendTemplatedEmail:user_creation'
                             );
                         }
@@ -872,12 +887,18 @@ export function registerAdminRoutes(router) {
             const hash = await hashPassword(temp);
             unwrap(await db().from('users').update({ password: hash, must_change_password: true }).eq('user_id', userId));
             const targetRows = unwrap(await db().from('users').select('full_name, username, email').eq('user_id', userId).limit(1));
+            // The email carries a Reset Password link (self-service, set
+            // your own new password), not the plaintext temp password -
+            // the temp password below is still a real, immediately-usable
+            // credential the admin can hand to the user out-of-band if
+            // needed, it's just no longer exposed in an email body.
             if (targetRows[0]?.email) {
+                const resetToken = await mintPasswordResetToken(userId);
                 deferBestEffort(
                     sendTemplatedEmail('password_reset', targetRows[0].email, {
                         full_name: targetRows[0].full_name ?? '',
                         username: targetRows[0].username ?? '',
-                        temp_password: temp,
+                        resetToken,
                     }),
                     'sendTemplatedEmail:password_reset'
                 );

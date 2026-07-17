@@ -7,23 +7,11 @@ import { hasPermission } from '../permissions.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { html, raw } from '../templates/html.js';
 import { csrfField, verifyCsrf } from '../csrf.js';
-import { createNotification } from '../notifications.js';
-import { sendTemplatedEmail } from '../mailer.js';
-import { deferBestEffort } from '../deferred.js';
-import { logActivity, clientIp } from '../activity.js';
+import { applyApprovalDecision } from '../approval.js';
+import { clientIp } from '../activity.js';
 import { redirectTo, notFound } from '../response.js';
 import { flashSetCookie } from '../flash.js';
 import { formatDate, formatTime, greeting } from '../format.js';
-
-/** Maps a booking's "waiting/pending" status_name to a human hierarchy-level label for the audit trail. */
-const LEVEL_BY_STATUS_NAME = {
-    'Waiting GM Approval': 'General Manager',
-    'Waiting RM Approval': 'Resident Manager',
-    'Waiting HR Approval': 'HR Manager',
-    'Pending Department Manager Approval': 'Primary Approver (In Charge / Head of Department)',
-    'Pending Assistant Manager Approval': 'Secondary Approver (Assistant In Charge / Assistant Manager)',
-    'Pending HR Approval': 'HR',
-};
 
 // ---------------------------------------------------------------------
 // Dashboard - shared by GM/RM/HR-equivalent approvers and Department
@@ -219,91 +207,19 @@ export function registerManagerRoutes(router) {
             return redirectTo('/manager/approvals', { cookies: [auth.setCookie, flashSetCookie('error', 'Invalid decision.')].filter(Boolean) });
         }
 
-        const bookingRows = unwrap(
-            await db()
-                .from('bookings')
-                .select(
-                    'user_id, current_approver_id, status_id, travel_date, booking_status(status_name), ' +
-                        'users!bookings_user_id_fkey(department_id, resort_id, full_name, email), ' +
-                        'ferry_schedule(departure_time, service_name, ferry_routes(route_name, direction))'
-                )
-                .eq('booking_id', bookingId)
-                .limit(1)
-        );
-        const booking = bookingRows[0];
-        if (!booking || booking.current_approver_id !== user.user_id) {
-            return redirectTo('/manager/approvals', { cookies: [auth.setCookie, flashSetCookie('error', 'This request is not assigned to you.')].filter(Boolean) });
-        }
+        const result = await applyApprovalDecision({
+            bookingId,
+            actorUserId: user.user_id,
+            actorRoleName: user.role_name,
+            actorFullName: user.full_name,
+            decision,
+            comments,
+            clientIp: clientIp(request),
+        });
 
-        const newStatusRows = unwrap(
-            await db().from('booking_status').select('status_id, status_name').eq('status_name', decision === 'approved' ? 'Approved' : 'Rejected').limit(1)
-        );
-        const newStatus = newStatusRows[0];
-
-        // Conditional compare-and-swap: only updates if this booking is still
-        // in the exact state we read it in, guarding against a double-click
-        // producing two booking_approvals audit rows for the same decision.
-        const { data: updatedRows, error: updateError } = await db()
-            .from('bookings')
-            .update({ status_id: newStatus.status_id })
-            .eq('booking_id', bookingId)
-            .eq('current_approver_id', user.user_id)
-            .eq('status_id', booking.status_id)
-            .select('booking_id');
-        if (updateError) throw new Error(updateError.message);
-
-        if (updatedRows.length) {
-            const approvalLevel = LEVEL_BY_STATUS_NAME[booking.booking_status?.status_name] ?? null;
-            unwrap(
-                await db().from('booking_approvals').insert({
-                    booking_id: bookingId,
-                    approver_id: user.user_id,
-                    role_at_approval: user.role_name,
-                    action: decision,
-                    comments: comments || null,
-                    approval_level: approvalLevel,
-                    department_id: booking.users?.department_id ?? null,
-                    resort_id: booking.users?.resort_id ?? null,
-                })
-            );
-
-            const message =
-                decision === 'approved'
-                    ? `Your ferry booking has been approved by ${user.full_name}.`
-                    : `Your ferry booking has been rejected by ${user.full_name}${comments ? ' - ' + comments : ''}.`;
-            await createNotification(booking.user_id, message, 'booking', bookingId);
-            deferBestEffort(
-                sendTemplatedEmail(
-                    decision === 'approved' ? 'booking_approval' : 'booking_rejection',
-                    booking.users?.email,
-                    {
-                        full_name: booking.users?.full_name ?? '',
-                        route_name: booking.ferry_schedule?.service_name ?? booking.ferry_schedule?.ferry_routes?.route_name ?? '',
-                        direction: booking.ferry_schedule?.service_name ?? booking.ferry_schedule?.ferry_routes?.direction ?? '',
-                        travel_date: formatDate(booking.travel_date),
-                        departure_time: booking.ferry_schedule ? formatTime(booking.ferry_schedule.departure_time) : '',
-                        booking_id: bookingId,
-                        reason: comments || '',
-                    },
-                    { relatedBookingId: bookingId }
-                ),
-                `sendTemplatedEmail:booking_${decision}`
-            );
-
-            if (decision === 'approved') {
-                const coordinators = unwrap(
-                    await db()
-                        .from('users')
-                        .select('user_id, roles!inner(role_name)')
-                        .eq('status', 'active')
-                        .eq('roles.role_name', 'Transport Coordinator')
-                );
-                for (const tc of coordinators) {
-                    await createNotification(tc.user_id, 'A new ferry booking has been approved and is ready for the passenger manifest.', 'booking', bookingId);
-                }
-            }
-
-            await logActivity(user.user_id, `${decision.charAt(0).toUpperCase()}${decision.slice(1)} booking`, `booking_id=${bookingId}`, clientIp(request));
+        if (!result.ok) {
+            const message = result.reason === 'not_assigned' ? 'This request is not assigned to you.' : 'This request was already handled.';
+            return redirectTo('/manager/approvals', { cookies: [auth.setCookie, flashSetCookie('error', message)].filter(Boolean) });
         }
 
         return redirectTo('/manager/approvals', { cookies: [auth.setCookie, flashSetCookie('success', 'Decision recorded.')].filter(Boolean) });

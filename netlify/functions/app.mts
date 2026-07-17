@@ -36,6 +36,7 @@ import { registerTransportSchedulesViewRoutes } from './app/routes/transport_sch
 import { registerMiscRoutes } from './app/routes/misc.js';
 import { registerSecurityRoutes } from './app/routes/security.js';
 import { registerSeatAvailabilityRoutes } from './app/routes/seat_availability.js';
+import { registerApprovalLinkRoutes } from './app/routes/approval_link.js';
 import { notFound, redirectTo } from './app/response.js';
 
 const router = createRouter();
@@ -71,6 +72,7 @@ registerTransportSchedulesViewRoutes(router);
 registerMiscRoutes(router);
 registerSecurityRoutes(router);
 registerSeatAvailabilityRoutes(router);
+registerApprovalLinkRoutes(router);
 
 // Root path mirrors index.php: send to /dashboard (which itself
 // redirects to /auth/login when not authenticated).

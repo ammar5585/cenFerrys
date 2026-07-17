@@ -4,9 +4,25 @@
 // capacity-style race here (each booking only assigns its own approver),
 // so this stays easy to diff against the original PHP.
 
+import crypto from 'node:crypto';
 import { db, unwrap, eqOrNull } from './db.js';
 import { createNotification } from './notifications.js';
 import { ROLE_GM, ROLE_RM, ROLE_HR, APPROVAL_CHAIN } from './session.js';
+import { sendTemplatedEmail } from './mailer.js';
+import { deferBestEffort } from './deferred.js';
+import { getSetting } from './settings.js';
+import { formatDate, formatTime } from './format.js';
+import { logActivity } from './activity.js';
+
+/** Maps a booking's "waiting/pending" status_name to a human hierarchy-level label for the audit trail - shared by every approve/reject entry point (the authenticated /manager/approvals list and the token-gated /approval page alike). */
+const LEVEL_BY_STATUS_NAME = {
+    'Waiting GM Approval': 'General Manager',
+    'Waiting RM Approval': 'Resident Manager',
+    'Waiting HR Approval': 'HR Manager',
+    'Pending Department Manager Approval': 'Primary Approver (In Charge / Head of Department)',
+    'Pending Assistant Manager Approval': 'Secondary Approver (Assistant In Charge / Assistant Manager)',
+    'Pending HR Approval': 'HR',
+};
 
 const EXECUTIVE_ROLES = [ROLE_GM, ROLE_RM, ROLE_HR];
 
@@ -34,6 +50,64 @@ export async function getStatusId(statusName) {
     const id = rows.length ? rows[0].status_id : null;
     statusIdCache.set(statusName, id);
     return id;
+}
+
+/** A fresh token per (re-)assignment - see 0038_email_action_links.sql's header comment for why this is its own table rather than columns on bookings. */
+async function mintApprovalToken(bookingId, approverUserId) {
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiryHours = Number(await getSetting('approval_token_expiry_hours', '72')) || 72;
+    const expiresAt = new Date(Date.now() + expiryHours * 60 * 60 * 1000).toISOString();
+    unwrap(await db().from('booking_approval_tokens').insert({ token, booking_id: bookingId, approver_user_id: approverUserId, expires_at: expiresAt }));
+    return token;
+}
+
+/**
+ * The "please approve this booking" email - genuinely new (there was
+ * previously only the in-app createNotification() at each of this
+ * file's 3 assignment points). Mints a fresh approval token and sends
+ * via the approval_request template (email_action_links migration),
+ * whose View Request/Approve/Reject buttons all land on the token-
+ * gated /approval page (routes/approval_link.js) - never a raw
+ * GET-triggers-the-decision link, see that route's own header comment.
+ */
+async function sendApprovalRequestEmail(bookingId, approverId) {
+    const [bookingRows, approverRows] = await Promise.all([
+        db()
+            .from('bookings')
+            .select(
+                'travel_date, ' +
+                    'users!bookings_user_id_fkey(full_name, departments(department_name)), ' +
+                    'ferry_schedule(departure_time, service_name, ferry_routes(route_name, direction))'
+            )
+            .eq('booking_id', bookingId)
+            .limit(1)
+            .then(unwrap),
+        db().from('users').select('full_name, email').eq('user_id', approverId).limit(1).then(unwrap),
+    ]);
+    const booking = bookingRows[0];
+    const approver = approverRows[0];
+    if (!booking || !approver?.email) return;
+
+    const token = await mintApprovalToken(bookingId, approverId);
+    deferBestEffort(
+        sendTemplatedEmail(
+            'approval_request',
+            approver.email,
+            {
+                approver_name: approver.full_name ?? '',
+                full_name: booking.users?.full_name ?? '',
+                department_name: booking.users?.departments?.department_name ?? '',
+                route_name: booking.ferry_schedule?.service_name ?? booking.ferry_schedule?.ferry_routes?.route_name ?? '',
+                direction: booking.ferry_schedule?.service_name ?? booking.ferry_schedule?.ferry_routes?.direction ?? '',
+                travel_date: formatDate(booking.travel_date),
+                departure_time: booking.ferry_schedule ? formatTime(booking.ferry_schedule.departure_time) : '',
+                booking_id: bookingId,
+                approvalToken: token,
+            },
+            { relatedBookingId: bookingId }
+        ),
+        'sendTemplatedEmail:approval_request'
+    );
 }
 
 async function getRoleId(roleName) {
@@ -133,6 +207,7 @@ export async function routeBookingApproval(bookingId) {
             'booking',
             bookingId
         );
+        await sendApprovalRequestEmail(bookingId, approverId);
     }
 
     return { status_id: statusId, approver_id: approverId, role: chosenRole };
@@ -282,6 +357,7 @@ export async function routeDepartmentApproval(bookingId, resortId, departmentId)
 
     if (approverId) {
         await createNotification(approverId, `A new ferry booking request is waiting for your approval as ${chosenLevel}.`, 'booking', bookingId);
+        await sendApprovalRequestEmail(bookingId, approverId);
     } else if (noDepartmentApproverAvailable) {
         await notifyExecutives(
             bookingId,
@@ -401,6 +477,7 @@ export async function escalateApproval(booking, reason) {
             'booking',
             booking.booking_id
         );
+        await sendApprovalRequestEmail(booking.booking_id, nextApproverId);
     } else if (noFurtherTierAvailable) {
         await notifyExecutives(
             booking.booking_id,
@@ -409,4 +486,109 @@ export async function escalateApproval(booking, reason) {
     }
 
     return { escalated: true, level: nextLevel, approver_id: nextApproverId };
+}
+
+/**
+ * The single approve/reject decision path - originally inline in
+ * routes/manager.js's POST /manager/approvals handler, extracted so the
+ * new token-gated /approval page (routes/approval_link.js) produces
+ * IDENTICAL behavior (status transition, audit row, booker notification
+ * + email, Transport Coordinator notification on approval, activity
+ * log) regardless of which page the approver actually used. Returns
+ * `{ ok: false, reason: 'not_assigned' }` if the booking isn't
+ * currently assigned to actorUserId, or `{ ok: false, reason: 'conflict' }`
+ * if someone else already acted on it between the caller's read and this
+ * call (the same compare-and-swap guard escalateApproval() uses).
+ */
+export async function applyApprovalDecision({ bookingId, actorUserId, actorRoleName, actorFullName, decision, comments, clientIp }) {
+    const bookingRows = unwrap(
+        await db()
+            .from('bookings')
+            .select(
+                'user_id, current_approver_id, status_id, travel_date, booking_status(status_name), ' +
+                    'users!bookings_user_id_fkey(department_id, resort_id, full_name, email), ' +
+                    'ferry_schedule(departure_time, service_name, ferry_routes(route_name, direction))'
+            )
+            .eq('booking_id', bookingId)
+            .limit(1)
+    );
+    const booking = bookingRows[0];
+    if (!booking || booking.current_approver_id !== actorUserId) {
+        return { ok: false, reason: 'not_assigned' };
+    }
+
+    const newStatusRows = unwrap(
+        await db().from('booking_status').select('status_id, status_name').eq('status_name', decision === 'approved' ? 'Approved' : 'Rejected').limit(1)
+    );
+    const newStatus = newStatusRows[0];
+
+    // Conditional compare-and-swap: only updates if the booking is still in
+    // the exact state read above, guarding against a double-click (or the
+    // list page and this token page racing) producing two decisions.
+    const { data: updatedRows, error: updateError } = await db()
+        .from('bookings')
+        .update({ status_id: newStatus.status_id })
+        .eq('booking_id', bookingId)
+        .eq('current_approver_id', actorUserId)
+        .eq('status_id', booking.status_id)
+        .select('booking_id');
+    if (updateError) throw new Error(updateError.message);
+
+    if (!updatedRows.length) {
+        return { ok: false, reason: 'conflict' };
+    }
+
+    const approvalLevel = LEVEL_BY_STATUS_NAME[booking.booking_status?.status_name] ?? null;
+    unwrap(
+        await db().from('booking_approvals').insert({
+            booking_id: bookingId,
+            approver_id: actorUserId,
+            role_at_approval: actorRoleName,
+            action: decision,
+            comments: comments || null,
+            approval_level: approvalLevel,
+            department_id: booking.users?.department_id ?? null,
+            resort_id: booking.users?.resort_id ?? null,
+        })
+    );
+
+    const message =
+        decision === 'approved'
+            ? `Your ferry booking has been approved by ${actorFullName}.`
+            : `Your ferry booking has been rejected by ${actorFullName}${comments ? ' - ' + comments : ''}.`;
+    await createNotification(booking.user_id, message, 'booking', bookingId);
+    deferBestEffort(
+        sendTemplatedEmail(
+            decision === 'approved' ? 'booking_approval' : 'booking_rejection',
+            booking.users?.email,
+            {
+                full_name: booking.users?.full_name ?? '',
+                route_name: booking.ferry_schedule?.service_name ?? booking.ferry_schedule?.ferry_routes?.route_name ?? '',
+                direction: booking.ferry_schedule?.service_name ?? booking.ferry_schedule?.ferry_routes?.direction ?? '',
+                travel_date: formatDate(booking.travel_date),
+                departure_time: booking.ferry_schedule ? formatTime(booking.ferry_schedule.departure_time) : '',
+                booking_id: bookingId,
+                reason: comments || '',
+            },
+            { relatedBookingId: bookingId }
+        ),
+        `sendTemplatedEmail:booking_${decision}`
+    );
+
+    if (decision === 'approved') {
+        const coordinators = unwrap(
+            await db()
+                .from('users')
+                .select('user_id, roles!inner(role_name)')
+                .eq('status', 'active')
+                .eq('roles.role_name', 'Transport Coordinator')
+        );
+        for (const tc of coordinators) {
+            await createNotification(tc.user_id, 'A new ferry booking has been approved and is ready for the passenger manifest.', 'booking', bookingId);
+        }
+    }
+
+    await logActivity(actorUserId, `${decision.charAt(0).toUpperCase()}${decision.slice(1)} booking`, `booking_id=${bookingId}`, clientIp);
+
+    return { ok: true };
 }

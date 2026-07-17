@@ -31,14 +31,22 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const REPORT_TYPE_LABELS = { passenger_manifest: 'Passenger Manifest', daily_operations: 'Daily Operations Report' };
 const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+// Placeholder hints only - the action buttons every email also carries
+// (Login always, plus per-template-key buttons like View Booking/
+// Approve/Reject/Reset Password) are appended automatically by
+// mailer.js's EMAIL_ACTIONS map, not something an admin inserts here.
 const PLACEHOLDER_HINTS = {
+    approval_request: ['approver_name', 'full_name', 'department_name', 'route_name', 'direction', 'travel_date', 'departure_time', 'booking_id'],
     booking_approval: ['full_name', 'route_name', 'direction', 'travel_date', 'departure_time', 'booking_id'],
     booking_rejection: ['full_name', 'route_name', 'direction', 'travel_date', 'departure_time', 'booking_id', 'reason'],
     booking_confirmation: ['full_name', 'route_name', 'direction', 'travel_date', 'departure_time', 'booking_id'],
+    booking_cancellation: ['full_name', 'route_name', 'direction', 'travel_date', 'departure_time', 'booking_id'],
     waiting_list_promotion: ['full_name', 'route_name', 'direction', 'travel_date', 'departure_time', 'booking_id'],
-    password_reset: ['full_name', 'username', 'temp_password'],
-    user_creation: ['full_name', 'username', 'temp_password'],
+    password_reset: ['full_name', 'username'],
+    user_creation: ['full_name', 'employee_id', 'username', 'role_name', 'resort_name', 'department_name', 'temp_password'],
     ferry_reminder: ['full_name', 'route_name', 'direction', 'travel_date', 'departure_time', 'booking_id'],
+    ferry_transfer: ['full_name', 'new_ferry_name', 'travel_date', 'departure_time', 'boarding_location', 'destination', 'reason', 'booking_id'],
+    supplier_reservation_notice: ['recipient_name', 'visitor_name', 'supplier_company', 'host_employee_name', 'ferry_service', 'travel_date', 'booking_reference'],
 };
 
 function tabsHtml(activeTab) {
@@ -60,6 +68,9 @@ async function settingsTabBody({ errors, csrfToken, testResult }) {
     const hasPassword = !!(await getSetting('email_smtp_password_encrypted', ''));
     const encryption = await getSetting('email_smtp_encryption', 'tls');
     const timeoutMs = await getSetting('email_smtp_timeout_ms', '10000');
+    const portalBaseUrl = await getSetting('portal_base_url', '');
+    const approvalExpiryHours = await getSetting('approval_token_expiry_hours', '72');
+    const resetExpiryHours = await getSetting('password_reset_token_expiry_hours', '2');
 
     return html`
 <h5 class="mb-3"><i class="bi bi-envelope-at"></i> Email Settings</h5>
@@ -102,6 +113,17 @@ ${testResult ? html`<div class="alert ${testResult.ok ? 'alert-success' : 'alert
                     <div class="form-text">${hasPassword ? 'A password is already saved. Leave blank to keep it unchanged.' : 'No password saved yet.'}</div>
                 </div>
                 <div class="mb-0"><label class="form-label">Connection Timeout (ms)</label><input type="number" name="email_smtp_timeout_ms" class="form-control" value="${timeoutMs}"></div>
+            </div></div>
+        </div>
+        <div class="col-12 col-lg-6">
+            <div class="card h-100"><div class="card-header bg-white">Portal &amp; Security Links</div><div class="card-body">
+                <div class="mb-3"><label class="form-label">Portal Base URL</label><input type="url" name="portal_base_url" class="form-control" value="${portalBaseUrl}" placeholder="https://theatolliaferry.vercel.app">
+                    <div class="form-text">Used to build every action link (Login, View Booking, Approve, Reset Password, etc.) in outbound emails. Leave blank to fall back to this deployment's own URL.</div>
+                </div>
+                <div class="row g-3">
+                    <div class="col-6"><label class="form-label">Approval Link Expiry (hours)</label><input type="number" name="approval_token_expiry_hours" class="form-control" min="1" value="${approvalExpiryHours}"></div>
+                    <div class="col-6"><label class="form-label">Password Reset Link Expiry (hours)</label><input type="number" name="password_reset_token_expiry_hours" class="form-control" min="1" value="${resetExpiryHours}"></div>
+                </div>
             </div></div>
         </div>
         <div class="col-12">
@@ -533,6 +555,9 @@ export function registerAdminEmailSettingsRoutes(router) {
         const passwordNew = (form.get('email_smtp_password_new') || '').toString();
         const encryption = ['tls', 'ssl', 'none'].includes(form.get('email_smtp_encryption')) ? form.get('email_smtp_encryption').toString() : 'tls';
         const timeoutRaw = (form.get('email_smtp_timeout_ms') || '').toString().trim();
+        const portalBaseUrl = (form.get('portal_base_url') || '').toString().trim().replace(/\/+$/, '');
+        const approvalExpiryRaw = (form.get('approval_token_expiry_hours') || '').toString().trim();
+        const resetExpiryRaw = (form.get('password_reset_token_expiry_hours') || '').toString().trim();
 
         const errors = [];
         if (senderAddress && !EMAIL_REGEX.test(senderAddress)) errors.push('Invalid Sender Email Address.');
@@ -546,6 +571,17 @@ export function registerAdminEmailSettingsRoutes(router) {
             if (!senderAddress) errors.push('Sender Email Address is required to enable email notifications.');
             if (!portRaw) errors.push('SMTP Port is required to enable email notifications.');
         }
+        if (portalBaseUrl) {
+            try {
+                new URL(portalBaseUrl);
+            } catch {
+                errors.push('Invalid Portal Base URL.');
+            }
+        }
+        const approvalExpiryHours = Number(approvalExpiryRaw);
+        if (approvalExpiryRaw && (!Number.isFinite(approvalExpiryHours) || approvalExpiryHours <= 0)) errors.push('Invalid Approval Link Expiry - must be a positive number of hours.');
+        const resetExpiryHours = Number(resetExpiryRaw);
+        if (resetExpiryRaw && (!Number.isFinite(resetExpiryHours) || resetExpiryHours <= 0)) errors.push('Invalid Password Reset Link Expiry - must be a positive number of hours.');
 
         if (errors.length) {
             const body = await settingsTabBody({ errors, csrfToken: user.csrf, testResult: null });
@@ -562,6 +598,9 @@ export function registerAdminEmailSettingsRoutes(router) {
             { key: 'email_smtp_username', label: 'SMTP Username', value: username },
             { key: 'email_smtp_encryption', label: 'Encryption Type', value: encryption },
             { key: 'email_smtp_timeout_ms', label: 'Connection Timeout', value: timeoutRaw || '10000' },
+            { key: 'portal_base_url', label: 'Portal Base URL', value: portalBaseUrl },
+            { key: 'approval_token_expiry_hours', label: 'Approval Link Expiry (hours)', value: approvalExpiryRaw || '72' },
+            { key: 'password_reset_token_expiry_hours', label: 'Password Reset Link Expiry (hours)', value: resetExpiryRaw || '2' },
         ];
 
         const auditRows = [];

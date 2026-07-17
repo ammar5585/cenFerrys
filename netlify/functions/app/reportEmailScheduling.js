@@ -8,7 +8,7 @@ import { db, unwrap } from './db.js';
 import { getSetting } from './settings.js';
 import { formatDate } from './format.js';
 import { h } from './templates/html.js';
-import { sendReportEmail } from './mailer.js';
+import { sendReportEmail, buildEmailHtml, getPortalBaseUrl, reportEmailButtons } from './mailer.js';
 import { getDailyOperationsReportData, buildDailyOperationsWorkbook, dailyOperationsEmailHtml, todayInMaldives } from './dailyOperationsReport.js';
 import { REPORT_TYPES, buildReportWorkbook } from './routes/reports.js';
 
@@ -20,8 +20,13 @@ function nowInMaldives() {
 }
 
 async function getReportMeta() {
-    const companyName = await getSetting('company_name', 'Staff Ferry Transfer Portal');
-    return { companyName, generatedByName: 'Automated Report Scheduler' };
+    const [companyName, siteLogo, brandColor, portalBaseUrl] = await Promise.all([
+        getSetting('company_name', 'Staff Ferry Transfer Portal'),
+        getSetting('site_logo', ''),
+        getSetting('theme_primary_color', '#0d6efd'),
+        getPortalBaseUrl(),
+    ]);
+    return { companyName, siteLogo, brandColor, portalBaseUrl, generatedByName: 'Automated Report Scheduler' };
 }
 
 // ---------------------------------------------------------------------
@@ -146,15 +151,13 @@ export async function setScheduleActive(scheduleId, isActive, userId) {
 const TH = 'padding:6px 10px;text-align:left;font-size:11px;color:#475569;border-bottom:1px solid #E2E8F0;';
 const TD = 'padding:6px 10px;font-size:12px;border-bottom:1px solid #E2E8F0;';
 
-function passengerManifestEmailHtml(rows, def, travelDate, companyName) {
+function passengerManifestEmailHtml(rows, def, travelDate, meta) {
     const header = `<tr>${def.columns.map((c) => `<th style="${TH}">${h(c.header)}</th>`).join('')}</tr>`;
     const body = rows.map((r) => `<tr>${def.columns.map((c) => `<td style="${TD}">${h(String(c.get(r) ?? ''))}</td>`).join('')}</tr>`).join('');
-    return `<div style="font-family:Arial,Helvetica,sans-serif;color:#0F172A;max-width:900px;">
-<h2 style="font-size:18px;margin-bottom:0;">${h(companyName)} - ${h(def.label)}</h2>
-<p style="color:#475569;font-size:12px;margin-top:4px;">${formatDate(travelDate)} &middot; ${rows.length} record(s)</p>
-<table style="border-collapse:collapse;width:100%;">${header}${body}</table>
-<p style="color:#94A3B8;font-size:9px;margin-top:24px;">Automatically Generated Report &middot; ${h(companyName)} Staff Transfer Portal &middot; Confidential - Internal Use Only</p>
-</div>`;
+    const bodyHtml = `<h2 style="font-size:18px;margin:0 0 4px;">${h(def.label)}</h2>
+<p style="color:#475569;font-size:12px;margin:0 0 16px;">${formatDate(travelDate)} &middot; ${rows.length} record(s)</p>
+<table style="border-collapse:collapse;width:100%;">${header}${body}</table>`;
+    return buildEmailHtml({ companyName: meta.companyName, siteLogo: meta.siteLogo, brandColor: meta.brandColor, bodyHtml, buttons: reportEmailButtons(meta) });
 }
 
 async function buildReportPayload(reportType, travelDate) {
@@ -176,7 +179,7 @@ async function buildReportPayload(reportType, travelDate) {
         const buffer = await buildReportWorkbook({ reportType: 'passenger_manifest', reportLabel: def.label, companyName: meta.companyName, generatedByName: meta.generatedByName, filters, filterOptions: {}, columns: def.columns, rows, def });
         return {
             buffer,
-            html: passengerManifestEmailHtml(rows, def, travelDate, meta.companyName),
+            html: passengerManifestEmailHtml(rows, def, travelDate, meta),
             filename: `passenger_manifest_${travelDate}.xlsx`,
             subject: `${meta.companyName} - Passenger Manifest - ${formatDate(travelDate)}`,
         };

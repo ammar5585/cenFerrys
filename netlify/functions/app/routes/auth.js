@@ -1,6 +1,7 @@
 // Port of auth/login.php, auth/logout.php, auth/change_password.php,
 // auth/forgot_password.php.
 
+import crypto from 'node:crypto';
 import { db, unwrap } from '../db.js';
 import { hashPassword, verifyPassword, signSessionToken, buildSessionCookie, clearSessionCookie, newCsrfToken } from '../auth.js';
 import { mintPreAuthCsrf, readPreAuthCsrfCookie, verifyCsrf, csrfField } from '../csrf.js';
@@ -15,12 +16,30 @@ import { html, raw } from '../templates/html.js';
 import { renderShellForRequest } from '../shellHelper.js';
 import { ROLE_ADMIN, getSession, checkIsDepartmentApprover } from '../session.js';
 import { getEffectivePermissions, bitmaskToHex } from '../permissions.js';
+import { sendTemplatedEmail } from '../mailer.js';
+import { deferBestEffort } from '../deferred.js';
 
 async function readFormBody(request) {
     const form = await request.formData();
     const out = {};
     for (const [key, value] of form.entries()) out[key] = value;
     return out;
+}
+
+/** Only a same-origin relative path is ever honored as a post-login redirect target - rejects protocol-relative ("//evil.com") and absolute URLs to prevent an open redirect via a crafted ?next= link. */
+function safeNextPath(raw) {
+    const value = (raw || '').toString().trim();
+    if (!value || !value.startsWith('/') || value.startsWith('//')) return null;
+    return value;
+}
+
+/** One active reset request per user - a fresh request overwrites the old token/expiry, naturally invalidating any previously-issued link. Exported for admin.js's admin-initiated reset, which uses the same token/link rather than emailing a plaintext temp password. */
+export async function mintPasswordResetToken(userId) {
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiryHours = Number(await getSetting('password_reset_token_expiry_hours', '2')) || 2;
+    const expiresAt = new Date(Date.now() + expiryHours * 60 * 60 * 1000).toISOString();
+    unwrap(await db().from('users').update({ password_reset_token: token, password_reset_token_expires_at: expiresAt }).eq('user_id', userId));
+    return token;
 }
 
 /** Branding settings shared by every pre-login page (login, forgot-password). */
@@ -54,7 +73,7 @@ async function getPublicBranding() {
 function loginPage({
     error, timeout, csrfToken, companyName, portalTitle, favicon, loginLogo, loginBackground,
     loginWelcomeMessage, loginDescription, sidebarColor, headerColor, primaryColor, secondaryColor,
-    fontFamily, fontSize, footerText, copyrightText, username = '',
+    fontFamily, fontSize, footerText, copyrightText, username = '', next = '',
 }) {
     const wrapperStyle = loginBackground ? `background-image:url('${loginBackground}');background-size:cover;background-position:center;` : '';
     const body = html`
@@ -72,6 +91,7 @@ function loginPage({
 
             <form method="post" novalidate>
                 ${raw(csrfField(csrfToken))}
+                ${next ? html`<input type="hidden" name="next" value="${next}">` : ''}
                 <div class="mb-3">
                     <label class="form-label">Username</label>
                     <input type="text" class="form-control" name="username" required autofocus autocomplete="username" value="${username}">
@@ -100,15 +120,17 @@ function loginPage({
 export function registerAuthRoutes(router) {
     router.get('/auth/login', async (request) => {
         const { user } = await getSession(request);
-        if (user) return redirectTo('/dashboard');
+        const url = new URL(request.url);
+        const next = safeNextPath(url.searchParams.get('next'));
+        if (user) return redirectTo(next || '/dashboard');
 
         const branding = await getPublicBranding();
-        const url = new URL(request.url);
         const { token, setCookie } = mintPreAuthCsrf();
         const body = loginPage({
             error: null,
             timeout: url.searchParams.get('timeout') === '1',
             csrfToken: token,
+            next: next || '',
             ...branding,
         });
         return htmlResponse(body.toString(), { cookies: [setCookie] });
@@ -119,6 +141,7 @@ export function registerAuthRoutes(router) {
         const form = await readFormBody(request);
         const submittedCsrf = form.csrf_token;
         const preAuthCsrf = readPreAuthCsrfCookie(request);
+        const next = safeNextPath(form.next);
 
         if (!verifyCsrf(preAuthCsrf, submittedCsrf)) {
             return forbidden('Invalid or expired form submission. Please go back and try again.');
@@ -129,7 +152,7 @@ export function registerAuthRoutes(router) {
 
         if (!username || !password) {
             const { token, setCookie } = mintPreAuthCsrf();
-            const body = loginPage({ error: 'Please enter both username and password.', timeout: false, csrfToken: token, ...branding, username });
+            const body = loginPage({ error: 'Please enter both username and password.', timeout: false, csrfToken: token, ...branding, username, next: next || '' });
             return htmlResponse(body.toString(), { cookies: [setCookie] });
         }
 
@@ -146,13 +169,13 @@ export function registerAuthRoutes(router) {
         if (!user || !passwordOk) {
             await logActivity(user?.user_id ?? null, 'Failed login attempt', `Username: ${username}`, clientIp(request));
             const { token, setCookie } = mintPreAuthCsrf();
-            const body = loginPage({ error: 'Invalid username or password.', timeout: false, csrfToken: token, ...branding, username });
+            const body = loginPage({ error: 'Invalid username or password.', timeout: false, csrfToken: token, ...branding, username, next: next || '' });
             return htmlResponse(body.toString(), { cookies: [setCookie] });
         }
 
         if (user.status !== 'active') {
             const { token, setCookie } = mintPreAuthCsrf();
-            const body = loginPage({ error: 'Your account is inactive. Please contact the Administrator.', timeout: false, csrfToken: token, ...branding, username });
+            const body = loginPage({ error: 'Your account is inactive. Please contact the Administrator.', timeout: false, csrfToken: token, ...branding, username, next: next || '' });
             return htmlResponse(body.toString(), { cookies: [setCookie] });
         }
 
@@ -160,7 +183,7 @@ export function registerAuthRoutes(router) {
         const roleName = user.roles?.role_name;
         if (maintenanceMode === '1' && roleName !== ROLE_ADMIN) {
             const { token, setCookie } = mintPreAuthCsrf();
-            const body = loginPage({ error: 'The portal is currently under maintenance. Please try again later.', timeout: false, csrfToken: token, ...branding, username });
+            const body = loginPage({ error: 'The portal is currently under maintenance. Please try again later.', timeout: false, csrfToken: token, ...branding, username, next: next || '' });
             return htmlResponse(body.toString(), { cookies: [setCookie] });
         }
 
@@ -191,11 +214,11 @@ export function registerAuthRoutes(router) {
         await logActivity(user.user_id, 'Login', 'User logged in successfully', clientIp(request));
 
         if (user.must_change_password) {
-            return redirectTo('/auth/change_password', {
+            return redirectTo(`/auth/change_password${next ? `?next=${encodeURIComponent(next)}` : ''}`, {
                 cookies: [sessionCookie, flashSetCookie('warning', 'Please change your password to continue.')],
             });
         }
-        return redirectTo('/dashboard', { cookies: [sessionCookie] });
+        return redirectTo(next || '/dashboard', { cookies: [sessionCookie] });
     });
 
     router.get('/auth/logout', async (request) => {
@@ -210,13 +233,14 @@ export function registerAuthRoutes(router) {
         const auth = await requireLogin(request);
         if (auth.response) return auth.response;
         const url = new URL(request.url);
+        const next = safeNextPath(url.searchParams.get('next'));
         const minLength = Number(await getSetting('password_min_length', 8));
         return renderShellForRequest({
             request,
             auth,
             pageTitle: 'Change Password',
             path: url.pathname,
-            bodyHtml: changePasswordBody({ errors: [], minLength, csrfToken: auth.user.csrf }),
+            bodyHtml: changePasswordBody({ errors: [], minLength, csrfToken: auth.user.csrf, next: next || '' }),
         });
     });
 
@@ -228,6 +252,7 @@ export function registerAuthRoutes(router) {
 
         const form = await readFormBody(request);
         if (!verifyCsrf(user.csrf, form.csrf_token)) return forbidden();
+        const next = safeNextPath(form.next);
 
         const minLength = Number(await getSetting('password_min_length', 8));
         const errors = [];
@@ -246,7 +271,7 @@ export function registerAuthRoutes(router) {
                 auth,
                 pageTitle: 'Change Password',
                 path: url.pathname,
-                bodyHtml: changePasswordBody({ errors, minLength, csrfToken: user.csrf }),
+                bodyHtml: changePasswordBody({ errors, minLength, csrfToken: user.csrf, next: next || '' }),
             });
         }
 
@@ -259,7 +284,7 @@ export function registerAuthRoutes(router) {
         );
         await logActivity(user.user_id, 'Changed password', null, clientIp(request));
 
-        return redirectTo('/dashboard', {
+        return redirectTo(next || '/dashboard', {
             cookies: [auth.setCookie, flashSetCookie('success', 'Your password has been updated.')].filter(Boolean),
         });
     });
@@ -291,10 +316,10 @@ export function registerAuthRoutes(router) {
         // Supabase's .or() takes a raw filter string that untrusted input
         // must not be interpolated into (it doesn't get the same safe
         // parameterization .eq() does).
-        const byUsername = unwrap(await db().from('users').select('user_id, full_name').eq('username', identifier).limit(1));
+        const byUsername = unwrap(await db().from('users').select('user_id, full_name, email, status').eq('username', identifier).limit(1));
         const byEmployeeId = byUsername.length
             ? []
-            : unwrap(await db().from('users').select('user_id, full_name').eq('employee_id', identifier).limit(1));
+            : unwrap(await db().from('users').select('user_id, full_name, email, status').eq('employee_id', identifier).limit(1));
         const matched = byUsername[0] || byEmployeeId[0];
 
         // Notify all admins regardless of match, so this can't be used to enumerate usernames.
@@ -313,12 +338,87 @@ export function registerAuthRoutes(router) {
         }
         await logActivity(matched?.user_id ?? null, 'Password reset requested', `Identifier: ${identifier}`, clientIp(request));
 
+        // Self-service: if the identifier matched an active account with an
+        // email on file, also mint a reset token and email the user a
+        // direct reset link - the HTTP response below stays byte-identical
+        // whether or not this branch runs, preserving the "can't be used to
+        // enumerate usernames" property the admin-notification path above
+        // already relies on; the send itself is fire-and-forget so it can't
+        // introduce a timing side-channel either.
+        if (matched?.email && matched.status === 'active') {
+            (async () => {
+                const token = await mintPasswordResetToken(matched.user_id);
+                await sendTemplatedEmail('password_reset', matched.email, { full_name: matched.full_name ?? '', resetToken: token }, {});
+            })().catch(() => {});
+        }
+
         const body = forgotPasswordPage({ submitted: true, error: null, csrfToken: null, ...branding });
         return htmlResponse(body.toString());
     });
+
+    router.get('/auth/reset_password', async (request) => {
+        const { user } = await getSession(request);
+        if (user) return redirectTo('/dashboard');
+
+        const branding = await getPublicBranding();
+        const url = new URL(request.url);
+        const token = (url.searchParams.get('token') || '').trim();
+        const valid = token ? await isValidResetToken(token) : false;
+
+        const { token: csrfToken, setCookie } = mintPreAuthCsrf();
+        const body = resetPasswordPage({ valid, token, errors: [], minLength: Number(await getSetting('password_min_length', 8)), csrfToken, ...branding });
+        return htmlResponse(body.toString(), { cookies: [setCookie] });
+    });
+
+    router.post('/auth/reset_password', async (request) => {
+        const branding = await getPublicBranding();
+        const form = await readFormBody(request);
+        const preAuthCsrf = readPreAuthCsrfCookie(request);
+        if (!verifyCsrf(preAuthCsrf, form.csrf_token)) return forbidden();
+
+        const token = (form.token || '').trim();
+        const minLength = Number(await getSetting('password_min_length', 8));
+        const rows = token
+            ? unwrap(await db().from('users').select('user_id, password_reset_token_expires_at').eq('password_reset_token', token).limit(1))
+            : [];
+        const record = rows[0];
+        const valid = !!record && new Date(record.password_reset_token_expires_at) > new Date();
+
+        if (!valid) {
+            const { token: csrfToken, setCookie } = mintPreAuthCsrf();
+            const body = resetPasswordPage({ valid: false, token, errors: [], minLength, csrfToken, ...branding });
+            return htmlResponse(body.toString(), { cookies: [setCookie] });
+        }
+
+        const errors = [];
+        if ((form.new_password || '').length < minLength) errors.push(`New password must be at least ${minLength} characters long.`);
+        if (form.new_password !== form.confirm_password) errors.push('New password and confirmation do not match.');
+
+        if (errors.length) {
+            const { token: csrfToken, setCookie } = mintPreAuthCsrf();
+            const body = resetPasswordPage({ valid: true, token, errors, minLength, csrfToken, ...branding });
+            return htmlResponse(body.toString(), { cookies: [setCookie] });
+        }
+
+        const newHash = await hashPassword(form.new_password);
+        unwrap(
+            await db()
+                .from('users')
+                .update({ password: newHash, must_change_password: false, password_reset_token: null, password_reset_token_expires_at: null })
+                .eq('user_id', record.user_id)
+        );
+        await logActivity(record.user_id, 'Reset password via self-service link', null, clientIp(request));
+
+        return redirectTo('/auth/login', { cookies: [flashSetCookie('success', 'Your password has been reset. Please log in with your new password.')] });
+    });
 }
 
-function changePasswordBody({ errors, minLength, csrfToken }) {
+async function isValidResetToken(token) {
+    const rows = unwrap(await db().from('users').select('password_reset_token_expires_at').eq('password_reset_token', token).limit(1));
+    return !!rows[0] && new Date(rows[0].password_reset_token_expires_at) > new Date();
+}
+
+function changePasswordBody({ errors, minLength, csrfToken, next = '' }) {
     return html`
 <div class="row justify-content-center">
     <div class="col-md-6 col-lg-5">
@@ -330,6 +430,7 @@ function changePasswordBody({ errors, minLength, csrfToken }) {
                     : ''}
                 <form method="post" novalidate>
                     ${raw(csrfField(csrfToken))}
+                    ${next ? html`<input type="hidden" name="next" value="${next}">` : ''}
                     <div class="mb-3">
                         <label class="form-label">Current Password</label>
                         <input type="password" name="current_password" class="form-control" required>
@@ -362,10 +463,10 @@ function forgotPasswordPage({
             <div class="text-center mb-4">
                 <i class="bi bi-key" style="font-size:2.5rem;color:#0d6efd;"></i>
                 <h4 class="mt-2 mb-0">Forgot Password</h4>
-                <p class="text-muted small">This portal does not use email. Submitting this form notifies the Administrator to reset your password.</p>
+                <p class="text-muted small">If we find a matching account with an email on file, you'll receive password reset instructions by email. An Administrator is also notified.</p>
             </div>
             ${submitted
-                ? html`<div class="alert alert-success">Your request has been sent to the Administrator. Please contact them for your new password.</div>
+                ? html`<div class="alert alert-success">If an account matches, reset instructions have been sent to its email address. An Administrator has also been notified.</div>
                        <a href="/auth/login" class="btn btn-primary w-100">Back to Login</a>`
                 : html`
                     ${error ? html`<div class="alert alert-danger py-2">${error}</div>` : ''}
@@ -383,6 +484,50 @@ function forgotPasswordPage({
 </div>`;
     return publicShell({
         pageTitle: 'Forgot Password', companyName, portalTitle, favicon,
+        sidebarColor, headerColor, primaryColor, secondaryColor, fontFamily, fontSize, footerText, copyrightText,
+        bodyHtml: body,
+    });
+}
+
+function resetPasswordPage({
+    valid, token, errors, minLength, csrfToken, companyName, portalTitle, favicon,
+    sidebarColor, headerColor, primaryColor, secondaryColor, fontFamily, fontSize, footerText, copyrightText,
+}) {
+    const body = html`
+<div class="login-wrapper">
+    <div class="card login-card">
+        <div class="card-body p-4">
+            <div class="text-center mb-4">
+                <i class="bi bi-shield-lock" style="font-size:2.5rem;color:#0d6efd;"></i>
+                <h4 class="mt-2 mb-0">Reset Password</h4>
+            </div>
+            ${!valid
+                ? html`<div class="alert alert-danger">This reset link is invalid or has expired.</div>
+                       <a href="/auth/forgot_password" class="btn btn-primary w-100">Request a New Link</a>`
+                : html`
+                    ${errors.length
+                        ? html`<div class="alert alert-danger"><ul class="mb-0">${raw(errors.map((e) => `<li>${e}</li>`).join(''))}</ul></div>`
+                        : ''}
+                    <form method="post" novalidate>
+                        ${raw(csrfField(csrfToken))}
+                        <input type="hidden" name="token" value="${token}">
+                        <div class="mb-3">
+                            <label class="form-label">New Password</label>
+                            <input type="password" class="form-control" name="new_password" required minlength="${minLength}" autofocus>
+                            <div class="form-text">Minimum ${minLength} characters.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Confirm New Password</label>
+                            <input type="password" class="form-control" name="confirm_password" required minlength="${minLength}">
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Set New Password</button>
+                    </form>
+                    <p class="text-center mt-3 mb-0"><a href="/auth/login">Back to Login</a></p>`}
+        </div>
+    </div>
+</div>`;
+    return publicShell({
+        pageTitle: 'Reset Password', companyName, portalTitle, favicon,
         sidebarColor, headerColor, primaryColor, secondaryColor, fontFamily, fontSize, footerText, copyrightText,
         bodyHtml: body,
     });

@@ -1136,16 +1136,42 @@ export function registerStaffRoutes(router) {
         if (form.action === 'cancel') {
             const bookingId = Number(form.booking_id);
             const rows = unwrap(
-                await db().from('bookings').select('booking_id, schedule_id, travel_date').eq('booking_id', bookingId).eq('user_id', user.user_id).limit(1)
+                await db()
+                    .from('bookings')
+                    .select(
+                        'booking_id, schedule_id, travel_date, direction, ' +
+                            'users!bookings_user_id_fkey(full_name, email), ' +
+                            'ferry_schedule(departure_time, service_name, ferry_routes(route_name, direction))'
+                    )
+                    .eq('booking_id', bookingId)
+                    .eq('user_id', user.user_id)
+                    .limit(1)
             );
             if (rows.length) {
+                const booking = rows[0];
                 const cancelledId = await getStatusId('Cancelled');
                 unwrap(await db().from('bookings').update({ status_id: cancelledId }).eq('booking_id', bookingId));
                 await logActivity(user.user_id, 'Cancelled booking', `booking_id=${bookingId}`, clientIp(request));
                 await createNotification(user.user_id, 'Your ferry booking has been cancelled.', 'booking', bookingId);
+                deferBestEffort(
+                    sendTemplatedEmail(
+                        'booking_cancellation',
+                        booking.users?.email,
+                        {
+                            full_name: booking.users?.full_name ?? '',
+                            route_name: booking.ferry_schedule?.service_name ?? booking.ferry_schedule?.ferry_routes?.route_name ?? '',
+                            direction: booking.direction ?? booking.ferry_schedule?.ferry_routes?.direction ?? '',
+                            travel_date: formatDate(booking.travel_date),
+                            departure_time: booking.ferry_schedule ? formatTime(booking.ferry_schedule.departure_time) : '',
+                            booking_id: bookingId,
+                        },
+                        { relatedBookingId: bookingId }
+                    ),
+                    'sendTemplatedEmail:booking_cancellation'
+                );
                 // A cancellation frees a seat - if this schedule/date has a
                 // waiting list, prompt Security to consider promoting.
-                await notifySecurityIfWaitingList(rows[0].schedule_id, rows[0].travel_date);
+                await notifySecurityIfWaitingList(booking.schedule_id, booking.travel_date);
                 return redirectTo('/staff/my_bookings', { cookies: [auth.setCookie, flashSetCookie('success', 'Booking cancelled.')].filter(Boolean) });
             }
             return redirectTo('/staff/my_bookings', { cookies: [auth.setCookie, flashSetCookie('error', 'Booking not found.')].filter(Boolean) });

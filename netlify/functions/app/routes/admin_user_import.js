@@ -558,6 +558,19 @@ export function registerAdminUserImportRoutes(router) {
             return redirectTo('/admin/users/import', { cookies: [auth.setCookie, flashSetCookie('error', fileError)].filter(Boolean) });
         }
 
+        // id -> name lookups for the user_creation email's Role/Resort/
+        // Department fields - parseAndValidateCsv() only carries ids on
+        // each row, not names, and this is a small enough catalog to
+        // just fetch once up front rather than per row.
+        const [emailResorts, emailDepartments, emailRoles] = await Promise.all([
+            getAllResorts(),
+            getActiveDepartments(),
+            db().from('roles').select('role_id, role_name').then(unwrap),
+        ]);
+        const resortNameById = new Map(emailResorts.map((r) => [r.resort_id, r.resort_name]));
+        const departmentNameById = new Map(emailDepartments.map((d) => [d.department_id, d.department_name]));
+        const roleNameById = new Map(emailRoles.map((r) => [r.role_id, r.role_name]));
+
         let successCount = 0;
         const failedRows = [];
         // Every bulk-imported user gets the same fixed default password
@@ -615,8 +628,13 @@ export function registerAdminUserImportRoutes(router) {
                         deferBestEffort(
                             sendTemplatedEmail('user_creation', r.email, {
                                 full_name: r.fullName,
+                                employee_id: r.employeeId,
                                 username: r.username,
                                 temp_password: DEFAULT_IMPORT_PASSWORD,
+                                role_name: roleNameById.get(r.roleId) ?? '',
+                                resort_name: resortNameById.get(r.resortId) ?? '',
+                                department_name: departmentNameById.get(r.departmentId) ?? '',
+                                mustChangePassword: true,
                             }),
                             'sendTemplatedEmail:user_creation'
                         );

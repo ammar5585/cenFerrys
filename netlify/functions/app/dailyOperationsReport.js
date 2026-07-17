@@ -12,6 +12,7 @@ import { getLiveFerryAvailability } from './seatAvailability.js';
 import { getAllDepartments } from './refData.js';
 import { formatDate, formatTime } from './format.js';
 import { REPORT_COLORS, hexToArgb, statusColor } from './routes/reports.js';
+import { buildEmailHtml, reportEmailButtons } from './mailer.js';
 import ExcelJS from 'exceljs';
 
 const MALDIVES_OFFSET_MS = 5 * 60 * 60 * 1000;
@@ -153,8 +154,9 @@ export async function getDailyOperationsReportData(travelDate) {
     return { travelDate, bookingSummary: booking, passengerSummary: passenger, ferrySummary, resortSummary, departmentSummary, securitySummary, seatAllocationSummary };
 }
 
-/** Simple inline-styled HTML email body - email clients don't support external stylesheets, so this is deliberately plain inline HTML, not the Reports page's full enterprise CSS. */
-export function dailyOperationsEmailHtml(data, { companyName }) {
+/** Builds the report's body content, then wraps it in mailer.js's shared bulletproof-button HTML shell (same one sendTemplatedEmail() uses) with Open Dashboard/View Reports/Login buttons - not the Reports page's full enterprise CSS, email clients don't support external stylesheets. */
+export function dailyOperationsEmailHtml(data, meta) {
+    const { companyName } = meta;
     const th = 'padding:6px 10px;text-align:left;font-size:11px;color:#475569;border-bottom:1px solid #E2E8F0;';
     const td = 'padding:6px 10px;font-size:12px;border-bottom:1px solid #E2E8F0;';
     const section = (title, rows) => `<h3 style="font-size:14px;color:#0F172A;margin:20px 0 8px;">${title}</h3><table style="border-collapse:collapse;width:100%;">${rows}</table>`;
@@ -206,18 +208,17 @@ export function dailyOperationsEmailHtml(data, { companyName }) {
         kpiRow('Supplier Visit Seats', data.seatAllocationSummary.supplierVisits),
     ].join('');
 
-    return `<div style="font-family:Arial,Helvetica,sans-serif;color:#0F172A;max-width:700px;">
-<h2 style="font-size:18px;margin-bottom:0;">${companyName} - Daily Operations Report</h2>
-<p style="color:#475569;font-size:12px;margin-top:4px;">${formatDate(data.travelDate)}</p>
+    const bodyHtml = `<h2 style="font-size:18px;margin:0 0 4px;">Daily Operations Report</h2>
+<p style="color:#475569;font-size:12px;margin:0 0 8px;">${formatDate(data.travelDate)}</p>
 ${section('Booking Summary', bookingRows)}
 ${section('Passenger Summary', passengerRows)}
 ${section('Ferry Summary', ferryHeader + ferryRows)}
 ${section('Resort Summary', resortHeader + resortRows)}
 ${data.departmentSummary.length ? section('Department Summary', deptHeader + deptRows) : ''}
 ${section('Security Summary', securityRows)}
-${section('Seat Allocation Summary', seatRows)}
-<p style="color:#94A3B8;font-size:9px;margin-top:24px;">Automatically Generated Report &middot; ${companyName} Staff Transfer Portal &middot; Confidential - Internal Use Only</p>
-</div>`;
+${section('Seat Allocation Summary', seatRows)}`;
+
+    return buildEmailHtml({ companyName, siteLogo: meta.siteLogo, brandColor: meta.brandColor, bodyHtml, buttons: reportEmailButtons(meta) });
 }
 
 /** One Excel workbook, one sheet per section - same styling constants as reports.js's buildReportWorkbook() (imported, not duplicated). */
