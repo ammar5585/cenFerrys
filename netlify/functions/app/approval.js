@@ -87,7 +87,7 @@ async function getBookingEmailVariables(bookingId) {
             .select(
                 'travel_date, seats, purpose, created_at, schedule_id, ' +
                     'users!bookings_user_id_fkey(full_name, employee_id, designation, departments(department_name), resorts(resort_name)), ' +
-                    'ferry_schedule(departure_time, service_name, ferry_routes(route_name, direction))'
+                    'ferry_schedule(departure_time, service_name, service_code, ferry_routes(route_name, direction))'
             )
             .eq('booking_id', bookingId)
             .limit(1)
@@ -99,13 +99,20 @@ async function getBookingEmailVariables(bookingId) {
         ? unwrap(await db().from('route_stops').select('stop_name').eq('schedule_id', booking.schedule_id).eq('status', 'active').order('stop_order', { ascending: true }))
         : [];
 
+    // "Ferry Service" should read as name + code (e.g. "The Atollia -
+    // Early Morning Ferry"), not the name alone - service_code is a
+    // separate identifying label on ferry_schedule, distinct from
+    // service_name.
+    const serviceName = booking.ferry_schedule?.service_name ?? booking.ferry_schedule?.ferry_routes?.route_name ?? '';
+    const serviceCode = booking.ferry_schedule?.service_code ?? '';
+
     return {
         full_name: booking.users?.full_name ?? '',
         employee_id: booking.users?.employee_id ?? '',
         designation: booking.users?.designation ?? '',
         department_name: booking.users?.departments?.department_name ?? '',
         resort_name: booking.users?.resorts?.resort_name ?? '',
-        route_name: booking.ferry_schedule?.service_name ?? booking.ferry_schedule?.ferry_routes?.route_name ?? '',
+        route_name: serviceName && serviceCode ? `${serviceName} - ${serviceCode}` : serviceName || serviceCode,
         direction: booking.ferry_schedule?.service_name ?? booking.ferry_schedule?.ferry_routes?.direction ?? '',
         travel_date: formatDate(booking.travel_date),
         departure_time: booking.ferry_schedule ? formatTime(booking.ferry_schedule.departure_time) : '',
